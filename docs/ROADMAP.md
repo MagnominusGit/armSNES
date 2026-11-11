@@ -44,4 +44,8 @@ again changes nothing that follows: run-ahead gives the same states, pictures an
 run. PAL games and the reset button match ares too, and an ARM64 build gives the same states,
 pictures and sound as x86. With the dot renderer a Raspberry Pi 5 runs at about 85 frames a second.
 
-Phase 2 is next.
+Phase 2: lines are drawn in spans, a layer at a time, and give the same machine state as the dot
+renderer after every frame. SIMD comes with the speed work.
+
+Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips so far: the NEC DSP
+(DSP-1 to DSP-4), with firmware from the frontend's system folder or the end of the dump.

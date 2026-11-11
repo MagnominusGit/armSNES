@@ -245,41 +245,100 @@ static void boardName(char* board, size_t size) {
 #undef APPEND
 }
 
-// The boards without a coprocessor, as in ares's board database.
+#include "boards.inc"
+
+static const struct BoardEntry* board;
+// What came off the end of the game: firmware a dump carries after it.
+static u32 firmwareSize;
+
+// The parts of boards this core has.
+static bool partSupported(u16 part) {
+	switch (part) {
+	case PART_MEMORY_ROM_PROGRAM:
+	case PART_MEMORY_RAM_SAVE:
+	case PART_PROCESSOR_UPD7725:
+	case PART_PROCESSOR_UPD7725_MEMORY_ROM_PROGRAM_UPD7725:
+	case PART_PROCESSOR_UPD7725_MEMORY_ROM_DATA_UPD7725:
+	case PART_PROCESSOR_UPD7725_MEMORY_RAM_DATA_UPD7725:
+	case PART_PROCESSOR_UPD7725_OSCILLATOR:
+		return true;
+	}
+	return false;
+}
+
+// Which of the NEC DSPs' programs a game's cartridge has, which its header doesn't say: by the title
+// in its header. The rest have the DSP-1B.
 static const struct {
-	const char* name;
-	const char* romMap[4];
-	u32 romBase[4];
-	u32 romMask[4];
-	const char* ramMap;
-	u32 ramMask;
-} boards[] = {
-	{ "LOROM", { "00-7d,80-ff:8000-ffff" }, { 0 }, { 0x8000 }, NULL, 0 },
-	{ "LOROM-RAM", { "00-7d,80-ff:8000-ffff" }, { 0 }, { 0x8000 }, "70-7d,f0-ff:0000-7fff", 0x8000 },
-	{ "LOROM-RAM#A", { "00-6f,80-ef:8000-ffff" }, { 0 }, { 0x8000 }, "70-7d,f0-ff:0000-ffff", 0x8000 },
-	{ "HIROM", { "00-3f,80-bf:8000-ffff", "40-7d,c0-ff:0000-ffff" }, { 0 }, { 0 }, NULL, 0 },
-	{ "HIROM-RAM", { "00-3f,80-bf:8000-ffff", "40-7d,c0-ff:0000-ffff" }, { 0 }, { 0 }, "20-3f,a0-bf:6000-7fff", 0xe000 },
-	{ "EXHIROM",
-	  { "00-3f:8000-ffff", "40-7d:0000-ffff", "80-bf:8000-ffff", "c0-ff:0000-ffff" },
-	  { 0x400000, 0x400000, 0, 0 },
-	  { 0, 0, 0xc00000, 0xc00000 },
-	  NULL,
-	  0 },
-	{ "EXHIROM-RAM",
-	  { "00-3f:8000-ffff", "40-7d:0000-ffff", "80-bf:8000-ffff", "c0-ff:0000-ffff" },
-	  { 0x400000, 0x400000, 0, 0 },
-	  { 0, 0, 0xc00000, 0xc00000 },
-	  "20-3f,a0-bf:6000-7fff",
-	  0xe000 },
-	{ "EXLOROM", { "00-7d:8000-ffff", "80-ff:8000-ffff" }, { 0x400000, 0 }, { 0x808000, 0x808000 }, NULL, 0 },
-	{ "EXLOROM-RAM",
-	  { "00-7d:8000-ffff", "80-ff:8000-ffff" },
-	  { 0x400000, 0 },
-	  { 0x808000, 0x808000 },
-	  "70-7d,f0-ff:0000-7fff",
-	  0x8000 },
+	const char* title;
+	const char* firmware;
+} necdspFirmwareTable[] = {
+	{ "PILOTWINGS", "dsp1" },
+	{ "DUNGEON MASTER", "dsp2" },
+	// SD Gundam GX, in half-width katakana.
+	{ "SD\xb6\xde\xdd\xc0\xde\xd1GX", "dsp3" },
+	{ "PLANETS CHAMP TG3000", "dsp4" },
+	{ "TOP GEAR 3000", "dsp4" },
 };
-static int boardIndex = -1;
+
+// Whether the header's title is this, padded with spaces or empty bytes.
+static bool titleIs(const char* title) {
+	size_t length = strlen(title);
+	if (length > 21 || memcmp(&rom[headerAddress + 0x10], title, length)) {
+		return false;
+	}
+	for (size_t n = length; n < 21; ++n) {
+		u8 c = rom[headerAddress + 0x10 + n];
+		if (c != 0x20 && c != 0x00 && c != 0xff) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static const char* necdspFirmwareName(void) {
+	for (size_t n = 0; n < sizeof(necdspFirmwareTable) / sizeof(*necdspFirmwareTable); ++n) {
+		if (titleIs(necdspFirmwareTable[n].title)) {
+			return necdspFirmwareTable[n].firmware;
+		}
+	}
+	return "dsp1b";
+}
+
+// The NEC DSP's firmware: 2048 24-bit program words and 1024 16-bit data words, from the end of the
+// dump if it has them there, or from the frontend's "<name>.rom", or "<name>.program.rom" with
+// "<name>.data.rom".
+static bool loadNecdspFirmware(const char* name) {
+	static u8 buffer[0x2000];
+	bool found = false;
+	if (firmwareSize == 0x2000) {
+		memcpy(buffer, rom + romSize, 0x2000);
+		found = true;
+	} else {
+		char file[64];
+		snprintf(file, sizeof(file), "%s.rom", name);
+		if (cartFirmware(file, buffer, 0x2000)) {
+			found = true;
+		} else {
+			snprintf(file, sizeof(file), "%s.program.rom", name);
+			bool program = cartFirmware(file, buffer, 0x1800);
+			snprintf(file, sizeof(file), "%s.data.rom", name);
+			found = program && cartFirmware(file, buffer + 0x1800, 0x800);
+		}
+	}
+	if (!found) {
+		snprintf(cart.missing, sizeof(cart.missing), "%s.rom", name);
+		return false;
+	}
+
+	memset(&necdspFirmware, 0, sizeof(necdspFirmware));
+	for (u32 n = 0; n < 2048; ++n) {
+		necdspFirmware.programROM[n] = buffer[n * 3] | buffer[n * 3 + 1] << 8 | buffer[n * 3 + 2] << 16;
+	}
+	for (u32 n = 0; n < 1024; ++n) {
+		necdspFirmware.dataROM[n] = buffer[0x1800 + n * 2] | buffer[0x1800 + n * 2 + 1] << 8;
+	}
+	return true;
+}
 
 static u8 readRom(u32 address, u8 data) {
 	(void) data;
@@ -334,21 +393,48 @@ bool cartLoad(const u8* data, u32 size) {
 
 	free(cart.ram);
 	memset(&cart, 0, sizeof(cart));
+	boardName(cart.board, sizeof(cart.board));
+
+	// Firmware some dumps carry after the game.
+	u8 typeLo = rom[headerAddress + 0x26] & 15;
+	u8 typeHi = rom[headerAddress + 0x26] >> 4;
+	firmwareSize = 0;
+	if (typeLo >= 0x3 && typeHi == 0x0 && (size & 0x7fff) == 0x2000) {
+		firmwareSize = 0x2000;
+	}
+	romSize = size - firmwareSize;
 	cart.rom = rom;
 	cart.romSize = romSize;
-	boardName(cart.board, sizeof(cart.board));
 
 	u8 region = rom[headerAddress + 0x29];
 	cart.pal = !(region == 0x00 || region == 0x01 || region == 0x0b || region == 0x0d || region == 0x0f || region == 0x10);
 
-	boardIndex = -1;
-	for (size_t n = 0; n < sizeof(boards) / sizeof(*boards); ++n) {
-		if (!strcmp(boards[n].name, cart.board)) {
-			boardIndex = n;
+	board = NULL;
+	for (size_t n = 0; n < sizeof(boardEntries) / sizeof(*boardEntries); ++n) {
+		if (!strcmp(boardEntries[n].name, cart.board)) {
+			board = &boardEntries[n];
 		}
 	}
-	if (boardIndex < 0) {
+	if (!board) {
 		return false;
+	}
+	for (u8 n = 0; n < board->partCount; ++n) {
+		if (!partSupported(board->parts[n])) {
+			snprintf(cart.missing, sizeof(cart.missing), "%s", partNames[board->parts[n]]);
+			return false;
+		}
+		if (board->parts[n] == PART_PROCESSOR_UPD7725) {
+			cart.necdsp = true;
+		}
+	}
+
+	if (cart.necdsp) {
+		if (!loadNecdspFirmware(necdspFirmwareName())) {
+			return false;
+		}
+		memset(&necdsp, 0, sizeof(necdsp));
+		necdsp.uPD96050 = false;
+		necdsp.frequency = 7600000;
 	}
 
 	// Save RAM starts out as 0xff.
@@ -361,18 +447,37 @@ bool cartLoad(const u8* data, u32 size) {
 }
 
 void cartMap(void) {
-	if (boardIndex < 0) {
+	if (!board) {
 		return;
 	}
-	for (int n = 0; n < 4 && boards[boardIndex].romMap[n]; ++n) {
-		busMap(readRom, writeRom, boards[boardIndex].romMap[n], cart.romSize, boards[boardIndex].romBase[n],
-		       boards[boardIndex].romMask[n]);
-	}
-	if (boards[boardIndex].ramMap && cart.ramSize) {
-		busMap(readRam, writeRam, boards[boardIndex].ramMap, cart.ramSize, 0, boards[boardIndex].ramMask);
+	for (u8 n = 0; n < board->mapCount; ++n) {
+		const struct BoardMap* map = &board->maps[n];
+		switch (map->part) {
+		case PART_MEMORY_ROM_PROGRAM:
+			busMap(readRom, writeRom, map->address, map->size ? map->size : cart.romSize, map->base, map->mask);
+			break;
+		case PART_MEMORY_RAM_SAVE:
+			if (cart.ramSize) {
+				busMap(readRam, writeRam, map->address, map->size ? map->size : cart.ramSize, map->base, map->mask);
+			}
+			break;
+		case PART_PROCESSOR_UPD7725:
+			busMap(necdspRead, necdspWrite, map->address, map->size, map->base, map->mask);
+			break;
+		}
 	}
 }
 
 void cartPower(bool reset) {
 	(void) reset;
+	if (cart.necdsp) {
+		necdspPower();
+	}
+}
+
+// The coprocessors, brought up to the CPU's clock.
+void cartSync(void) {
+	if (cart.necdsp && necdsp.th.clock < cpu.th.clock) {
+		necdspRun();
+	}
 }

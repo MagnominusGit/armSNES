@@ -12,7 +12,7 @@
 //      INPUT=1 (presses buttons on a fixed schedule), PPMOUT (the last frame as a picture),
 //      RAWOUT and RAWFRAME (the canvas of that frame, counted from 1), HASHLOG (a hash of the saved
 //      state after every frame), RUNAHEAD=n (after each frame, n more are run and undone by a state),
-//      RESETAT=n (the reset button is pressed after frame n)
+//      RESETAT=n (the reset button is pressed after frame n), SYSDIR (where chip firmware is)
 
 static FILE* frameLog;
 static FILE* audioOut;
@@ -69,6 +69,18 @@ void videoFrame(const u32* canvas) {
 	}
 }
 
+bool cartFirmware(const char* name, u8* data, size_t size) {
+	char path[4096];
+	snprintf(path, sizeof(path), "%s/%s", getenv("SYSDIR") ? getenv("SYSDIR") : ".", name);
+	FILE* file = fopen(path, "rb");
+	if (!file) {
+		return false;
+	}
+	bool read = fread(data, 1, size, file) == size;
+	fclose(file);
+	return read;
+}
+
 // The buttons a test run holds: Start, then A, then the D-pad, round and round. Both this and the
 // reference runner go by the number of frames finished.
 u16 inputPoll(int port) {
@@ -116,7 +128,7 @@ int main(int argc, char** argv) {
 	bool supported = cartLoad(rom, size);
 	printf("board=%s region=%s\n", cart.board, cart.pal ? "PAL" : "NTSC");
 	if (!supported) {
-		fprintf(stderr, "this board isn't supported yet\n");
+		fprintf(stderr, "can't load it without %s\n", cart.missing);
 		return 3;
 	}
 

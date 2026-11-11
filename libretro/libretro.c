@@ -93,6 +93,22 @@ void audioSample(s16 left, s16 right) {
 	}
 }
 
+bool cartFirmware(const char* name, u8* data, size_t size) {
+	const char* folder = NULL;
+	if (!environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &folder) || !folder) {
+		return false;
+	}
+	char path[4096];
+	snprintf(path, sizeof(path), "%s/%s", folder, name);
+	FILE* file = fopen(path, "rb");
+	if (!file) {
+		return false;
+	}
+	bool read = fread(data, 1, size, file) == size;
+	fclose(file);
+	return read;
+}
+
 // The joypad's buttons are numbered as the pad's shift register sends them.
 static u16 held[2];
 
@@ -253,7 +269,7 @@ bool retro_load_game(const struct retro_game_info* info) {
 	memcpy(game, info->data, info->size);
 	if (!cartLoad(game, info->size)) {
 		if (logPrintf) {
-			logPrintf(RETRO_LOG_ERROR, "armSNES: the %s board isn't supported yet\n", cart.board);
+			logPrintf(RETRO_LOG_ERROR, "armSNES: the %s board can't be loaded without %s\n", cart.board, cart.missing);
 		}
 		free(game);
 		game = NULL;

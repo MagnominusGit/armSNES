@@ -389,12 +389,20 @@ struct Cart {
 	u32 ramSize;
 	bool pal;
 	char board[32];
+	// What a game couldn't be loaded without: a part of its board this core lacks, or a firmware file.
+	char missing[64];
+	bool necdsp;
 };
 extern struct Cart cart;
 
-// Works out the board from the game's header. False if it is no game or its board isn't here yet.
+// Works out the board from the game's header. False if it is no game, if its board needs what this
+// core hasn't got (cart.missing says what), or if its firmware isn't to be had.
 bool cartLoad(const u8* rom, u32 size);
 void cartPower(bool reset);
+// Brings the cartridge's processors up to the CPU's clock.
+void cartSync(void);
+// The frontend's: fills data with size bytes of the firmware file of that name. False if it has none.
+bool cartFirmware(const char* name, u8* data, size_t size);
 
 // --- Controllers ---
 
@@ -682,5 +690,43 @@ size_t stateSize(void);
 bool stateSave(void* data, size_t size);
 // False if the state is another build's, another game's, or cut short.
 bool stateLoad(const void* data, size_t size);
+
+// --- NEC uPD7725 / uPD96050 (DSP-1 to DSP-4, ST010, ST011) ---
+
+struct NecDspFlag {
+	bool ov0, ov1, z, c, s0, s1;
+};
+struct NecDspStatus {
+	bool p0, p1, ei, sic, soc, drc, dma, drs, usf0, usf1, rqm;
+};
+struct NecDsp {
+	struct Thread th;
+	u32 frequency;
+	bool uPD96050;
+	u16 stack[16];
+	u16 pc, rp, dp;
+	u8 sp;
+	u16 si, so;
+	s16 k, l, m, n, a, b;
+	u16 tr, trb, dr;
+	struct NecDspStatus sr;
+	bool siack, soack;
+	struct NecDspFlag flagA, flagB;
+	u16 dataRAM[2048];
+};
+// The chip's program and data ROMs: the firmware, not part of a saved state.
+struct NecDspFirmware {
+	u32 programROM[16384];
+	u16 dataROM[2048];
+};
+extern struct NecDsp necdsp;
+extern struct NecDspFirmware necdspFirmware;
+
+void necdspPower(void);
+void necdspRun(void);
+u8 necdspRead(u32 address, u8 data);
+void necdspWrite(u32 address, u8 data);
+u8 necdspReadRAM(u32 address, u8 data);
+void necdspWriteRAM(u32 address, u8 data);
 
 #endif

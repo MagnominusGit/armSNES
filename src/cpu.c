@@ -90,6 +90,7 @@ static void scanline(void) {
 	// Even if nothing made them talk, the processors are brought together once a line.
 	syncSmp();
 	syncPpu();
+	cartSync();
 
 	if (cpu.counter.vcounter == 0) {
 		// HDMA is set up once a frame.

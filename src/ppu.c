@@ -1696,6 +1696,25 @@ static inline void tick2(void) {
 	}
 }
 
+static inline void tickN(u32 clocks) {
+	ppu.counter.hcounter += clocks;
+	if (ppu.counter.hcounter >= ppu.counter.hperiod) {
+		ppu.counter.lastHperiod = ppu.counter.hperiod;
+		ppu.counter.hcounter -= ppu.counter.hperiod;
+		counterTickScanline(&ppu.counter);
+	}
+}
+
+// How many of these two-clock steps the PPU takes before its clock is past the CPU's.
+static inline u32 stepsBeforeCpu(u32 wait) {
+	u64 step = ppu.th.scalar * 2;
+	if (cpu.th.clock < ppu.th.clock) {
+		return 1;
+	}
+	u64 steps = (cpu.th.clock - ppu.th.clock) / step + 1;
+	return steps < wait ? steps : wait;
+}
+
 // The PPU can stop after any two-clock step and come back to it: ppu.resume says where, and what it
 // was in the middle of is in ppu, never in a local variable.
 #define STOP_(n) \
@@ -1714,9 +1733,17 @@ static inline void tick2(void) {
 			STOP(); \
 		} \
 	} while (0)
+// Steps the PPU does nothing in but wait go in one: as many as it can take before it is past the CPU,
+// and at most to the end of the line.
 #define STEP(clocks) \
-	for (ppu.wait = (clocks) >> 1; ppu.wait; --ppu.wait) { \
-		STEP1(); \
+	for (ppu.wait = (clocks) >> 1; ppu.wait;) { \
+		u32 steps = stepsBeforeCpu(ppu.wait); \
+		ppu.wait -= steps; \
+		tickN(steps * 2); \
+		ppu.th.clock += ppu.th.scalar * 2 * steps; \
+		if (cpu.th.clock < ppu.th.clock) { \
+			STOP(); \
+		} \
 	}
 
 #define F ppu.fetch

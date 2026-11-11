@@ -266,6 +266,13 @@ static bool partSupported(u16 part) {
 	case PART_PROCESSOR_UPD96050_MEMORY_ROM_DATA_UPD96050:
 	case PART_PROCESSOR_UPD96050_MEMORY_RAM_DATA_UPD96050:
 	case PART_PROCESSOR_UPD96050_OSCILLATOR:
+	case PART_PROCESSOR_W65C816S:
+	case PART_PROCESSOR_W65C816S_MCU:
+	case PART_PROCESSOR_W65C816S_MCU_MEMORY_ROM_PROGRAM:
+	case PART_PROCESSOR_W65C816S_MEMORY_RAM_SAVE:
+	case PART_PROCESSOR_W65C816S_MEMORY_RAM_INTERNAL:
+	// A memory-pack slot left empty.
+	case PART_PROCESSOR_W65C816S_MCU_SLOT_BSMEMORY:
 		return true;
 	}
 	return false;
@@ -442,6 +449,9 @@ bool cartLoad(const u8* data, u32 size) {
 			snprintf(cart.missing, sizeof(cart.missing), "%s", partNames[board->parts[n]]);
 			return false;
 		}
+		if (board->parts[n] == PART_PROCESSOR_W65C816S) {
+			cart.sa1 = true;
+		}
 		if (board->parts[n] == PART_PROCESSOR_UPD7725 || board->parts[n] == PART_PROCESSOR_UPD96050) {
 			cart.necdsp = true;
 			necdsp.uPD96050 = board->parts[n] == PART_PROCESSOR_UPD96050;
@@ -508,6 +518,18 @@ void cartMap(void) {
 		case PART_PROCESSOR_UPD96050_MEMORY_RAM_DATA_UPD96050:
 			busMap(necdspReadRAM, necdspWriteRAM, map->address, map->size, map->base, map->mask);
 			break;
+		case PART_PROCESSOR_W65C816S:
+			busMap(sa1ReadIOCPU, sa1WriteIOCPU, map->address, map->size, map->base, map->mask);
+			break;
+		case PART_PROCESSOR_W65C816S_MCU:
+			busMap(sa1ReadRomCPU, sa1WriteRomCPU, map->address, map->size, map->base, map->mask);
+			break;
+		case PART_PROCESSOR_W65C816S_MEMORY_RAM_SAVE:
+			busMap(sa1ReadBwramCPU, sa1WriteBwramCPU, map->address, map->size, map->base, map->mask);
+			break;
+		case PART_PROCESSOR_W65C816S_MEMORY_RAM_INTERNAL:
+			busMap(sa1ReadIramCPU, sa1WriteIramCPU, map->address, map->size, map->base, map->mask);
+			break;
 		}
 	}
 }
@@ -517,11 +539,17 @@ void cartPower(bool reset) {
 	if (cart.necdsp) {
 		necdspPower();
 	}
+	if (cart.sa1) {
+		sa1Power();
+	}
 }
 
 // The coprocessors, brought up to the CPU's clock.
 void cartSync(void) {
 	if (cart.necdsp && necdsp.th.clock < cpu.th.clock) {
 		necdspRun();
+	}
+	if (cart.sa1 && sa1.th.clock < cpu.th.clock) {
+		sa1Run();
 	}
 }

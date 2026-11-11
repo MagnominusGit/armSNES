@@ -253,6 +253,10 @@ struct W65816 {
 	u32 mar;
 	u8 mdr;
 	union Reg24 u, v, w;
+	// A resumable 65816's (the SA-1's): the address of the access under way and its data.
+	u32 ad;
+	u8 dr, dw;
+	u8 op;
 };
 
 struct DmaChannel {
@@ -392,6 +396,7 @@ struct Cart {
 	// What a game couldn't be loaded without: a part of its board this core lacks, or a firmware file.
 	char missing[64];
 	bool necdsp;
+	bool sa1;
 	// What the game saves to: the save RAM, or a chip's own memory. Little-endian hosts only.
 	u8* saveRam;
 	u32 saveRamSize;
@@ -731,5 +736,86 @@ u8 necdspRead(u32 address, u8 data);
 void necdspWrite(u32 address, u8 data);
 u8 necdspReadRAM(u32 address, u8 data);
 void necdspWriteRAM(u32 address, u8 data);
+
+// --- SA-1 ---
+
+struct Sa1 {
+	struct Thread th;
+	struct W65816 r;
+
+	// Where it stopped, and the calls into its reads, writes and idle cycles it was in.
+	u32 state;
+	u32 stack[4];
+	u8 depth;
+
+	struct {
+		bool interruptPending;
+		u16 scanlines;
+		u16 vcounter;
+		u16 hcounter;
+	} status;
+	u32 dmaLine;
+	bool bwramDma;
+	// A normal DMA one of its writes started, and what it has between steps.
+	bool dmaStart;
+	u8 dmaData;
+	u32 dmaSource;
+	u32 dmaTarget;
+
+	struct {
+		bool sa1_irq, sa1_rdyb, sa1_resb, sa1_nmi;
+		u8 smeg;
+		bool cpu_irqen, chdma_irqen;
+		bool cpu_irqcl, chdma_irqcl;
+		u16 crv, cnv, civ;
+		bool cpu_irq, cpu_ivsw, cpu_nvsw;
+		u8 cmeg;
+		bool sa1_irqen, timer_irqen, dma_irqen, sa1_nmien;
+		bool sa1_irqcl, timer_irqcl, dma_irqcl, sa1_nmicl;
+		u16 snv, siv;
+		bool hvselb, ven, hen;
+		u16 hcnt, vcnt;
+		bool cbmode, dbmode, ebmode, fbmode;
+		u32 cb, db, eb, fb;
+		u8 sbm;
+		bool sw46;
+		u8 cbm;
+		bool swen, cwen;
+		u8 bwp, siwp, ciwp;
+		bool dmaen, dprio, cden, cdsel, dd;
+		u8 sd;
+		bool chdend;
+		u8 dmasize, dmacb;
+		u32 dsa, dda;  // 24 bits
+		u16 dtc;
+		bool bbf;
+		u8 brf[16];
+		bool acm, md;
+		u16 ma, mb;
+		bool hl;
+		u8 vb;
+		u32 va;  // 24 bits
+		u8 vbit;
+		bool cpu_irqfl, chdma_irqfl;
+		bool sa1_irqfl, timer_irqfl, dma_irqfl, sa1_nmifl;
+		u16 hcr, vcr;
+		u64 mr;
+		bool overflow;
+	} io;
+
+	u8 iram[0x800];
+};
+extern struct Sa1 sa1;
+
+void sa1Power(void);
+void sa1Run(void);
+u8 sa1ReadIOCPU(u32 address, u8 data);
+void sa1WriteIOCPU(u32 address, u8 data);
+u8 sa1ReadRomCPU(u32 address, u8 data);
+void sa1WriteRomCPU(u32 address, u8 data);
+u8 sa1ReadBwramCPU(u32 address, u8 data);
+void sa1WriteBwramCPU(u32 address, u8 data);
+u8 sa1ReadIramCPU(u32 address, u8 data);
+void sa1WriteIramCPU(u32 address, u8 data);
 
 #endif

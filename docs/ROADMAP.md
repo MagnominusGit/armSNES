@@ -47,6 +47,10 @@ pictures and sound as x86. With the dot renderer a Raspberry Pi 5 runs at about 
 Phase 2: lines are drawn in spans, a layer at a time, and give the same machine state as the dot
 renderer after every frame. SIMD comes with the speed work.
 
-Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips so far: the NEC DSP
-(DSP-1 to DSP-4, ST010, ST011), with firmware from the frontend's system folder or the end of the
-dump.
+Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips so far:
+
+- the NEC DSP (DSP-1 to DSP-4, ST010, ST011), with firmware from the frontend's system folder or the
+  end of the dump;
+- the SA-1, on a 65816 that can stop at any clock step: `tools/resumable65816.py` makes it from the
+  S-CPU's (`src/w65816r.inc`), with reads, writes and idle cycles as subroutines of the SA-1's state
+  machine. A memory-pack slot on its board is left empty for now.

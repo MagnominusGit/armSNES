@@ -12,17 +12,17 @@
 // A state is taken between frames. The canvas is usually clear then, but not after a DMA that ran on
 // into the next frame.
 
-enum { STATE_MAGIC = 0x534e5341, STATE_VERSION = 2 };
+enum { STATE_MAGIC = 0x534e5341, STATE_VERSION = 3 };
 
 struct StateHeader {
 	u32 magic;
 	u32 version;
-	u32 sizes[7];
+	u32 sizes[8];
 	u32 ramSize;
 	u32 reserved;
 };
 
-static void layout(u32 sizes[7]) {
+static void layout(u32 sizes[8]) {
 	sizes[0] = sizeof(sys);
 	sizes[1] = sizeof(cpu);
 	sizes[2] = sizeof(smp);
@@ -30,11 +30,12 @@ static void layout(u32 sizes[7]) {
 	sizes[4] = sizeof(ppu);
 	sizes[5] = sizeof(input);
 	sizes[6] = sizeof(necdsp);
+	sizes[7] = sizeof(sa1);
 }
 
 size_t stateSize(void) {
 	return sizeof(struct StateHeader) + sizeof(sys) + sizeof(cpu) + sizeof(smp) + sizeof(dsp) + sizeof(ppu) + sizeof(input) +
-		sizeof(necdsp) + cart.ramSize + sizeof(ppuCanvas);
+		sizeof(necdsp) + sizeof(sa1) + cart.ramSize + sizeof(ppuCanvas);
 }
 
 #define PUT(object) \
@@ -64,6 +65,7 @@ bool stateSave(void* data, size_t size) {
 	PUT(ppu);
 	PUT(input);
 	PUT(necdsp);
+	PUT(sa1);
 	memcpy(out, cart.ram, cart.ramSize);
 	out += cart.ramSize;
 	memcpy(out, ppuCanvas, ppu.drawnTo * sizeof(u32));
@@ -79,7 +81,7 @@ bool stateLoad(const void* data, size_t size) {
 	}
 	memcpy(&header, data, sizeof(header));
 
-	u32 sizes[7];
+	u32 sizes[8];
 	layout(sizes);
 	if (header.magic != STATE_MAGIC || header.version != STATE_VERSION || memcmp(header.sizes, sizes, sizeof(sizes)) ||
 	    header.ramSize != cart.ramSize || size < stateSize()) {
@@ -97,6 +99,7 @@ bool stateLoad(const void* data, size_t size) {
 	GET(ppu);
 	GET(input);
 	GET(necdsp);
+	GET(sa1);
 	memcpy(cart.ram, in, cart.ramSize);
 	in += cart.ramSize;
 

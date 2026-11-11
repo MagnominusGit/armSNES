@@ -92,7 +92,9 @@ void systemPower(bool reset) {
 	smp.th.clock = 1;
 	dsp.th.clock = 2;
 	ppu.th.clock = 3;
+	// A cartridge has one coprocessor at most, and it comes next.
 	necdsp.th.clock = 4;
+	sa1.th.clock = 4;
 }
 
 // The PPU finished a frame. The clocks all drop by the same amount, so they never overflow.
@@ -110,12 +112,18 @@ void systemFrameEvent(void) {
 	if (cart.necdsp && necdsp.th.clock - 4 < minimum) {
 		minimum = necdsp.th.clock - 4;
 	}
+	if (cart.sa1 && sa1.th.clock - 4 < minimum) {
+		minimum = sa1.th.clock - 4;
+	}
 	cpu.th.clock -= minimum;
 	smp.th.clock -= minimum;
 	dsp.th.clock -= minimum;
 	ppu.th.clock -= minimum;
 	if (cart.necdsp) {
 		necdsp.th.clock -= minimum;
+	}
+	if (cart.sa1) {
+		sa1.th.clock -= minimum;
 	}
 
 	sys.frames++;

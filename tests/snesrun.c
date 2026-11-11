@@ -40,8 +40,13 @@ void audioSample(s16 left, s16 right) {
 	}
 }
 
+static u32 lastFrame;
+
 void videoFrame(const u32* canvas) {
-	lastHash = fnv(14695981039346656037ull, canvas, CANVAS_WIDTH * rows * sizeof(u32));
+	// Only the frames that are logged, and the last, are hashed, so timings are the core's.
+	if (frameLog || sys.frames + 1 >= lastFrame) {
+		lastHash = fnv(14695981039346656037ull, canvas, CANVAS_WIDTH * rows * sizeof(u32));
+	}
 	if (frameLog) {
 		fprintf(frameLog, "%u %016llx\n", sys.frames, (unsigned long long) lastHash);
 	}
@@ -135,6 +140,7 @@ int main(int argc, char** argv) {
 	u8* ahead = malloc(stateBytes);
 
 	u32 frames = atoi(argv[2]);
+	lastFrame = frames;
 	clock_t start = clock();
 	int resetAt = getenv("RESETAT") ? atoi(getenv("RESETAT")) : -1;
 	while (sys.frames < frames) {

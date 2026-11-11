@@ -62,7 +62,8 @@ static void bgBegin(struct Background* bg) {
 	}
 }
 
-static void bgFetchNameTable(struct Background* bg) {
+// optH and optV are BG3's offset-per-tile values as they are when this fetch happens.
+static void bgFetchNameTable(struct Background* bg, u16 optH, u16 optV) {
 	if (VCOUNTER == 0) {
 		return;
 	}
@@ -92,8 +93,8 @@ static void bgFetchNameTable(struct Background* bg) {
 		u32 voffset = vpixel + vscroll;
 
 		if (ppu.io.bgMode == 2 || ppu.io.bgMode == 4 || ppu.io.bgMode == 6) {
-			u32 hlookup = ppu.bg[2].opt.hoffset;
-			u32 vlookup = ppu.bg[2].opt.voffset;
+			u32 hlookup = optH;
+			u32 vlookup = optV;
 			u32 valid = 13 + bg->id;
 
 			if (ppu.io.bgMode == 4) {
@@ -1589,112 +1590,162 @@ static void lineStart(void) {
 	}
 }
 
-// What each background mode fetches in the eight slots of a tile's 32 clocks.
-static void backgroundFetch(u32 slot) {
-	struct Background* bg = ppu.bg;
-	switch (ppu.io.bgMode << 3 | slot) {
-	case 0 << 3 | 0: bgFetchNameTable(&bg[3]); break;
-	case 0 << 3 | 1: bgFetchNameTable(&bg[2]); break;
-	case 0 << 3 | 2: bgFetchNameTable(&bg[1]); break;
-	case 0 << 3 | 3: bgFetchNameTable(&bg[0]); break;
-	case 0 << 3 | 4: bgFetchCharacter(&bg[3], 0, 0); break;
-	case 0 << 3 | 5: bgFetchCharacter(&bg[2], 0, 0); break;
-	case 0 << 3 | 6: bgFetchCharacter(&bg[1], 0, 0); break;
-	case 0 << 3 | 7: bgFetchCharacter(&bg[0], 0, 0); break;
+// What each background mode fetches in the eight slots of a tile's 32 clocks: what, for which
+// background, and the fetch's arguments.
+enum { FETCH_NONE, FETCH_NAME, FETCH_OFFSET, FETCH_CHARACTER };
+struct Fetch {
+	u8 kind;
+	u8 bg;
+	u8 a;
+	u8 b;
+};
+static const struct Fetch fetches[8][8] = {
+	{ { FETCH_NAME, 3, 0, 0 }, { FETCH_NAME, 2, 0, 0 }, { FETCH_NAME, 1, 0, 0 }, { FETCH_NAME, 0, 0, 0 }, { FETCH_CHARACTER, 3, 0, 0 }, { FETCH_CHARACTER, 2, 0, 0 }, { FETCH_CHARACTER, 1, 0, 0 }, { FETCH_CHARACTER, 0, 0, 0 } },
+	{ { FETCH_NAME, 2, 0, 0 }, { FETCH_NAME, 1, 0, 0 }, { FETCH_NAME, 0, 0, 0 }, { FETCH_CHARACTER, 2, 0, 0 }, { FETCH_CHARACTER, 1, 0, 0 }, { FETCH_CHARACTER, 1, 1, 0 }, { FETCH_CHARACTER, 0, 0, 0 }, { FETCH_CHARACTER, 0, 1, 0 } },
+	{ { FETCH_NAME, 1, 0, 0 }, { FETCH_NAME, 0, 0, 0 }, { FETCH_OFFSET, 2, 0, 0 }, { FETCH_OFFSET, 2, 8, 0 }, { FETCH_CHARACTER, 1, 0, 0 }, { FETCH_CHARACTER, 1, 1, 0 }, { FETCH_CHARACTER, 0, 0, 0 }, { FETCH_CHARACTER, 0, 1, 0 } },
+	{ { FETCH_NAME, 1, 0, 0 }, { FETCH_NAME, 0, 0, 0 }, { FETCH_CHARACTER, 1, 0, 0 }, { FETCH_CHARACTER, 1, 1, 0 }, { FETCH_CHARACTER, 0, 0, 0 }, { FETCH_CHARACTER, 0, 1, 0 }, { FETCH_CHARACTER, 0, 2, 0 }, { FETCH_CHARACTER, 0, 3, 0 } },
+	{ { FETCH_NAME, 1, 0, 0 }, { FETCH_NAME, 0, 0, 0 }, { FETCH_OFFSET, 2, 0, 0 }, { FETCH_CHARACTER, 1, 0, 0 }, { FETCH_CHARACTER, 0, 0, 0 }, { FETCH_CHARACTER, 0, 1, 0 }, { FETCH_CHARACTER, 0, 2, 0 }, { FETCH_CHARACTER, 0, 3, 0 } },
+	{ { FETCH_NAME, 1, 0, 0 }, { FETCH_NAME, 0, 0, 0 }, { FETCH_CHARACTER, 1, 0, 0 }, { FETCH_CHARACTER, 1, 0, 1 }, { FETCH_CHARACTER, 0, 0, 0 }, { FETCH_CHARACTER, 0, 1, 0 }, { FETCH_CHARACTER, 0, 0, 1 }, { FETCH_CHARACTER, 0, 1, 1 } },
+	{ { FETCH_NAME, 1, 0, 0 }, { FETCH_NAME, 0, 0, 0 }, { FETCH_OFFSET, 2, 0, 0 }, { FETCH_OFFSET, 2, 8, 0 }, { FETCH_CHARACTER, 0, 0, 0 }, { FETCH_CHARACTER, 0, 1, 0 }, { FETCH_CHARACTER, 0, 0, 1 }, { FETCH_CHARACTER, 0, 1, 1 } },
+	// Mode 7 fetches as it draws.
+	{ { 0 } },
+};
 
-	case 1 << 3 | 0: bgFetchNameTable(&bg[2]); break;
-	case 1 << 3 | 1: bgFetchNameTable(&bg[1]); break;
-	case 1 << 3 | 2: bgFetchNameTable(&bg[0]); break;
-	case 1 << 3 | 3: bgFetchCharacter(&bg[2], 0, 0); break;
-	case 1 << 3 | 4: bgFetchCharacter(&bg[1], 0, 0); break;
-	case 1 << 3 | 5: bgFetchCharacter(&bg[1], 1, 0); break;
-	case 1 << 3 | 6: bgFetchCharacter(&bg[0], 0, 0); break;
-	case 1 << 3 | 7: bgFetchCharacter(&bg[0], 1, 0); break;
-
-	case 2 << 3 | 0: bgFetchNameTable(&bg[1]); break;
-	case 2 << 3 | 1: bgFetchNameTable(&bg[0]); break;
-	case 2 << 3 | 2: bgFetchOffset(&bg[2], 0); break;
-	case 2 << 3 | 3: bgFetchOffset(&bg[2], 8); break;
-	case 2 << 3 | 4: bgFetchCharacter(&bg[1], 0, 0); break;
-	case 2 << 3 | 5: bgFetchCharacter(&bg[1], 1, 0); break;
-	case 2 << 3 | 6: bgFetchCharacter(&bg[0], 0, 0); break;
-	case 2 << 3 | 7: bgFetchCharacter(&bg[0], 1, 0); break;
-
-	case 3 << 3 | 0: bgFetchNameTable(&bg[1]); break;
-	case 3 << 3 | 1: bgFetchNameTable(&bg[0]); break;
-	case 3 << 3 | 2: bgFetchCharacter(&bg[1], 0, 0); break;
-	case 3 << 3 | 3: bgFetchCharacter(&bg[1], 1, 0); break;
-	case 3 << 3 | 4: bgFetchCharacter(&bg[0], 0, 0); break;
-	case 3 << 3 | 5: bgFetchCharacter(&bg[0], 1, 0); break;
-	case 3 << 3 | 6: bgFetchCharacter(&bg[0], 2, 0); break;
-	case 3 << 3 | 7: bgFetchCharacter(&bg[0], 3, 0); break;
-
-	case 4 << 3 | 0: bgFetchNameTable(&bg[1]); break;
-	case 4 << 3 | 1: bgFetchNameTable(&bg[0]); break;
-	case 4 << 3 | 2: bgFetchOffset(&bg[2], 0); break;
-	case 4 << 3 | 3: bgFetchCharacter(&bg[1], 0, 0); break;
-	case 4 << 3 | 4: bgFetchCharacter(&bg[0], 0, 0); break;
-	case 4 << 3 | 5: bgFetchCharacter(&bg[0], 1, 0); break;
-	case 4 << 3 | 6: bgFetchCharacter(&bg[0], 2, 0); break;
-	case 4 << 3 | 7: bgFetchCharacter(&bg[0], 3, 0); break;
-
-	case 5 << 3 | 0: bgFetchNameTable(&bg[1]); break;
-	case 5 << 3 | 1: bgFetchNameTable(&bg[0]); break;
-	case 5 << 3 | 2: bgFetchCharacter(&bg[1], 0, 0); break;
-	case 5 << 3 | 3: bgFetchCharacter(&bg[1], 0, 1); break;
-	case 5 << 3 | 4: bgFetchCharacter(&bg[0], 0, 0); break;
-	case 5 << 3 | 5: bgFetchCharacter(&bg[0], 1, 0); break;
-	case 5 << 3 | 6: bgFetchCharacter(&bg[0], 0, 1); break;
-	case 5 << 3 | 7: bgFetchCharacter(&bg[0], 1, 1); break;
-
-	case 6 << 3 | 0: bgFetchNameTable(&bg[1]); break;
-	case 6 << 3 | 1: bgFetchNameTable(&bg[0]); break;
-	case 6 << 3 | 2: bgFetchOffset(&bg[2], 0); break;
-	case 6 << 3 | 3: bgFetchOffset(&bg[2], 8); break;
-	case 6 << 3 | 4: bgFetchCharacter(&bg[0], 0, 0); break;
-	case 6 << 3 | 5: bgFetchCharacter(&bg[0], 1, 0); break;
-	case 6 << 3 | 6: bgFetchCharacter(&bg[0], 0, 1); break;
-	case 6 << 3 | 7: bgFetchCharacter(&bg[0], 1, 1); break;
+static void doFetch(const struct Fetch* fetch, u16 optH, u16 optV) {
+	struct Background* bg = &ppu.bg[fetch->bg];
+	switch (fetch->kind) {
+	case FETCH_NAME:
+		bgFetchNameTable(bg, optH, optV);
+		break;
+	case FETCH_OFFSET:
+		bgFetchOffset(bg, fetch->a);
+		break;
+	case FETCH_CHARACTER:
+		bgFetchCharacter(bg, fetch->a, fetch->b);
+		break;
 	}
 }
 
-// One two-clock slot of a line that draws.
-static void cycle(u32 at) {
-	if (at <= 1016 && at % 8 == 0) {
-		objEvaluate(HCOUNTER >> 3);
-	}
-	if (at <= 1054 && at % 4 == 0) {
-		backgroundFetch(at / 4 & 7);
-	}
-	if (at == 56) {
-		for (int n = 0; n < 4; ++n) {
-			bgBegin(&ppu.bg[n]);
+// The dots from H = start to H = end of a line that draws, with no write from outside between them.
+//
+// In the hardware each two-clock slot does a little of everything: a sprite is evaluated, a tile
+// fetched, the backgrounds shift out a pixel, and the window and color math put one together. Here
+// each of those is done for the whole span on its own, which gives the same results: the
+// backgrounds share nothing but BG3's offset-per-tile values, which are noted as the other two fetch
+// with them, and what the window does to a background's pixel is gone by its next one.
+//
+// A slot at H = 56 + 4x shifts out the sub screen's pixel x, the one at 58 + 4x the main screen's,
+// and puts pixel x together.
+#if defined(ARMSNES_DOT)
+// The dots one at a time, as the hardware does them: the reference the spans are checked against.
+static void renderSpan(u32 start, u32 end) {
+	for (u32 at = start; at < end; at += 2) {
+		ppu.counter.hcounter = at;
+		if (at <= 1016 && at % 8 == 0) {
+			objEvaluate(at >> 3);
+		}
+		if (at <= 1054 && at % 4 == 0) {
+			const struct Fetch* fetch = &fetches[ppu.io.bgMode][at / 4 & 7];
+			if (fetch->kind != FETCH_NONE) {
+				doFetch(fetch, ppu.bg[2].opt.hoffset, ppu.bg[2].opt.voffset);
+			}
+		}
+		if (at == 56) {
+			for (int n = 0; n < 4; ++n) {
+				bgBegin(&ppu.bg[n]);
+			}
+		}
+		if (at >= 56 && at <= 1078) {
+			if ((at - 56) % 4 == 0) {
+				for (int n = 0; n < 4; ++n) {
+					bgRun(&ppu.bg[n], 1);
+				}
+			} else {
+				for (int n = 0; n < 4; ++n) {
+					bgRun(&ppu.bg[n], 0);
+				}
+				objRun();
+				windowRun();
+				dacRun();
+			}
 		}
 	}
-	if (at >= 56 && at <= 1078) {
-		if ((at - 56) % 4 == 0) {
-			for (int n = 0; n < 4; ++n) {
-				bgRun(&ppu.bg[n], 1);
+	ppu.counter.hcounter = start;
+}
+#else
+static struct BgPixel spanAbove[4][256];
+static struct BgPixel spanBelow[4][256];
+static u16 spanOptH[540];
+static u16 spanOptV[540];
+
+static void renderSpan(u32 start, u32 end) {
+	for (u32 at = start; at < end && at <= 1016; at += 2) {
+		if (at % 8 == 0) {
+			ppu.counter.hcounter = at;
+			objEvaluate(at >> 3);
+		}
+	}
+
+	const struct Fetch* modeFetches = fetches[ppu.io.bgMode];
+	static const u8 order[4] = { 2, 0, 1, 3 };
+	__typeof__(ppu.bg[0].output) endOutput[4];
+
+	for (int i = 0; i < 4; ++i) {
+		u32 n = order[i];
+		struct Background* bg = &ppu.bg[n];
+		for (u32 at = start; at < end; at += 2) {
+			ppu.counter.hcounter = at;
+			if (at <= 1054 && at % 4 == 0) {
+				const struct Fetch* fetch = &modeFetches[at / 4 & 7];
+				if (n == 2 && fetch->kind == FETCH_NAME) {
+					spanOptH[at >> 1] = bg->opt.hoffset;
+					spanOptV[at >> 1] = bg->opt.voffset;
+				}
+				if (fetch->kind != FETCH_NONE && fetch->bg == n) {
+					doFetch(fetch, spanOptH[at >> 1], spanOptV[at >> 1]);
+				}
 			}
-		} else {
+			if (at == 56) {
+				bgBegin(bg);
+			}
+			if (at >= 56 && at <= 1078) {
+				if ((at - 56) % 4 == 0) {
+					bgRun(bg, 1);
+				} else {
+					bgRun(bg, 0);
+					spanAbove[n][(at - 58) >> 2] = bg->output.above;
+					spanBelow[n][(at - 58) >> 2] = bg->output.below;
+				}
+			}
+		}
+		endOutput[n] = bg->output;
+	}
+
+	for (u32 at = start; at < end; at += 2) {
+		if (at >= 58 && at <= 1078 && (at - 56) % 4 == 2) {
+			u32 x = (at - 58) >> 2;
+			ppu.counter.hcounter = at;
 			for (int n = 0; n < 4; ++n) {
-				bgRun(&ppu.bg[n], 0);
+				ppu.bg[n].output.above = spanAbove[n][x];
+				ppu.bg[n].output.below = spanBelow[n][x];
 			}
 			objRun();
 			windowRun();
 			dacRun();
 		}
 	}
-}
 
-static inline void tick2(void) {
-	ppu.counter.hcounter += 2;
-	if (ppu.counter.hcounter >= ppu.counter.hperiod) {
-		ppu.counter.lastHperiod = ppu.counter.hperiod;
-		ppu.counter.hcounter -= ppu.counter.hperiod;
-		counterTickScanline(&ppu.counter);
+	// A span ending on a sub screen slot leaves the backgrounds as that slot did.
+	u32 last = end - 2;
+	if (last >= 56 && last <= 1078 && (last - 56) % 4 == 0) {
+		for (int n = 0; n < 4; ++n) {
+			ppu.bg[n].output = endOutput[n];
+		}
 	}
+
+	ppu.counter.hcounter = start;
 }
+#endif
 
 static inline void tickN(u32 clocks) {
 	ppu.counter.hcounter += clocks;
@@ -1725,14 +1776,6 @@ static inline u32 stepsBeforeCpu(u32 wait) {
 	} while (0)
 #define STOP_X(n) STOP_(n)
 #define STOP() STOP_X(__COUNTER__ + 1)
-#define STEP1() \
-	do { \
-		tick2(); \
-		threadStep(&ppu.th, 2); \
-		if (cpu.th.clock < ppu.th.clock) { \
-			STOP(); \
-		} \
-	} while (0)
 // Steps the PPU does nothing in but wait go in one: as many as it can take before it is past the CPU,
 // and at most to the end of the line.
 #define STEP(clocks) \
@@ -1763,9 +1806,20 @@ void ppuRun(void) {
 				continue;
 			}
 
-			for (ppu.cycle = 0; ppu.cycle <= 1078; ppu.cycle += 2) {
-				cycle(ppu.cycle);
-				STEP1();
+			// The visible part of the line, in spans: nothing outside the PPU can change while it runs
+			// up to the CPU, so each span is drawn in one go.
+			for (ppu.cycle = 0; ppu.cycle < 1080;) {
+				{
+					u32 steps = stepsBeforeCpu((1080 - ppu.cycle) >> 1);
+					u32 end = ppu.cycle + steps * 2;
+					renderSpan(ppu.cycle, end);
+					tickN(end - ppu.cycle);
+					ppu.th.clock += ppu.th.scalar * 2 * steps;
+					ppu.cycle = end;
+				}
+				if (cpu.th.clock < ppu.th.clock) {
+					STOP();
+				}
 			}
 
 			// H = 1080: the tiles of the sprites found on this line are fetched for the next one, two

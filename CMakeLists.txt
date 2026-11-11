@@ -22,6 +22,7 @@ add_library(armsnes STATIC
 	src/chips/necdsp.c
 	src/chips/sa1.c
 	src/chips/gsu.c
+	src/chips/cx4.c
 	src/chips/obc1.c
 	src/chips/sdd1.c
 )
@@ -30,7 +31,7 @@ add_executable(snesrun tests/snesrun.c)
 target_link_libraries(snesrun armsnes)
 
 # snesrun-dot: the PPU drawing one dot at a time, the reference the spans are checked against.
-add_library(armsnes-dot STATIC EXCLUDE_FROM_ALL src/bus.c src/cart.c src/cpu.c src/dsp.c src/input.c src/ppu.c src/smp.c src/state.c src/system.c src/chips/necdsp.c src/chips/sa1.c src/chips/gsu.c src/chips/obc1.c src/chips/sdd1.c)
+add_library(armsnes-dot STATIC EXCLUDE_FROM_ALL src/bus.c src/cart.c src/cpu.c src/dsp.c src/input.c src/ppu.c src/smp.c src/state.c src/system.c src/chips/necdsp.c src/chips/sa1.c src/chips/gsu.c src/chips/cx4.c src/chips/obc1.c src/chips/sdd1.c)
 target_compile_definitions(armsnes-dot PRIVATE ARMSNES_DOT)
 add_executable(snesrun-dot EXCLUDE_FROM_ALL tests/snesrun.c)
 target_link_libraries(snesrun-dot armsnes-dot)

@@ -281,6 +281,12 @@ static bool partSupported(u16 part) {
 	case PART_PROCESSOR_SDD1_MCU_MEMORY_ROM_PROGRAM:
 	case PART_PROCESSOR_OBC1:
 	case PART_PROCESSOR_OBC1_MEMORY_RAM_SAVE:
+	case PART_PROCESSOR_HG51BS169:
+	case PART_PROCESSOR_HG51BS169_MEMORY_ROM_PROGRAM:
+	case PART_PROCESSOR_HG51BS169_MEMORY_RAM_SAVE:
+	case PART_PROCESSOR_HG51BS169_MEMORY_ROM_DATA_HG51BS169:
+	case PART_PROCESSOR_HG51BS169_MEMORY_RAM_DATA_HG51BS169:
+	case PART_PROCESSOR_HG51BS169_OSCILLATOR:
 		return true;
 	}
 	return false;
@@ -370,6 +376,19 @@ static bool loadNecdspFirmware(const char* name, u32 programWords, u32 dataWords
 	return true;
 }
 
+// The Cx4's data ROM, 3 KiB, from the end of the dump or the frontend's "cx4.rom" or "cx4.data.rom".
+static bool loadCx4Firmware(void) {
+	static u8 buffer[0xc00];
+	if (firmwareSize == sizeof(buffer)) {
+		memcpy(buffer, rom + romSize, sizeof(buffer));
+	} else if (!cartFirmware("cx4.rom", buffer, sizeof(buffer)) && !cartFirmware("cx4.data.rom", buffer, sizeof(buffer))) {
+		snprintf(cart.missing, sizeof(cart.missing), "cx4.rom");
+		return false;
+	}
+	cx4Load(buffer);
+	return true;
+}
+
 static u8 readRom(u32 address, u8 data) {
 	(void) data;
 	return cart.rom[address];
@@ -436,6 +455,9 @@ bool cartLoad(const u8* data, u32 size) {
 	if (typeLo >= 0x3 && typeHi == 0xf && subType == 0x01 && (size & 0xffff) == 0xd000) {
 		firmwareSize = 0xd000;
 	}
+	if (typeLo >= 0x3 && typeHi == 0xf && subType == 0x10 && (size & 0x7fff) == 0xc00) {
+		firmwareSize = 0xc00;
+	}
 	romSize = size - firmwareSize;
 	cart.rom = rom;
 	cart.romSize = romSize;
@@ -469,6 +491,9 @@ bool cartLoad(const u8* data, u32 size) {
 		if (board->parts[n] == PART_PROCESSOR_OBC1) {
 			cart.obc1 = true;
 		}
+		if (board->parts[n] == PART_PROCESSOR_HG51BS169) {
+			cart.cx4 = true;
+		}
 		if (board->parts[n] == PART_PROCESSOR_UPD7725 || board->parts[n] == PART_PROCESSOR_UPD96050) {
 			cart.necdsp = true;
 			necdsp.uPD96050 = board->parts[n] == PART_PROCESSOR_UPD96050;
@@ -493,6 +518,10 @@ bool cartLoad(const u8* data, u32 size) {
 			}
 			necdsp.frequency = strcmp(name, "st011") ? 11000000 : 15000000;
 		}
+	}
+
+	if (cart.cx4 && !loadCx4Firmware()) {
+		return false;
 	}
 
 	// Save RAM starts out as 0xff. The uPD96050 keeps its saves in its own data RAM.
@@ -567,6 +596,18 @@ void cartMap(void) {
 		case PART_PROCESSOR_OBC1:
 			busMap(obc1Read, obc1Write, map->address, map->size, map->base, map->mask);
 			break;
+		case PART_PROCESSOR_HG51BS169:
+			busMap(cx4ReadIO, cx4WriteIO, map->address, map->size, map->base, map->mask);
+			break;
+		case PART_PROCESSOR_HG51BS169_MEMORY_ROM_PROGRAM:
+			busMap(cx4ReadRomCPU, cx4WriteRomCPU, map->address, map->size, map->base, map->mask);
+			break;
+		case PART_PROCESSOR_HG51BS169_MEMORY_RAM_SAVE:
+			busMap(cx4ReadRamCPU, cx4WriteRamCPU, map->address, map->size, map->base, map->mask);
+			break;
+		case PART_PROCESSOR_HG51BS169_MEMORY_RAM_DATA_HG51BS169:
+			busMap(cx4ReadDataRamCPU, cx4WriteDataRamCPU, map->address, map->size, map->base, map->mask);
+			break;
 		}
 	}
 	if (cart.sdd1) {
@@ -591,6 +632,9 @@ void cartPower(bool reset) {
 	if (cart.obc1) {
 		obc1Power();
 	}
+	if (cart.cx4) {
+		cx4Power();
+	}
 }
 
 // The coprocessors, brought up to the CPU's clock.
@@ -603,5 +647,8 @@ void cartSync(void) {
 	}
 	if (cart.gsu && gsu.th.clock < cpu.th.clock) {
 		gsuRun();
+	}
+	if (cart.cx4 && cx4.th.clock < cpu.th.clock) {
+		cx4Run();
 	}
 }

@@ -96,6 +96,7 @@ void systemPower(bool reset) {
 	necdsp.th.clock = 4;
 	sa1.th.clock = 4;
 	gsu.th.clock = 4;
+	cx4.th.clock = 4;
 }
 
 // The PPU finished a frame. The clocks all drop by the same amount, so they never overflow.
@@ -119,6 +120,9 @@ void systemFrameEvent(void) {
 	if (cart.gsu && gsu.th.clock - 4 < minimum) {
 		minimum = gsu.th.clock - 4;
 	}
+	if (cart.cx4 && cx4.th.clock - 4 < minimum) {
+		minimum = cx4.th.clock - 4;
+	}
 	cpu.th.clock -= minimum;
 	smp.th.clock -= minimum;
 	dsp.th.clock -= minimum;
@@ -131,6 +135,9 @@ void systemFrameEvent(void) {
 	}
 	if (cart.gsu) {
 		gsu.th.clock -= minimum;
+	}
+	if (cart.cx4) {
+		cx4.th.clock -= minimum;
 	}
 
 	sys.frames++;

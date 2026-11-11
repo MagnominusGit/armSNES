@@ -400,6 +400,7 @@ struct Cart {
 	bool gsu;
 	bool sdd1;
 	bool obc1;
+	bool cx4;
 	// What the game saves to: the save RAM, or a chip's own memory. Little-endian hosts only.
 	u8* saveRam;
 	u32 saveRamSize;
@@ -935,6 +936,74 @@ extern struct Obc1 obc1;
 void obc1Power(void);
 u8 obc1Read(u32 address, u8 data);
 void obc1Write(u32 address, u8 data);
+
+// --- Cx4 (Hitachi HG51B) ---
+
+struct Cx4Frame {
+	u32 ret;
+	u32 a, b, c, d, e;
+};
+struct Cx4 {
+	struct Thread th;
+
+	// Where it stopped, and the subroutines it was in, as the Super FX keeps them.
+	u32 state;
+	struct Cx4Frame stack[4];
+	u8 depth;
+	bool result;
+	u16 opcode;
+
+	struct {
+		u16 pb;
+		u8 pc;
+		bool n, z, c, v, i;
+		u32 a;
+		u16 p;
+		u64 mul;
+		u32 mdr, rom, ram, mar, dpr;
+		u32 gpr[16];
+	} r;
+	struct {
+		bool lock, halt, irq, rom;
+		u8 vector[32];
+		u8 waitRom, waitRam;
+		bool suspendEnable;
+		u8 suspendDuration;
+		struct {
+			bool enable, page, preload, lock[2];
+			u32 address[2];
+			u32 base;
+			u16 pb;
+			u8 pc;
+		} cache;
+		struct {
+			bool enable;
+			u32 source, target;
+			u16 length;
+		} dma;
+		struct {
+			bool enable, reading, writing;
+			u8 pending;
+			u32 address;
+		} bus;
+	} io;
+	u32 callStack[8];
+	u16 programRAM[2][256];
+	u8 dataRAM[3072];
+};
+extern struct Cx4 cx4;
+
+void cx4Load(const u8* firmware);
+void cx4Power(void);
+void cx4Run(void);
+u8 cx4ReadIO(u32 address, u8 data);
+void cx4WriteIO(u32 address, u8 data);
+u8 cx4ReadRomCPU(u32 address, u8 data);
+void cx4WriteRomCPU(u32 address, u8 data);
+u8 cx4ReadRamCPU(u32 address, u8 data);
+void cx4WriteRamCPU(u32 address, u8 data);
+u8 cx4ReadDataRamCPU(u32 address, u8 data);
+void cx4WriteDataRamCPU(u32 address, u8 data);
 
 // The S-CPU's DMA registers, for a chip that watches them.
 u8 cpuReadDMA(u32 address, u8 data);

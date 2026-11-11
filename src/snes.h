@@ -392,6 +392,9 @@ struct Cart {
 	// What a game couldn't be loaded without: a part of its board this core lacks, or a firmware file.
 	char missing[64];
 	bool necdsp;
+	// What the game saves to: the save RAM, or a chip's own memory. Little-endian hosts only.
+	u8* saveRam;
+	u32 saveRamSize;
 };
 extern struct Cart cart;
 

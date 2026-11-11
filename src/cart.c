@@ -261,6 +261,11 @@ static bool partSupported(u16 part) {
 	case PART_PROCESSOR_UPD7725_MEMORY_ROM_DATA_UPD7725:
 	case PART_PROCESSOR_UPD7725_MEMORY_RAM_DATA_UPD7725:
 	case PART_PROCESSOR_UPD7725_OSCILLATOR:
+	case PART_PROCESSOR_UPD96050:
+	case PART_PROCESSOR_UPD96050_MEMORY_ROM_PROGRAM_UPD96050:
+	case PART_PROCESSOR_UPD96050_MEMORY_ROM_DATA_UPD96050:
+	case PART_PROCESSOR_UPD96050_MEMORY_RAM_DATA_UPD96050:
+	case PART_PROCESSOR_UPD96050_OSCILLATOR:
 		return true;
 	}
 	return false;
@@ -304,25 +309,35 @@ static const char* necdspFirmwareName(void) {
 	return "dsp1b";
 }
 
-// The NEC DSP's firmware: 2048 24-bit program words and 1024 16-bit data words, from the end of the
-// dump if it has them there, or from the frontend's "<name>.rom", or "<name>.program.rom" with
-// "<name>.data.rom".
-static bool loadNecdspFirmware(const char* name) {
-	static u8 buffer[0x2000];
+// The same for the uPD96050: the ST011 by title, the rest the ST010.
+static const char* stFirmwareName(void) {
+	if (titleIs("2DAN MORITA SHOUGI")) {
+		return "st011";
+	}
+	return "st010";
+}
+
+// The NEC DSP's firmware: 24-bit program words then 16-bit data words (2048 and 1024 of them for the
+// uPD7725, 16384 and 2048 for the uPD96050), from the end of the dump if it has them there, or from
+// the frontend's "<name>.rom", or "<name>.program.rom" with "<name>.data.rom".
+static bool loadNecdspFirmware(const char* name, u32 programWords, u32 dataWords) {
+	static u8 buffer[0xd000];
+	u32 programSize = programWords * 3;
+	u32 total = programSize + dataWords * 2;
 	bool found = false;
-	if (firmwareSize == 0x2000) {
-		memcpy(buffer, rom + romSize, 0x2000);
+	if (firmwareSize == total) {
+		memcpy(buffer, rom + romSize, total);
 		found = true;
 	} else {
 		char file[64];
 		snprintf(file, sizeof(file), "%s.rom", name);
-		if (cartFirmware(file, buffer, 0x2000)) {
+		if (cartFirmware(file, buffer, total)) {
 			found = true;
 		} else {
 			snprintf(file, sizeof(file), "%s.program.rom", name);
-			bool program = cartFirmware(file, buffer, 0x1800);
+			bool program = cartFirmware(file, buffer, programSize);
 			snprintf(file, sizeof(file), "%s.data.rom", name);
-			found = program && cartFirmware(file, buffer + 0x1800, 0x800);
+			found = program && cartFirmware(file, buffer + programSize, dataWords * 2);
 		}
 	}
 	if (!found) {
@@ -331,11 +346,11 @@ static bool loadNecdspFirmware(const char* name) {
 	}
 
 	memset(&necdspFirmware, 0, sizeof(necdspFirmware));
-	for (u32 n = 0; n < 2048; ++n) {
+	for (u32 n = 0; n < programWords; ++n) {
 		necdspFirmware.programROM[n] = buffer[n * 3] | buffer[n * 3 + 1] << 8 | buffer[n * 3 + 2] << 16;
 	}
-	for (u32 n = 0; n < 1024; ++n) {
-		necdspFirmware.dataROM[n] = buffer[0x1800 + n * 2] | buffer[0x1800 + n * 2 + 1] << 8;
+	for (u32 n = 0; n < dataWords; ++n) {
+		necdspFirmware.dataROM[n] = buffer[programSize + n * 2] | buffer[programSize + n * 2 + 1] << 8;
 	}
 	return true;
 }
@@ -399,8 +414,12 @@ bool cartLoad(const u8* data, u32 size) {
 	u8 typeLo = rom[headerAddress + 0x26] & 15;
 	u8 typeHi = rom[headerAddress + 0x26] >> 4;
 	firmwareSize = 0;
+	u8 subType = rom[headerAddress + 0x0f];
 	if (typeLo >= 0x3 && typeHi == 0x0 && (size & 0x7fff) == 0x2000) {
 		firmwareSize = 0x2000;
+	}
+	if (typeLo >= 0x3 && typeHi == 0xf && subType == 0x01 && (size & 0xffff) == 0xd000) {
+		firmwareSize = 0xd000;
 	}
 	romSize = size - firmwareSize;
 	cart.rom = rom;
@@ -423,25 +442,46 @@ bool cartLoad(const u8* data, u32 size) {
 			snprintf(cart.missing, sizeof(cart.missing), "%s", partNames[board->parts[n]]);
 			return false;
 		}
-		if (board->parts[n] == PART_PROCESSOR_UPD7725) {
+		if (board->parts[n] == PART_PROCESSOR_UPD7725 || board->parts[n] == PART_PROCESSOR_UPD96050) {
 			cart.necdsp = true;
+			necdsp.uPD96050 = board->parts[n] == PART_PROCESSOR_UPD96050;
 		}
 	}
 
 	if (cart.necdsp) {
-		if (!loadNecdspFirmware(necdspFirmwareName())) {
-			return false;
-		}
+		bool uPD96050 = necdsp.uPD96050;
 		memset(&necdsp, 0, sizeof(necdsp));
-		necdsp.uPD96050 = false;
-		necdsp.frequency = 7600000;
+		necdsp.uPD96050 = uPD96050;
+		if (!uPD96050) {
+			if (!loadNecdspFirmware(necdspFirmwareName(), 2048, 1024)) {
+				return false;
+			}
+			necdsp.frequency = 7600000;
+			// Its 256 words of RAM start out as 0xff, as ares's loader leaves them.
+			memset(necdsp.dataRAM, 0xff, 256 * sizeof(u16));
+		} else {
+			const char* name = stFirmwareName();
+			if (!loadNecdspFirmware(name, 16384, 2048)) {
+				return false;
+			}
+			necdsp.frequency = strcmp(name, "st011") ? 11000000 : 15000000;
+		}
 	}
 
-	// Save RAM starts out as 0xff.
+	// Save RAM starts out as 0xff. The uPD96050 keeps its saves in its own data RAM.
 	cart.ramSize = headerRamSize() ? headerRamSize() : expansionRamSize();
 	if (cart.ramSize) {
 		cart.ram = malloc(cart.ramSize);
 		memset(cart.ram, 0xff, cart.ramSize);
+	}
+	if (cart.necdsp && necdsp.uPD96050) {
+		// A save not there yet is 0xff, as other save RAM.
+		memset(necdsp.dataRAM, 0xff, sizeof(necdsp.dataRAM));
+		cart.saveRam = (u8*) necdsp.dataRAM;
+		cart.saveRamSize = sizeof(necdsp.dataRAM);
+	} else {
+		cart.saveRam = cart.ram;
+		cart.saveRamSize = cart.ramSize;
 	}
 	return true;
 }
@@ -462,7 +502,11 @@ void cartMap(void) {
 			}
 			break;
 		case PART_PROCESSOR_UPD7725:
+		case PART_PROCESSOR_UPD96050:
 			busMap(necdspRead, necdspWrite, map->address, map->size, map->base, map->mask);
+			break;
+		case PART_PROCESSOR_UPD96050_MEMORY_RAM_DATA_UPD96050:
+			busMap(necdspReadRAM, necdspWriteRAM, map->address, map->size, map->base, map->mask);
 			break;
 		}
 	}

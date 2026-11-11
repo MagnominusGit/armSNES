@@ -323,7 +323,7 @@ unsigned retro_get_region(void) {
 void* retro_get_memory_data(unsigned id) {
 	switch (id) {
 	case RETRO_MEMORY_SAVE_RAM:
-		return cart.ram;
+		return cart.saveRam;
 	case RETRO_MEMORY_SYSTEM_RAM:
 		return cpu.wram;
 	}
@@ -333,7 +333,7 @@ void* retro_get_memory_data(unsigned id) {
 size_t retro_get_memory_size(unsigned id) {
 	switch (id) {
 	case RETRO_MEMORY_SAVE_RAM:
-		return cart.ramSize;
+		return cart.saveRamSize;
 	case RETRO_MEMORY_SYSTEM_RAM:
 		return sizeof(cpu.wram);
 	}

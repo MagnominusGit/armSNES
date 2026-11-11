@@ -48,4 +48,5 @@ Phase 2: lines are drawn in spans, a layer at a time, and give the same machine 
 renderer after every frame. SIMD comes with the speed work.
 
 Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips so far: the NEC DSP
-(DSP-1 to DSP-4), with firmware from the frontend's system folder or the end of the dump.
+(DSP-1 to DSP-4, ST010, ST011), with firmware from the frontend's system folder or the end of the
+dump.

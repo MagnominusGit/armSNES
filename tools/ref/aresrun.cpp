@@ -4,7 +4,7 @@
 
 // aresrun game frames: unmodified ares (its dot renderer) with no frontend, saying what came out in
 // the same form as tests/snesrun.c, for the two to be compared.
-// env: FRAMELOG, AUDIOOUT, INPUT=1, RAWOUT and RAWFRAME
+// env: FRAMELOG, AUDIOOUT, INPUT=1, RAWOUT and RAWFRAME, RESETAT
 #include <ares/ares.hpp>
 #include <mia/mia.hpp>
 #include <atomic>
@@ -126,7 +126,11 @@ auto nall::main(Arguments arguments) -> void {
 
   root->power();
   uint64_t count = std::strtoull(args[1], nullptr, 10);
-  while(runner.frames < count) root->run();
+  uint64_t resetAt = std::getenv("RESETAT") ? std::strtoull(std::getenv("RESETAT"), nullptr, 10) : 0;
+  while(runner.frames < count) {
+    root->run();
+    if(resetAt && runner.frames == resetAt) { root->power(true); resetAt = 0; }
+  }
   while(runner.shown < count) std::this_thread::yield();
 
   std::printf("frames=%llu samples=%llu video=%016llx audio=%016llx\n", (unsigned long long)runner.frames,

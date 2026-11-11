@@ -11,7 +11,8 @@
 // env: FRAMELOG (a hash of every frame's canvas), AUDIOOUT (the sound, 16-bit stereo),
 //      INPUT=1 (presses buttons on a fixed schedule), PPMOUT (the last frame as a picture),
 //      RAWOUT and RAWFRAME (the canvas of that frame, counted from 1), HASHLOG (a hash of the saved
-//      state after every frame), RUNAHEAD=n (after each frame, n more are run and undone by a state)
+//      state after every frame), RUNAHEAD=n (after each frame, n more are run and undone by a state),
+//      RESETAT=n (the reset button is pressed after frame n)
 
 static FILE* frameLog;
 static FILE* audioOut;
@@ -135,8 +136,12 @@ int main(int argc, char** argv) {
 
 	u32 frames = atoi(argv[2]);
 	clock_t start = clock();
+	int resetAt = getenv("RESETAT") ? atoi(getenv("RESETAT")) : -1;
 	while (sys.frames < frames) {
 		systemRunFrame();
+		if ((int) sys.frames == resetAt) {
+			systemPower(true);
+		}
 		if (runAhead) {
 			// What a frontend's run-ahead does: the frames after this one are run, then taken back.
 			FILE* log = frameLog;

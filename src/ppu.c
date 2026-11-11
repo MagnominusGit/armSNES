@@ -317,13 +317,9 @@ static void bgRunMode7(struct Background* bg) {
 	}
 }
 
-// screen: 0 = above (main), 1 = below (sub).
-static void bgRun(struct Background* bg, bool screen) {
-	if (VCOUNTER == 0) {
-		return;
-	}
-
-	bool hires = hiresMode();
+// screen: 0 = above (main), 1 = below (sub). A line's first dot is at H = 56, and line 0 draws
+// nothing: that is the caller's to see to.
+static inline __attribute__((always_inline)) void bgRunAt(struct Background* bg, bool screen, bool hires, u32 at) {
 	if (screen == 1) {
 		bg->output.above.priority = 0;
 		bg->output.below.priority = 0;
@@ -363,7 +359,7 @@ static void bgRun(struct Background* bg, bool screen) {
 		bg->renderingIndex = (bg->renderingIndex + 1) & 127;
 	}
 
-	u32 x = (HCOUNTER - 56) >> 2;
+	u32 x = (at - 56) >> 2;
 
 	if (x == 0 && (!hires || screen == 1)) {
 		bg->mosaic.hcounter = ppu.mosaic.size;
@@ -390,6 +386,15 @@ static void bgRun(struct Background* bg, bool screen) {
 		}
 	}
 }
+
+#if defined(ARMSNES_DOT)
+static void bgRun(struct Background* bg, bool screen) {
+	if (VCOUNTER == 0) {
+		return;
+	}
+	bgRunAt(bg, screen, hiresMode(), HCOUNTER);
+}
+#endif
 
 static void bgPower(struct Background* bg) {
 	memset(&bg->io, 0, sizeof(bg->io));
@@ -652,6 +657,82 @@ static inline bool windowLayerTest(const struct WindowLayer* layer, bool one, bo
 	return windowTest(layer->oneEnable, one ^ layer->oneInvert, layer->twoEnable, two ^ layer->twoInvert, layer->mask);
 }
 
+#if !defined(ARMSNES_DOT)
+// What the windows do for each of the four ways the two can be (one inside or not, two inside or
+// not): which layers' main and sub screen pixels they hide (BG1-4, then sprites, a bit each), and
+// whether color math is on for each screen.
+struct WindowEffect {
+	u8 hideAbove;
+	u8 hideBelow;
+	bool aboveColorEnable;
+	bool belowColorEnable;
+};
+
+static void windowEffects(struct WindowEffect effects[4]) {
+	for (int c = 0; c < 4; ++c) {
+		bool one = c & 1;
+		bool two = c >> 1;
+		struct WindowEffect* effect = &effects[c];
+		effect->hideAbove = 0;
+		effect->hideBelow = 0;
+		for (int n = 0; n < 5; ++n) {
+			const struct WindowLayer* layer = n < 4 ? &ppu.window.bg[n] : &ppu.window.obj;
+			if (windowLayerTest(layer, one, two)) {
+				effect->hideAbove |= layer->aboveEnable << n;
+				effect->hideBelow |= layer->belowEnable << n;
+			}
+		}
+		bool value = windowTest(ppu.window.col.oneEnable, one ^ ppu.window.col.oneInvert, ppu.window.col.twoEnable,
+		                        two ^ ppu.window.col.twoInvert, ppu.window.col.mask);
+		bool array[] = { true, value, !value, false };
+		effect->aboveColorEnable = array[ppu.window.col.aboveMask];
+		effect->belowColorEnable = array[ppu.window.col.belowMask];
+	}
+}
+
+// The windows at the next pixel, with their effects worked out beforehand.
+static inline void windowRunWith(const struct WindowEffect effects[4]) {
+	if (ppu.window.x == ppu.window.oneLeft) {
+		ppu.window.oneActive = true;
+	}
+	if (ppu.window.x == ppu.window.twoLeft) {
+		ppu.window.twoActive = true;
+	}
+
+	bool one = ppu.window.oneActive && !ppu.window.oneStopped;
+	bool two = ppu.window.twoActive && !ppu.window.twoStopped;
+
+	if (ppu.window.x == ppu.window.oneRight) {
+		ppu.window.oneStopped = true;
+	}
+	if (ppu.window.x == ppu.window.twoRight) {
+		ppu.window.twoStopped = true;
+	}
+
+	ppu.window.x++;
+
+	const struct WindowEffect* effect = &effects[one | two << 1];
+	if (effect->hideAbove | effect->hideBelow) {
+		for (int n = 0; n < 4; ++n) {
+			if (effect->hideAbove >> n & 1) {
+				ppu.bg[n].output.above.priority = 0;
+			}
+			if (effect->hideBelow >> n & 1) {
+				ppu.bg[n].output.below.priority = 0;
+			}
+		}
+		if (effect->hideAbove >> 4 & 1) {
+			ppu.obj.above.priority = 0;
+		}
+		if (effect->hideBelow >> 4 & 1) {
+			ppu.obj.below.priority = 0;
+		}
+	}
+	ppu.window.aboveColorEnable = effect->aboveColorEnable;
+	ppu.window.belowColorEnable = effect->belowColorEnable;
+}
+
+#else
 static void windowRun(void) {
 	if (ppu.window.x == ppu.window.oneLeft) {
 		ppu.window.oneActive = true;
@@ -698,6 +779,8 @@ static void windowRun(void) {
 	ppu.window.aboveColorEnable = array[ppu.window.col.aboveMask];
 	ppu.window.belowColorEnable = array[ppu.window.col.belowMask];
 }
+
+#endif
 
 static void windowLayerPower(struct WindowLayer* layer) {
 	layer->oneEnable = randomNext() & 1;
@@ -1689,40 +1772,46 @@ static void renderSpan(u32 start, u32 end) {
 	const struct Fetch* modeFetches = fetches[ppu.io.bgMode];
 	static const u8 order[4] = { 2, 0, 1, 3 };
 	__typeof__(ppu.bg[0].output) endOutput[4];
+	bool hires = hiresMode();
+	bool draws = VCOUNTER != 0;
 
 	for (int i = 0; i < 4; ++i) {
 		u32 n = order[i];
 		struct Background* bg = &ppu.bg[n];
 		for (u32 at = start; at < end; at += 2) {
-			ppu.counter.hcounter = at;
-			if (at <= 1054 && at % 4 == 0) {
-				const struct Fetch* fetch = &modeFetches[at / 4 & 7];
-				if (n == 2 && fetch->kind == FETCH_NAME) {
-					spanOptH[at >> 1] = bg->opt.hoffset;
-					spanOptV[at >> 1] = bg->opt.voffset;
+			if (!(at & 2)) {
+				if (at <= 1054) {
+					const struct Fetch* fetch = &modeFetches[at / 4 & 7];
+					if (n == 2 && fetch->kind == FETCH_NAME) {
+						spanOptH[at >> 1] = bg->opt.hoffset;
+						spanOptV[at >> 1] = bg->opt.voffset;
+					}
+					if (fetch->kind != FETCH_NONE && fetch->bg == n) {
+						ppu.counter.hcounter = at;
+						doFetch(fetch, spanOptH[at >> 1], spanOptV[at >> 1]);
+					}
 				}
-				if (fetch->kind != FETCH_NONE && fetch->bg == n) {
-					doFetch(fetch, spanOptH[at >> 1], spanOptV[at >> 1]);
+				if (at == 56) {
+					bgBegin(bg);
 				}
-			}
-			if (at == 56) {
-				bgBegin(bg);
-			}
-			if (at >= 56 && at <= 1078) {
-				if ((at - 56) % 4 == 0) {
-					bgRun(bg, 1);
-				} else {
-					bgRun(bg, 0);
-					spanAbove[n][(at - 58) >> 2] = bg->output.above;
-					spanBelow[n][(at - 58) >> 2] = bg->output.below;
+				if (at >= 56 && at <= 1078 && draws) {
+					bgRunAt(bg, 1, hires, at);
 				}
+			} else if (at >= 58 && at <= 1078) {
+				if (draws) {
+					bgRunAt(bg, 0, hires, at);
+				}
+				spanAbove[n][(at - 58) >> 2] = bg->output.above;
+				spanBelow[n][(at - 58) >> 2] = bg->output.below;
 			}
 		}
 		endOutput[n] = bg->output;
 	}
 
-	for (u32 at = start; at < end; at += 2) {
-		if (at >= 58 && at <= 1078 && (at - 56) % 4 == 2) {
+	struct WindowEffect effects[4];
+	windowEffects(effects);
+	for (u32 at = start | 2; at < end; at += 4) {
+		if (at >= 58 && at <= 1078) {
 			u32 x = (at - 58) >> 2;
 			ppu.counter.hcounter = at;
 			for (int n = 0; n < 4; ++n) {
@@ -1730,7 +1819,7 @@ static void renderSpan(u32 start, u32 end) {
 				ppu.bg[n].output.below = spanBelow[n][x];
 			}
 			objRun();
-			windowRun();
+			windowRunWith(effects);
 			dacRun();
 		}
 	}

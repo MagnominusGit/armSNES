@@ -1,8 +1,0 @@
-{
-  "label": "Pattern Matching",
-  "position": 3,
-  "link": {
-    "type": "generated-index",
-    "description": "Improving pattern matching performance with SLJIT."
-  }
-}

@@ -1,6 +1,0 @@
-{
-  "describe": "$Format:%(describe:tags,exclude=nightly)$",
-  "hash": "$Format:%h$",
-  "ref-name": "$Format:%D$",
-  "commit-date": "$Format:%cs$"
-}

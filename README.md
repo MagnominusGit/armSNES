@@ -4,8 +4,8 @@ A Super Nintendo core in C for ARM and x86 handhelds, ported from [ares](https:/
 
 It is early work. What is here runs games on plain cartridge boards (LoROM, HiROM and their extended
 forms, with or without save RAM) and gives the same picture and sound as ares's most accurate
-renderer, frame for frame and sample for sample. There is no frontend yet, only a test runner. The
-plan is in [docs/ROADMAP.md](docs/ROADMAP.md).
+renderer, frame for frame and sample for sample. It builds as a libretro core with saved states; the
+standalone app comes later. The plan is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Build
 
@@ -14,6 +14,8 @@ cmake -S . -B build
 cmake --build build
 build/snesrun game.sfc 600
 ```
+
+`build/armsnes_libretro.so` is the core.
 
 `tools/ref/build.sh` builds `aresrun`, the same runner on unmodified ares, to compare against.
 

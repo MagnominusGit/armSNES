@@ -17,8 +17,23 @@ add_library(armsnes STATIC
 	src/input.c
 	src/ppu.c
 	src/smp.c
+	src/state.c
 	src/system.c
 )
 
 add_executable(snesrun tests/snesrun.c)
 target_link_libraries(snesrun armsnes)
+
+# The libretro core, with the Armulators pieces it uses (libretro.h) copied into shared/ so it builds
+# without the submodule.
+add_library(armsnes_libretro SHARED libretro/libretro.c)
+target_include_directories(armsnes_libretro PRIVATE src shared/libretro)
+target_link_libraries(armsnes_libretro armsnes)
+set_target_properties(armsnes_libretro PROPERTIES PREFIX "" C_VISIBILITY_PRESET hidden)
+if(NOT APPLE AND NOT WIN32)
+	target_link_options(armsnes_libretro PRIVATE -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/shared/libretro/link.T -Wl,--no-undefined)
+endif()
+
+add_executable(coretest tests/coretest.c)
+target_include_directories(coretest PRIVATE shared/libretro)
+target_link_libraries(coretest ${CMAKE_DL_LIBS})

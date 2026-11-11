@@ -640,6 +640,9 @@ struct Ppu {
 		bool lineValid;
 		u32 line;
 	} dac;
+	// How much of the canvas this frame has drawn: a DMA can take the PPU into the next frame before
+	// the CPU's instruction ends, so a state can be taken with some of it drawn.
+	u32 drawnTo;
 
 	// Where the PPU stopped, and what it was in the middle of.
 	u32 resume;
@@ -671,5 +674,13 @@ void ppuRun(void);
 void ppuLatchCounters(void);
 // The frontend's: the canvas of the frame just finished.
 void videoFrame(const u32* canvas);
+
+// --- Saved states ---
+
+size_t stateSize(void);
+// Taken between frames, after systemRunFrame. False if size is too small.
+bool stateSave(void* data, size_t size);
+// False if the state is another build's, another game's, or cut short.
+bool stateLoad(const void* data, size_t size);
 
 #endif

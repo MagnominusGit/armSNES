@@ -39,4 +39,6 @@ hardware tests disagree, the hardware tests win.
 Phase 0: the reference runner is in `tools/ref`. Device speed numbers are still to be taken.
 
 Phase 1: the CPU, bus, DMA, sound CPU, DSP and dot renderer are ported, for cartridges without a
-coprocessor. Saved states and the libretro core are next.
+coprocessor, with saved states and a minimal libretro core. A state taken after a frame and loaded
+again changes nothing that follows: run-ahead gives the same states, pictures and sound as a plain
+run. Still to check: ARM, PAL games and reset.

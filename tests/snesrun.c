@@ -10,7 +10,8 @@
 // snesrun game frames: runs a game with no frontend and says what came out.
 // env: FRAMELOG (a hash of every frame's canvas), AUDIOOUT (the sound, 16-bit stereo),
 //      INPUT=1 (presses buttons on a fixed schedule), PPMOUT (the last frame as a picture),
-//      RAWOUT and RAWFRAME (the canvas of that frame, counted from 1)
+//      RAWOUT and RAWFRAME (the canvas of that frame, counted from 1), HASHLOG (a hash of the saved
+//      state after every frame), RUNAHEAD=n (after each frame, n more are run and undone by a state)
 
 static FILE* frameLog;
 static FILE* audioOut;
@@ -126,10 +127,42 @@ int main(int argc, char** argv) {
 	systemLoad(pal);
 	systemPower(false);
 
+	FILE* hashLog = getenv("HASHLOG") ? fopen(getenv("HASHLOG"), "w") : NULL;
+	int runAhead = getenv("RUNAHEAD") ? atoi(getenv("RUNAHEAD")) : 0;
+	size_t stateBytes = stateSize();
+	u8* state = malloc(stateBytes);
+	u8* ahead = malloc(stateBytes);
+
 	u32 frames = atoi(argv[2]);
 	clock_t start = clock();
 	while (sys.frames < frames) {
 		systemRunFrame();
+		if (runAhead) {
+			// What a frontend's run-ahead does: the frames after this one are run, then taken back.
+			FILE* log = frameLog;
+			bool saveOut = audioOut != NULL;
+			frameLog = NULL;
+			FILE* audio = audioOut;
+			audioOut = NULL;
+			u64 hash = audioHash, count = samples, shown = lastHash;
+			stateSave(ahead, stateBytes);
+			for (int n = 0; n < runAhead; ++n) {
+				systemRunFrame();
+			}
+			if (!stateLoad(ahead, stateBytes)) {
+				fprintf(stderr, "the state didn't load\n");
+				return 1;
+			}
+			frameLog = log;
+			audioOut = saveOut ? audio : NULL;
+			audioHash = hash;
+			samples = count;
+			lastHash = shown;
+		}
+		if (hashLog) {
+			stateSave(state, stateBytes);
+			fprintf(hashLog, "%u %016llx\n", sys.frames, (unsigned long long) fnv(14695981039346656037ull, state, stateBytes));
+		}
 	}
 	double seconds = (double) (clock() - start) / CLOCKS_PER_SEC;
 
@@ -140,6 +173,9 @@ int main(int argc, char** argv) {
 	}
 	if (audioOut) {
 		fclose(audioOut);
+	}
+	if (hashLog) {
+		fclose(hashLog);
 	}
 	return 0;
 }

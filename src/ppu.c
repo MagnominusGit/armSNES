@@ -910,6 +910,9 @@ static void dacRun(void) {
 	line[0] = ppu.io.displayBrightness << 15 | (hires ? belowColor : aboveColor);
 	line[1] = ppu.io.displayBrightness << 15 | aboveColor;
 	ppu.dac.line += 2;
+	if (ppu.drawnTo < ppu.dac.line) {
+		ppu.drawnTo = ppu.dac.line;
+	}
 }
 
 static void dacPower(void) {
@@ -1580,7 +1583,8 @@ static void lineStart(void) {
 	if (VCOUNTER == 240) {
 		// The frame is done. The next one starts on a black canvas, so lines it doesn't draw stay black.
 		videoFrame(ppuCanvas);
-		memset(ppuCanvas, 0, sizeof(ppuCanvas));
+		memset(ppuCanvas, 0, ppu.drawnTo * sizeof(u32));
+		ppu.drawnTo = 0;
 		systemFrameEvent();
 	}
 }
@@ -1832,6 +1836,7 @@ void ppuPower(bool reset) {
 	threadFrequency(&ppu.th, sys.cpuFrequency);
 	counterReset(&ppu.counter);
 	ppu.resume = 0;
+	ppu.drawnTo = 0;
 
 	memset(ppuCanvas, 0, sizeof(ppuCanvas));
 

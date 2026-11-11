@@ -950,6 +950,14 @@ static void writeDMA(u32 address, u8 data) {
 	}
 }
 
+u8 cpuReadDMA(u32 address, u8 data) {
+	return readDMA(address, data);
+}
+
+void cpuWriteDMA(u32 address, u8 data) {
+	writeDMA(address, data);
+}
+
 void cpuMap(void) {
 	busMap(readRAM, writeRAM, "00-3f,80-bf:0000-1fff", 0x2000, 0, 0);
 	busMap(readRAM, writeRAM, "7e-7f:0000-ffff", 0x20000, 0, 0);

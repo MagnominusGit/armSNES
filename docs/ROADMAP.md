@@ -56,4 +56,5 @@ Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips 
   machine. A memory-pack slot on its board is left empty for now;
 - the Super FX, a state machine of the same kind whose subroutines (a clock step that can finish a
   buffered ROM read or RAM write, a read that waits for the bus, the opcode fetch through the
-  instruction cache, the pixel cache) keep their arguments and locals in a frame stack.
+  instruction cache, the pixel cache) keep their arguments and locals in a frame stack;
+- the S-DD1 (decompression as DMA reads) and the OBC1.

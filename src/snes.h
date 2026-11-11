@@ -398,6 +398,8 @@ struct Cart {
 	bool necdsp;
 	bool sa1;
 	bool gsu;
+	bool sdd1;
+	bool obc1;
 	// What the game saves to: the save RAM, or a chip's own memory. Little-endian hosts only.
 	u8* saveRam;
 	u32 saveRamSize;
@@ -889,5 +891,53 @@ u8 gsuReadRomCPU(u32 address, u8 data);
 void gsuWriteRomCPU(u32 address, u8 data);
 u8 gsuReadRamCPU(u32 address, u8 data);
 void gsuWriteRamCPU(u32 address, u8 data);
+
+// --- S-DD1 ---
+
+struct Sdd1 {
+	u8 r4800, r4801, r4804, r4805, r4806, r4807;
+	struct {
+		u32 address;  // 24 bits
+		u16 size;
+	} dma[8];
+	bool dmaReady;
+	// The decompressor
+	u32 imOffset, imBitCount;
+	struct {
+		u8 mpsCount;
+		bool lpsIndex;
+	} bg[8];
+	struct {
+		u8 status, mps;
+	} contextInfo[32];
+	u8 cmBitplanesInfo, cmContextBitsInfo, cmBitNumber, cmCurrentBitplane;
+	u16 cmPreviousBitplaneBits[8];
+	u8 olBitplanesInfo, olR0, olR1, olR2;
+};
+extern struct Sdd1 sdd1;
+
+void sdd1Power(void);
+void sdd1Map(void);
+u8 sdd1ReadIO(u32 address, u8 data);
+void sdd1WriteIO(u32 address, u8 data);
+u8 sdd1ReadMCU(u32 address, u8 data);
+void sdd1WriteMCU(u32 address, u8 data);
+
+// --- OBC1 ---
+
+struct Obc1 {
+	u16 baseptr;
+	u8 address;
+	u8 shift;
+};
+extern struct Obc1 obc1;
+
+void obc1Power(void);
+u8 obc1Read(u32 address, u8 data);
+void obc1Write(u32 address, u8 data);
+
+// The S-CPU's DMA registers, for a chip that watches them.
+u8 cpuReadDMA(u32 address, u8 data);
+void cpuWriteDMA(u32 address, u8 data);
 
 #endif

@@ -276,6 +276,11 @@ static bool partSupported(u16 part) {
 	case PART_PROCESSOR_GSU:
 	case PART_PROCESSOR_GSU_MEMORY_ROM_PROGRAM:
 	case PART_PROCESSOR_GSU_MEMORY_RAM_SAVE:
+	case PART_PROCESSOR_SDD1:
+	case PART_PROCESSOR_SDD1_MCU:
+	case PART_PROCESSOR_SDD1_MCU_MEMORY_ROM_PROGRAM:
+	case PART_PROCESSOR_OBC1:
+	case PART_PROCESSOR_OBC1_MEMORY_RAM_SAVE:
 		return true;
 	}
 	return false;
@@ -458,6 +463,12 @@ bool cartLoad(const u8* data, u32 size) {
 		if (board->parts[n] == PART_PROCESSOR_GSU) {
 			cart.gsu = true;
 		}
+		if (board->parts[n] == PART_PROCESSOR_SDD1) {
+			cart.sdd1 = true;
+		}
+		if (board->parts[n] == PART_PROCESSOR_OBC1) {
+			cart.obc1 = true;
+		}
 		if (board->parts[n] == PART_PROCESSOR_UPD7725 || board->parts[n] == PART_PROCESSOR_UPD96050) {
 			cart.necdsp = true;
 			necdsp.uPD96050 = board->parts[n] == PART_PROCESSOR_UPD96050;
@@ -547,7 +558,19 @@ void cartMap(void) {
 				busMap(gsuReadRamCPU, gsuWriteRamCPU, map->address, map->size ? map->size : cart.ramSize, map->base, map->mask);
 			}
 			break;
+		case PART_PROCESSOR_SDD1:
+			busMap(sdd1ReadIO, sdd1WriteIO, map->address, map->size, map->base, map->mask);
+			break;
+		case PART_PROCESSOR_SDD1_MCU:
+			busMap(sdd1ReadMCU, sdd1WriteMCU, map->address, map->size, map->base, map->mask);
+			break;
+		case PART_PROCESSOR_OBC1:
+			busMap(obc1Read, obc1Write, map->address, map->size, map->base, map->mask);
+			break;
 		}
+	}
+	if (cart.sdd1) {
+		sdd1Map();
 	}
 }
 
@@ -561,6 +584,12 @@ void cartPower(bool reset) {
 	}
 	if (cart.gsu) {
 		gsuPower();
+	}
+	if (cart.sdd1) {
+		sdd1Power();
+	}
+	if (cart.obc1) {
+		obc1Power();
 	}
 }
 

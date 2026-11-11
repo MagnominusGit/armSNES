@@ -242,6 +242,11 @@ static void boardName(char* board, size_t size) {
 	if (!strncmp(board, "NEC-LOROM-RAM", 13) && romSize <= 0x100000) {
 		APPEND("#A");
 	}
+	// A 7 MiB SPC7110 dump has an expansion ROM after its data ROM.
+	if (!strncmp(board, "SPC7110-", 8) && romSize == 0x700000 && used + 3 <= size) {
+		memmove(board + 2, board, used + 1);
+		memcpy(board, "EX", 2);
+	}
 #undef APPEND
 }
 
@@ -287,6 +292,16 @@ static bool partSupported(u16 part) {
 	case PART_PROCESSOR_HG51BS169_MEMORY_ROM_DATA_HG51BS169:
 	case PART_PROCESSOR_HG51BS169_MEMORY_RAM_DATA_HG51BS169:
 	case PART_PROCESSOR_HG51BS169_OSCILLATOR:
+	case PART_MEMORY_ROM_EXPANSION:
+	case PART_PROCESSOR_SPC7110:
+	case PART_PROCESSOR_SPC7110_MCU:
+	case PART_PROCESSOR_SPC7110_MCU_MEMORY_ROM_PROGRAM:
+	case PART_PROCESSOR_SPC7110_MCU_MEMORY_ROM_DATA:
+	case PART_PROCESSOR_SPC7110_MEMORY_RAM_SAVE:
+	case PART_RTC_EPSON:
+	case PART_RTC_EPSON_MEMORY_RTC_TIME:
+	case PART_RTC_SHARP:
+	case PART_RTC_SHARP_MEMORY_RTC_TIME:
 		return true;
 	}
 	return false;
@@ -387,6 +402,12 @@ static bool loadCx4Firmware(void) {
 	}
 	cx4Load(buffer);
 	return true;
+}
+
+// The last megabyte of a 7 MiB SPC7110 dump.
+static u8 readExpansion(u32 address, u8 data) {
+	(void) data;
+	return cart.rom[0x600000 + address];
 }
 
 static u8 readRom(u32 address, u8 data) {
@@ -494,6 +515,15 @@ bool cartLoad(const u8* data, u32 size) {
 		if (board->parts[n] == PART_PROCESSOR_HG51BS169) {
 			cart.cx4 = true;
 		}
+		if (board->parts[n] == PART_PROCESSOR_SPC7110) {
+			cart.spc7110 = true;
+		}
+		if (board->parts[n] == PART_RTC_EPSON) {
+			cart.epsonRtc = true;
+		}
+		if (board->parts[n] == PART_RTC_SHARP) {
+			cart.sharpRtc = true;
+		}
 		if (board->parts[n] == PART_PROCESSOR_UPD7725 || board->parts[n] == PART_PROCESSOR_UPD96050) {
 			cart.necdsp = true;
 			necdsp.uPD96050 = board->parts[n] == PART_PROCESSOR_UPD96050;
@@ -522,6 +552,15 @@ bool cartLoad(const u8* data, u32 size) {
 
 	if (cart.cx4 && !loadCx4Firmware()) {
 		return false;
+	}
+	if (cart.spc7110) {
+		spc7110Load();
+	}
+	if (cart.epsonRtc) {
+		epsonRtcLoad();
+	}
+	if (cart.sharpRtc) {
+		sharpRtcLoad();
 	}
 
 	// Save RAM starts out as 0xff. The uPD96050 keeps its saves in its own data RAM.
@@ -596,6 +635,24 @@ void cartMap(void) {
 		case PART_PROCESSOR_OBC1:
 			busMap(obc1Read, obc1Write, map->address, map->size, map->base, map->mask);
 			break;
+		case PART_MEMORY_ROM_EXPANSION:
+			busMap(readExpansion, writeRom, map->address, 0x100000, map->base, map->mask);
+			break;
+		case PART_PROCESSOR_SPC7110:
+			busMap(spc7110Read, spc7110Write, map->address, map->size, map->base, map->mask);
+			break;
+		case PART_PROCESSOR_SPC7110_MCU:
+			busMap(spc7110ReadMCU, spc7110WriteMCU, map->address, map->size, map->base, map->mask);
+			break;
+		case PART_PROCESSOR_SPC7110_MEMORY_RAM_SAVE:
+			busMap(spc7110ReadRam, spc7110WriteRam, map->address, map->size, map->base, map->mask);
+			break;
+		case PART_RTC_EPSON:
+			busMap(epsonRtcRead, epsonRtcWrite, map->address, map->size, map->base, map->mask);
+			break;
+		case PART_RTC_SHARP:
+			busMap(sharpRtcRead, sharpRtcWrite, map->address, map->size, map->base, map->mask);
+			break;
 		case PART_PROCESSOR_HG51BS169:
 			busMap(cx4ReadIO, cx4WriteIO, map->address, map->size, map->base, map->mask);
 			break;
@@ -635,6 +692,15 @@ void cartPower(bool reset) {
 	if (cart.cx4) {
 		cx4Power();
 	}
+	if (cart.epsonRtc) {
+		epsonRtcPower();
+	}
+	if (cart.sharpRtc) {
+		sharpRtcPower();
+	}
+	if (cart.spc7110) {
+		spc7110Power();
+	}
 }
 
 // The coprocessors, brought up to the CPU's clock.
@@ -650,5 +716,14 @@ void cartSync(void) {
 	}
 	if (cart.cx4 && cx4.th.clock < cpu.th.clock) {
 		cx4Run();
+	}
+	if (cart.epsonRtc && epsonRtc.th.clock < cpu.th.clock) {
+		epsonRtcRun();
+	}
+	if (cart.sharpRtc && sharpRtc.th.clock < cpu.th.clock) {
+		sharpRtcRun();
+	}
+	if (cart.spc7110 && spc7110.th.clock < cpu.th.clock) {
+		spc7110Run();
 	}
 }

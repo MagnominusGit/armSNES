@@ -6,6 +6,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 // The libretro core: a game, the pad on each port, the picture as the PPU drew it and the sound at the
 // DSP's own rate.
@@ -108,6 +109,12 @@ bool cartFirmware(const char* name, u8* data, size_t size) {
 	fclose(file);
 	return read;
 }
+
+// The cartridge's clock as the frontend keeps it. What the frontend gives back after loading the game
+// is applied before the first frame; until then it holds the clock as the game started.
+static u8 rtcMemory[16];
+static u8 rtcStart[16];
+static bool rtcApplied;
 
 // The joypad's buttons are numbered as the pad's shift register sends them.
 static u16 held[2];
@@ -217,6 +224,12 @@ void retro_reset(void) {
 }
 
 void retro_run(void) {
+	if (!rtcApplied) {
+		rtcApplied = true;
+		if (rtcPresent() && memcmp(rtcMemory, rtcStart, sizeof(rtcMemory))) {
+			rtcLoad(rtcMemory, (s64) time(NULL));
+		}
+	}
 	readPads();
 	outputReady = false;
 	soundCount = 0;
@@ -230,6 +243,9 @@ void retro_run(void) {
 	}
 	if (soundCount) {
 		audioBatch(sound, soundCount);
+	}
+	if (rtcPresent()) {
+		rtcSave(rtcMemory, (s64) time(NULL));
 	}
 }
 
@@ -299,6 +315,11 @@ bool retro_load_game(const struct retro_game_info* info) {
 
 	systemLoad(cart.pal);
 	systemPower(false);
+	if (rtcPresent()) {
+		rtcSave(rtcMemory, (s64) time(NULL));
+		memcpy(rtcStart, rtcMemory, sizeof(rtcStart));
+	}
+	rtcApplied = false;
 	loaded = true;
 	return true;
 }
@@ -326,6 +347,8 @@ void* retro_get_memory_data(unsigned id) {
 		return cart.saveRam;
 	case RETRO_MEMORY_SYSTEM_RAM:
 		return cpu.wram;
+	case RETRO_MEMORY_RTC:
+		return rtcPresent() ? rtcMemory : NULL;
 	}
 	return NULL;
 }
@@ -336,6 +359,8 @@ size_t retro_get_memory_size(unsigned id) {
 		return cart.saveRamSize;
 	case RETRO_MEMORY_SYSTEM_RAM:
 		return sizeof(cpu.wram);
+	case RETRO_MEMORY_RTC:
+		return rtcPresent() ? sizeof(rtcMemory) : 0;
 	}
 	return 0;
 }

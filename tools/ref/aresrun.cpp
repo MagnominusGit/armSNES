@@ -4,7 +4,7 @@
 
 // aresrun game frames: unmodified ares (its dot renderer) with no frontend, saying what came out in
 // the same form as tests/snesrun.c, for the two to be compared.
-// env: FRAMELOG, AUDIOOUT, INPUT=1, RAWOUT and RAWFRAME, RESETAT
+// env: FRAMELOG, AUDIOOUT, INPUT=1, RAWOUT and RAWFRAME, RESETAT, SAVEIN (the save RAM it starts with)
 #include <ares/ares.hpp>
 #include <mia/mia.hpp>
 #include <atomic>
@@ -110,6 +110,11 @@ auto nall::main(Arguments arguments) -> void {
   runner.rows = (pal ? 288 : 242) * 2;
   ares::Node::System root;
   if(!ares::SuperFamicom::load(root, pal ? "[Nintendo] Super Famicom (PAL)" : "[Nintendo] Super Famicom (NTSC)")) std::exit(1);
+  if(auto path = std::getenv("SAVEIN")) {
+    auto save = file::read(path);
+    if(auto fp = runner.game->pak->read("save.ram")) runner.game->pak->remove(fp);
+    runner.game->pak->append("save.ram", std::span<const u8>{save.data(), save.size()});
+  }
   auto slot = root->find<ares::Node::Port>("Cartridge Slot");
   auto cartridge = slot->allocate();
   slot->connect();

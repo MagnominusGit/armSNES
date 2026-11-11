@@ -12,17 +12,17 @@
 // A state is taken between frames. The canvas is usually clear then, but not after a DMA that ran on
 // into the next frame.
 
-enum { STATE_MAGIC = 0x534e5341, STATE_VERSION = 6 };
+enum { STATE_MAGIC = 0x534e5341, STATE_VERSION = 7 };
 
 struct StateHeader {
 	u32 magic;
 	u32 version;
-	u32 sizes[12];
+	u32 sizes[15];
 	u32 ramSize;
 	u32 reserved;
 };
 
-static void layout(u32 sizes[12]) {
+static void layout(u32 sizes[15]) {
 	sizes[0] = sizeof(sys);
 	sizes[1] = sizeof(cpu);
 	sizes[2] = sizeof(smp);
@@ -35,11 +35,15 @@ static void layout(u32 sizes[12]) {
 	sizes[9] = sizeof(sdd1);
 	sizes[10] = sizeof(obc1);
 	sizes[11] = sizeof(cx4);
+	sizes[12] = sizeof(spc7110);
+	sizes[13] = sizeof(epsonRtc);
+	sizes[14] = sizeof(sharpRtc);
 }
 
 size_t stateSize(void) {
 	return sizeof(struct StateHeader) + sizeof(sys) + sizeof(cpu) + sizeof(smp) + sizeof(dsp) + sizeof(ppu) + sizeof(input) +
-		sizeof(necdsp) + sizeof(sa1) + sizeof(gsu) + sizeof(sdd1) + sizeof(obc1) + sizeof(cx4) + cart.ramSize + sizeof(ppuCanvas);
+		sizeof(necdsp) + sizeof(sa1) + sizeof(gsu) + sizeof(sdd1) + sizeof(obc1) + sizeof(cx4) + sizeof(spc7110) + sizeof(epsonRtc) +
+		sizeof(sharpRtc) + cart.ramSize + sizeof(ppuCanvas);
 }
 
 #define PUT(object) \
@@ -74,6 +78,9 @@ bool stateSave(void* data, size_t size) {
 	PUT(sdd1);
 	PUT(obc1);
 	PUT(cx4);
+	PUT(spc7110);
+	PUT(epsonRtc);
+	PUT(sharpRtc);
 	memcpy(out, cart.ram, cart.ramSize);
 	out += cart.ramSize;
 	memcpy(out, ppuCanvas, ppu.drawnTo * sizeof(u32));
@@ -89,7 +96,7 @@ bool stateLoad(const void* data, size_t size) {
 	}
 	memcpy(&header, data, sizeof(header));
 
-	u32 sizes[12];
+	u32 sizes[15];
 	layout(sizes);
 	if (header.magic != STATE_MAGIC || header.version != STATE_VERSION || memcmp(header.sizes, sizes, sizeof(sizes)) ||
 	    header.ramSize != cart.ramSize || size < stateSize()) {
@@ -112,6 +119,9 @@ bool stateLoad(const void* data, size_t size) {
 	GET(sdd1);
 	GET(obc1);
 	GET(cx4);
+	GET(spc7110);
+	GET(epsonRtc);
+	GET(sharpRtc);
 	memcpy(cart.ram, in, cart.ramSize);
 	in += cart.ramSize;
 

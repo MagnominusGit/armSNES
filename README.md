@@ -4,7 +4,7 @@ A Super Nintendo core in C for ARM and x86 handhelds, ported from [ares](https:/
 
 It is early work. What is here runs games on plain cartridge boards (LoROM, HiROM and their extended
 forms, with or without save RAM), and on boards with an NEC DSP (DSP-1 to DSP-4, ST010, ST011), an
-SA-1, a Super FX, an S-DD1, an OBC1 or a Cx4. It gives the same picture and sound as ares's most accurate renderer,
+SA-1, a Super FX, an S-DD1, an OBC1, a Cx4 or an SPC7110, and with the Epson or Sharp real-time clock. It gives the same picture and sound as ares's most accurate renderer,
 frame for frame and sample for sample. Games with a DSP or a Cx4 need its firmware (`dsp1.rom`,
 `dsp1b.rom`, `st010.rom`, `cx4.rom` and so on, or the `.program.rom` and `.data.rom` halves) in the
 frontend's system folder, unless the dump carries it. It builds as a libretro core with saved states; the standalone app comes later. The

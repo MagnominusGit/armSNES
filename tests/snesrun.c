@@ -12,7 +12,8 @@
 //      INPUT=1 (presses buttons on a fixed schedule), PPMOUT (the last frame as a picture),
 //      RAWOUT and RAWFRAME (the canvas of that frame, counted from 1), HASHLOG (a hash of the saved
 //      state after every frame), RUNAHEAD=n (after each frame, n more are run and undone by a state),
-//      RESETAT=n (the reset button is pressed after frame n), SYSDIR (where chip firmware is)
+//      RESETAT=n (the reset button is pressed after frame n), SYSDIR (where chip firmware is),
+//      SAVEIN (the save RAM it starts with)
 
 static FILE* frameLog;
 static FILE* audioOut;
@@ -132,6 +133,15 @@ int main(int argc, char** argv) {
 		return 3;
 	}
 
+	if (getenv("SAVEIN")) {
+		FILE* save = fopen(getenv("SAVEIN"), "rb");
+		if (save) {
+			if (fread(cart.saveRam, 1, cart.saveRamSize, save) == 0) {
+				fprintf(stderr, "the save is empty\n");
+			}
+			fclose(save);
+		}
+	}
 	if (getenv("FRAMELOG")) {
 		frameLog = fopen(getenv("FRAMELOG"), "w");
 	}

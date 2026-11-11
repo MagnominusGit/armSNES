@@ -59,4 +59,12 @@ Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips 
   instruction cache, the pixel cache) keep their arguments and locals in a frame stack;
 - the S-DD1 (decompression as DMA reads) and the OBC1;
 - the Cx4, an HG51B whose clock steps, cache fills, page changes and DMA are subroutines of one state
-  machine, with its data ROM from `cx4.rom` or the end of the dump.
+  machine, with its data ROM from `cx4.rom` or the end of the dump;
+- the SPC7110 (decompression, data port, ALU and memory controller; its waits before a result are
+  stop points), with a 7 MiB dump's expansion ROM;
+- the Epson RTC-4513 and the Sharp S-RTC. They keep time by the machine's clock; the frontend keeps
+  them as RTC memory, and loading one moves it on by the time the game was off.
+
+A new SPC7110 cartridge held "SPC7110 CHECK OK" at the end of its save RAM. Without it the game runs
+its factory check program and asks for the power to be cut, as on ares. Whether a new save should
+start with it is still open.

@@ -401,6 +401,9 @@ struct Cart {
 	bool sdd1;
 	bool obc1;
 	bool cx4;
+	bool spc7110;
+	bool epsonRtc;
+	bool sharpRtc;
 	// What the game saves to: the save RAM, or a chip's own memory. Little-endian hosts only.
 	u8* saveRam;
 	u32 saveRamSize;
@@ -1004,6 +1007,117 @@ u8 cx4ReadRamCPU(u32 address, u8 data);
 void cx4WriteRamCPU(u32 address, u8 data);
 u8 cx4ReadDataRamCPU(u32 address, u8 data);
 void cx4WriteDataRamCPU(u32 address, u8 data);
+
+// --- SPC7110 ---
+
+struct Spc7110Decompressor {
+	struct {
+		u8 prediction;
+		u8 swap;
+	} context[5][15];
+	u32 bpp;
+	u32 offset;
+	u32 bits;
+	u16 range;
+	u16 input;
+	u8 output;
+	u64 pixels;
+	u64 colormap;
+	u32 result;
+};
+struct Spc7110 {
+	struct Thread th;
+	// Where it stopped: 0 at the top of its loop, or in the wait before a decompression, a
+	// multiplication or a division.
+	u32 state;
+
+	// The decompression unit.
+	u8 r4801, r4802, r4803, r4804, r4805, r4806, r4807, r4809, r480a, r480b, r480c;
+	bool dcuPending;
+	u8 dcuMode;
+	u32 dcuAddress;
+	u32 dcuOffset;
+	u8 dcuTile[32];
+	struct Spc7110Decompressor dcu;
+
+	// The data port.
+	u8 r4810, r4811, r4812, r4813, r4814, r4815, r4816, r4817, r4818, r481a;
+
+	// The ALU.
+	u8 r4820, r4821, r4822, r4823, r4824, r4825, r4826, r4827;
+	u8 r4828, r4829, r482a, r482b, r482c, r482d, r482e, r482f;
+	bool mulPending, divPending;
+
+	// The memory controller.
+	u8 r4830, r4831, r4832, r4833, r4834;
+};
+extern struct Spc7110 spc7110;
+
+void spc7110Load(void);
+void spc7110Power(void);
+void spc7110Run(void);
+u8 spc7110Read(u32 address, u8 data);
+void spc7110Write(u32 address, u8 data);
+u8 spc7110ReadMCU(u32 address, u8 data);
+void spc7110WriteMCU(u32 address, u8 data);
+u8 spc7110ReadRam(u32 address, u8 data);
+void spc7110WriteRam(u32 address, u8 data);
+
+// --- Real-time clocks: the Epson RTC-4513 and the Sharp S-RTC ---
+
+struct EpsonRtc {
+	struct Thread th;
+	u32 clocks;
+	u32 seconds;
+	u8 chipselect;
+	u8 state;
+	u8 mdr;
+	u8 offset;
+	u32 wait;
+	bool ready;
+	bool holdtick;
+
+	u8 secondlo, secondhi;
+	bool batteryfailure;
+	u8 minutelo, minutehi;
+	bool resync;
+	u8 hourlo, hourhi;
+	bool meridian;
+	u8 daylo, dayhi;
+	bool dayram;
+	u8 monthlo, monthhi, monthram;
+	u8 yearlo, yearhi;
+	u8 weekday;
+	bool hold, calendar, irqflag, roundseconds, irqmask, irqduty;
+	u8 irqperiod;
+	bool pause, stop, atime, test;
+};
+extern struct EpsonRtc epsonRtc;
+
+struct SharpRtc {
+	struct Thread th;
+	u8 state;
+	s32 index;
+	u32 second, minute, hour, day, month, year, weekday;
+};
+extern struct SharpRtc sharpRtc;
+
+void epsonRtcLoad(void);
+void epsonRtcPower(void);
+void epsonRtcRun(void);
+u8 epsonRtcRead(u32 address, u8 data);
+void epsonRtcWrite(u32 address, u8 data);
+void sharpRtcLoad(void);
+void sharpRtcPower(void);
+void sharpRtcRun(void);
+u8 sharpRtcRead(u32 address, u8 data);
+void sharpRtcWrite(u32 address, u8 data);
+
+// A clock's time as the frontend keeps it while the game is off: 8 bytes of the clock, then the host's
+// time when they were saved (seconds since 1970). Loading moves the clock on by the time since then.
+bool rtcPresent(void);
+void rtcSave(u8 data[16], s64 now);
+void rtcLoad(const u8 data[16], s64 now);
 
 // The S-CPU's DMA registers, for a chip that watches them.
 u8 cpuReadDMA(u32 address, u8 data);

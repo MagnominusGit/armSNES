@@ -397,6 +397,7 @@ struct Cart {
 	char missing[64];
 	bool necdsp;
 	bool sa1;
+	bool gsu;
 	// What the game saves to: the save RAM, or a chip's own memory. Little-endian hosts only.
 	u8* saveRam;
 	u32 saveRamSize;
@@ -817,5 +818,76 @@ u8 sa1ReadBwramCPU(u32 address, u8 data);
 void sa1WriteBwramCPU(u32 address, u8 data);
 u8 sa1ReadIramCPU(u32 address, u8 data);
 void sa1WriteIramCPU(u32 address, u8 data);
+
+// --- Super FX (GSU) ---
+
+struct GsuFrame {
+	u32 ret;
+	u32 a, b, c, d, e;
+};
+struct GsuPixelCache {
+	u16 offset;
+	u8 bitpend;
+	u8 data[8];
+};
+struct Gsu {
+	struct Thread th;
+
+	// Where it stopped, and the subroutines it was in: each frame has its return state, its
+	// arguments and its locals.
+	u32 state;
+	struct GsuFrame stack[16];
+	u8 depth;
+	u32 result;
+	u8 opcode;
+	// What PIPE gives back, and a low byte an instruction keeps while it reads the high one.
+	u8 pipeOut;
+	u8 lo;
+
+	u16 r[16];
+	bool modified[16];
+	u16 sfr;
+	u8 pipeline;
+	u16 ramaddr;
+	u8 pbr, rombr;
+	bool rambr;
+	u16 cbr;
+	u8 scbr;
+	struct {
+		u32 ht;
+		bool ron, ran;
+		u32 md;
+	} scmr;
+	u8 colr;
+	struct {
+		bool obj, freezehigh, highnibble, dither, transparent;
+	} por;
+	bool bramr;
+	u8 vcr;
+	struct {
+		bool irq, ms0;
+	} cfgr;
+	bool clsr;
+	u32 romcl;
+	u8 romdr;
+	u32 ramcl;
+	u16 ramar;
+	u8 ramdr;
+	u32 sreg, dreg;
+
+	u8 cache[512];
+	bool cacheValid[32];
+	struct GsuPixelCache pixelcache[2];
+};
+extern struct Gsu gsu;
+
+void gsuPower(void);
+void gsuRun(void);
+u8 gsuReadIO(u32 address, u8 data);
+void gsuWriteIO(u32 address, u8 data);
+u8 gsuReadRomCPU(u32 address, u8 data);
+void gsuWriteRomCPU(u32 address, u8 data);
+u8 gsuReadRamCPU(u32 address, u8 data);
+void gsuWriteRamCPU(u32 address, u8 data);
 
 #endif

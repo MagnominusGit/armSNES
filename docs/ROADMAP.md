@@ -53,4 +53,7 @@ Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips 
   end of the dump;
 - the SA-1, on a 65816 that can stop at any clock step: `tools/resumable65816.py` makes it from the
   S-CPU's (`src/w65816r.inc`), with reads, writes and idle cycles as subroutines of the SA-1's state
-  machine. A memory-pack slot on its board is left empty for now.
+  machine. A memory-pack slot on its board is left empty for now;
+- the Super FX, a state machine of the same kind whose subroutines (a clock step that can finish a
+  buffered ROM read or RAM write, a read that waits for the bus, the opcode fetch through the
+  instruction cache, the pixel cache) keep their arguments and locals in a frame stack.

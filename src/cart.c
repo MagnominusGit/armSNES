@@ -273,6 +273,9 @@ static bool partSupported(u16 part) {
 	case PART_PROCESSOR_W65C816S_MEMORY_RAM_INTERNAL:
 	// A memory-pack slot left empty.
 	case PART_PROCESSOR_W65C816S_MCU_SLOT_BSMEMORY:
+	case PART_PROCESSOR_GSU:
+	case PART_PROCESSOR_GSU_MEMORY_ROM_PROGRAM:
+	case PART_PROCESSOR_GSU_MEMORY_RAM_SAVE:
 		return true;
 	}
 	return false;
@@ -452,6 +455,9 @@ bool cartLoad(const u8* data, u32 size) {
 		if (board->parts[n] == PART_PROCESSOR_W65C816S) {
 			cart.sa1 = true;
 		}
+		if (board->parts[n] == PART_PROCESSOR_GSU) {
+			cart.gsu = true;
+		}
 		if (board->parts[n] == PART_PROCESSOR_UPD7725 || board->parts[n] == PART_PROCESSOR_UPD96050) {
 			cart.necdsp = true;
 			necdsp.uPD96050 = board->parts[n] == PART_PROCESSOR_UPD96050;
@@ -530,6 +536,17 @@ void cartMap(void) {
 		case PART_PROCESSOR_W65C816S_MEMORY_RAM_INTERNAL:
 			busMap(sa1ReadIramCPU, sa1WriteIramCPU, map->address, map->size, map->base, map->mask);
 			break;
+		case PART_PROCESSOR_GSU:
+			busMap(gsuReadIO, gsuWriteIO, map->address, map->size, map->base, map->mask);
+			break;
+		case PART_PROCESSOR_GSU_MEMORY_ROM_PROGRAM:
+			busMap(gsuReadRomCPU, gsuWriteRomCPU, map->address, map->size ? map->size : cart.romSize, map->base, map->mask);
+			break;
+		case PART_PROCESSOR_GSU_MEMORY_RAM_SAVE:
+			if (cart.ramSize) {
+				busMap(gsuReadRamCPU, gsuWriteRamCPU, map->address, map->size ? map->size : cart.ramSize, map->base, map->mask);
+			}
+			break;
 		}
 	}
 }
@@ -542,6 +559,9 @@ void cartPower(bool reset) {
 	if (cart.sa1) {
 		sa1Power();
 	}
+	if (cart.gsu) {
+		gsuPower();
+	}
 }
 
 // The coprocessors, brought up to the CPU's clock.
@@ -551,5 +571,8 @@ void cartSync(void) {
 	}
 	if (cart.sa1 && sa1.th.clock < cpu.th.clock) {
 		sa1Run();
+	}
+	if (cart.gsu && gsu.th.clock < cpu.th.clock) {
+		gsuRun();
 	}
 }

@@ -4,7 +4,9 @@
 
 // aresrun game frames: unmodified ares (its dot renderer) with no frontend, saying what came out in
 // the same form as tests/snesrun.c, for the two to be compared.
-// env: FRAMELOG, AUDIOOUT, INPUT=1 (or 2: A, Down, A every two seconds), RAWOUT and RAWFRAME, RESETAT, SAVEIN (the save RAM it starts with)
+// env: FRAMELOG, AUDIOOUT, INPUT=1 (or 2: A, Down, A every two seconds), RAWOUT and RAWFRAME, RESETAT, SAVEIN (the save RAM it starts with),
+// BSPACK (a memory pack for the slot), INPUTSCRIPT (lines of "frame button frames",
+// six if the length is left out)
 #include <ares/ares.hpp>
 #include <mia/mia.hpp>
 #include <atomic>
@@ -27,6 +29,7 @@ static uint64_t fnv(uint64_t hash, const void* data, size_t size) {
 
 struct Runner : ares::Platform {
   std::shared_ptr<mia::Pak> game;
+  std::shared_ptr<mia::Pak> pack;
   std::shared_ptr<vfs::directory> system = std::make_shared<vfs::directory>();
   FILE* frameLog = nullptr;
   FILE* audioOut = nullptr;
@@ -39,6 +42,7 @@ struct Runner : ares::Platform {
   auto pak(ares::Node::Object node) -> std::shared_ptr<vfs::directory> override {
     if(node->name() == "Super Famicom") return system;
     if(node->name() == "Super Famicom Cartridge") return game->pak;
+    if(node->name() == "BS Memory Cartridge" && pack) return pack->pak;
     return {};
   }
 
@@ -69,7 +73,14 @@ struct Runner : ares::Platform {
     }
   }
 
+  struct Press { uint64_t frame, hold; string button; };
+  std::vector<Press> script;
+
   auto held(const string& name) -> bool {
+    if(!script.empty()) {
+      for(auto& press : script) if(frames >= press.frame && frames < press.frame + press.hold && press.button == name) return true;
+      return false;
+    }
     if(!pressing) return false;
     if(pressingA) {
       unsigned step = frames % 120;
@@ -128,6 +139,14 @@ auto nall::main(Arguments arguments) -> void {
   auto cartridge = slot->allocate();
   slot->connect();
   if(!cartridge || !cartridge->pak()) { std::fprintf(stderr, "the cartridge didn't connect\n"); std::exit(1); }
+  if(auto path = std::getenv("BSPACK")) {
+    runner.pack = mia::Medium::create("BS Memory");
+    if(!runner.pack || runner.pack->load(path) != successful) { std::fprintf(stderr, "can't load the pack\n"); std::exit(1); }
+    auto bsSlot = cartridge->find<ares::Node::Port>("BS Memory Slot");
+    if(!bsSlot) { std::fprintf(stderr, "no BS Memory slot\n"); std::exit(1); }
+    bsSlot->allocate();
+    bsSlot->connect();
+  }
   for(const char* name : {"Controller Port 1", "Controller Port 2"}) {
     if(auto port = root->find<ares::Node::Port>(name)) { port->allocate("Gamepad"); port->connect(); }
   }
@@ -136,6 +155,16 @@ auto nall::main(Arguments arguments) -> void {
 
   if(auto path = std::getenv("FRAMELOG")) runner.frameLog = std::fopen(path, "w");
   if(auto path = std::getenv("AUDIOOUT")) runner.audioOut = std::fopen(path, "wb");
+  if(auto path = std::getenv("INPUTSCRIPT")) {
+    if(FILE* fp = std::fopen(path, "r")) {
+      char line[64], name[16]; unsigned long long frame, hold;
+      while(std::fgets(line, sizeof(line), fp)) {
+        int fields = std::sscanf(line, "%llu %15s %llu", &frame, name, &hold);
+        if(fields >= 2) runner.script.push_back({frame, fields == 3 ? hold : 6, string{name}});
+      }
+      std::fclose(fp);
+    }
+  }
   runner.pressing = std::getenv("INPUT") != nullptr;
   runner.pressingA = runner.pressing && !std::strcmp(std::getenv("INPUT"), "2");
 

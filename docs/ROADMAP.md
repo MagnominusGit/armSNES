@@ -64,6 +64,12 @@ Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips 
   stop points), with a 7 MiB dump's expansion ROM;
 - the ST018, ares's ARM7TDMI in ARM state, with a stop point at each clock step (every memory access
   and idle cycle), its firmware from `st018.rom` or the end of the dump;
+- the BS-X cartridge's memory controller (MCC) and the memory pack slot on its board and the BS-LOROM,
+  BS-HIROM and BS-SA1 boards, with flash packs and their command set. A `.bs` pack loads into the BS-X
+  cartridge (`BS-X.bin` from the system folder). The base cartridge matches ares; a pack's own program
+  is still to be tried by hand. The pack and the 512 KiB download RAM aren't kept between runs, the
+  three mask-ROM packs are run as flash, a slotted game cartridge can't be given a pack from the
+  frontend yet, and the Satellaview receiver isn't there;
 - the Epson RTC-4513 and the Sharp S-RTC. They keep time by the machine's clock; the frontend keeps
   them as RTC memory, and loading one moves it on by the time the game was off.
 

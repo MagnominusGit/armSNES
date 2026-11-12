@@ -307,6 +307,12 @@ static bool partSupported(u16 part) {
 	case PART_PROCESSOR_ARM6_MEMORY_ROM_DATA_ARM6:
 	case PART_PROCESSOR_ARM6_MEMORY_RAM_DATA_ARM6:
 	case PART_PROCESSOR_ARM6_OSCILLATOR:
+	case PART_PROCESSOR_MCC:
+	case PART_PROCESSOR_MCC_MCU:
+	case PART_PROCESSOR_MCC_MCU_MEMORY_ROM_PROGRAM:
+	case PART_PROCESSOR_MCC_MCU_MEMORY_RAM_DOWNLOAD:
+	case PART_PROCESSOR_MCC_MCU_SLOT_BSMEMORY:
+	case PART_SLOT_BSMEMORY:
 		return true;
 	}
 	return false;
@@ -550,6 +556,13 @@ bool cartLoad(const u8* data, u32 size) {
 		if (board->parts[n] == PART_PROCESSOR_ARM6) {
 			cart.st018 = true;
 		}
+		if (board->parts[n] == PART_PROCESSOR_MCC) {
+			cart.mcc = true;
+		}
+		if (board->parts[n] == PART_SLOT_BSMEMORY || board->parts[n] == PART_PROCESSOR_MCC_MCU_SLOT_BSMEMORY ||
+		    board->parts[n] == PART_PROCESSOR_W65C816S_MCU_SLOT_BSMEMORY) {
+			cart.bsSlot = true;
+		}
 		if (board->parts[n] == PART_PROCESSOR_UPD7725 || board->parts[n] == PART_PROCESSOR_UPD96050) {
 			cart.necdsp = true;
 			necdsp.uPD96050 = board->parts[n] == PART_PROCESSOR_UPD96050;
@@ -585,6 +598,10 @@ bool cartLoad(const u8* data, u32 size) {
 	if (cart.st018 && !loadSt018Firmware()) {
 		return false;
 	}
+	if (cart.mcc) {
+		mccLoad();
+	}
+	bsLoad(NULL, 0);
 	if (cart.epsonRtc) {
 		epsonRtcLoad();
 	}
@@ -684,6 +701,15 @@ void cartMap(void) {
 		case PART_RTC_EPSON:
 			busMap(epsonRtcRead, epsonRtcWrite, map->address, map->size, map->base, map->mask);
 			break;
+		case PART_PROCESSOR_MCC:
+			busMap(mccRead, mccWrite, map->address, map->size, map->base, map->mask);
+			break;
+		case PART_PROCESSOR_MCC_MCU:
+			busMap(mccReadMCU, mccWriteMCU, map->address, map->size, map->base, map->mask);
+			break;
+		case PART_SLOT_BSMEMORY:
+			busMap(bsRead, bsWrite, map->address, map->size, map->base, map->mask);
+			break;
 		case PART_PROCESSOR_ARM6:
 			busMap(st018Read, st018Write, map->address, map->size, map->base, map->mask);
 			break;
@@ -709,8 +735,19 @@ void cartMap(void) {
 	}
 }
 
+bool cartInsertPack(const u8* data, size_t size) {
+	if (!cart.bsSlot) {
+		return false;
+	}
+	bsLoad(data, size);
+	return bsPresent();
+}
+
 void cartPower(bool reset) {
 	(void) reset;
+	if (cart.mcc) {
+		mccPower();
+	}
 	if (cart.necdsp) {
 		necdspPower();
 	}
@@ -741,6 +778,9 @@ void cartPower(bool reset) {
 	if (cart.st018) {
 		st018Power();
 	}
+	if (cart.bsSlot) {
+		bsPower();
+	}
 }
 
 // The coprocessors, brought up to the CPU's clock.
@@ -768,5 +808,8 @@ void cartSync(void) {
 	}
 	if (cart.st018 && st018.th.clock < cpu.th.clock) {
 		st018Run();
+	}
+	if (bsRunning() && bsmemory.th.clock < cpu.th.clock) {
+		bsRun();
 	}
 }

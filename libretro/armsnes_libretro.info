@@ -1,6 +1,6 @@
 display_name = "Nintendo - SNES / SFC (armSNES)"
 authors = "Magnominus"
-supported_extensions = "sfc|smc"
+supported_extensions = "sfc|smc|bs"
 corename = "armSNES"
 manufacturer = "Nintendo"
 categories = "Emulator"

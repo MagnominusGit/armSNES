@@ -218,7 +218,11 @@ static inline bool romConflict(void) {
 	return false;
 }
 
+// A bank of 4 or more reaches the memory pack when there is one.
 static inline u8 romRead(u32 address) {
+	if ((address & 0x400000) && bsPresent()) {
+		return bsRead(address, 0x00);
+	}
 	return cart.rom[busMirror(address, cart.romSize)];
 }
 

@@ -6,6 +6,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <strings.h>
 #include <time.h>
 
 // The libretro core: a game, the pad on each port, the picture as the PPU drew it and the sound at the
@@ -110,6 +111,36 @@ bool cartFirmware(const char* name, u8* data, size_t size) {
 	return read;
 }
 
+// A whole file from the frontend's system folder, or NULL.
+static u8* systemFile(const char* name, size_t* size) {
+	const char* folder = NULL;
+	if (!environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &folder) || !folder) {
+		return NULL;
+	}
+	char path[4096];
+	snprintf(path, sizeof(path), "%s/%s", folder, name);
+	FILE* file = fopen(path, "rb");
+	if (!file) {
+		return NULL;
+	}
+	fseek(file, 0, SEEK_END);
+	long length = ftell(file);
+	fseek(file, 0, SEEK_SET);
+	u8* data = length > 0 ? malloc(length) : NULL;
+	if (data && fread(data, 1, length, file) != (size_t) length) {
+		free(data);
+		data = NULL;
+	}
+	fclose(file);
+	*size = length;
+	return data;
+}
+
+static bool isPack(const char* path) {
+	const char* dot = path ? strrchr(path, '.') : NULL;
+	return dot && !strcasecmp(dot, ".bs");
+}
+
 // The cartridge's clock as the frontend keeps it. What the frontend gives back after loading the game
 // is applied before the first frame; until then it holds the clock as the game started.
 static u8 rtcMemory[16];
@@ -194,7 +225,7 @@ void retro_get_system_info(struct retro_system_info* info) {
 	memset(info, 0, sizeof(*info));
 	info->library_name = "armSNES";
 	info->library_version = "0.1";
-	info->valid_extensions = "sfc|smc";
+	info->valid_extensions = "sfc|smc|bs";
 	info->need_fullpath = false;
 	info->block_extract = false;
 }
@@ -281,9 +312,22 @@ bool retro_load_game(const struct retro_game_info* info) {
 	}
 
 	free(game);
-	game = malloc(info->size);
-	memcpy(game, info->data, info->size);
-	if (!cartLoad(game, info->size)) {
+	size_t size = info->size;
+	// A memory pack goes in the BS-X cartridge's slot.
+	bool pack = isPack(info->path);
+	if (pack) {
+		game = systemFile("BS-X.bin", &size);
+		if (!game) {
+			if (logPrintf) {
+				logPrintf(RETRO_LOG_ERROR, "armSNES: a memory pack needs BS-X.bin in the system folder\n");
+			}
+			return false;
+		}
+	} else {
+		game = malloc(size);
+		memcpy(game, info->data, size);
+	}
+	if (!cartLoad(game, size) || (pack && !cartInsertPack(info->data, info->size))) {
 		if (logPrintf) {
 			logPrintf(RETRO_LOG_ERROR, "armSNES: the %s board can't be loaded without %s\n", cart.board, cart.missing);
 		}

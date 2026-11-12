@@ -10,7 +10,7 @@
 #include <string.h>
 
 // coretest core game frames [picture.ppm]: loads the libretro core as a frontend would, runs it with
-// nothing pressed, and writes the last picture it gave.
+// nothing pressed, and writes the last picture it gave. SYSDIR is its system folder.
 
 static uint16_t last[512 * 478];
 static unsigned lastWidth, lastHeight;
@@ -21,6 +21,9 @@ static bool environment(unsigned cmd, void* data) {
 	case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
 		return *(enum retro_pixel_format*) data == RETRO_PIXEL_FORMAT_RGB565;
 	case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
+		return true;
+	case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
+		*(const char**) data = getenv("SYSDIR") ? getenv("SYSDIR") : ".";
 		return true;
 	default:
 		return false;

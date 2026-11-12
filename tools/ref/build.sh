@@ -26,4 +26,5 @@ cmake --build ../b --target aresrun -j"${JOBS:-4}"
 # mia wants a game database to exist. An empty one leaves every game to the header, as this core reads it.
 mkdir -p ../b/Database
 : > "../b/Database/Super Famicom.bml"
+: > "../b/Database/BS Memory.bml"
 echo "$out/b/aresrun"

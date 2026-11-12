@@ -405,6 +405,9 @@ struct Cart {
 	bool epsonRtc;
 	bool sharpRtc;
 	bool st018;
+	bool mcc;
+	// A memory-pack slot, on the BS-X base cartridge or a game's board.
+	bool bsSlot;
 	// What the game saves to: the save RAM, or a chip's own memory. Little-endian hosts only.
 	u8* saveRam;
 	u32 saveRamSize;
@@ -1172,6 +1175,65 @@ void st018Power(void);
 void st018Run(void);
 u8 st018Read(u32 address, u8 data);
 void st018Write(u32 address, u8 data);
+
+// --- BS-X: the base cartridge's MCC and the memory pack ---
+
+struct MccRegisters {
+	bool mapping, psramEnableLo, psramEnableHi;
+	u8 psramMapping;
+	bool romEnableLo, romEnableHi, exEnableLo, exEnableHi, exMapping;
+	bool internallyWritable, externallyWritable;
+};
+struct Mcc {
+	bool irqFlag, irqEnable;
+	// The registers in use, and the ones written, which a commit makes the ones in use.
+	struct MccRegisters r, w;
+};
+extern struct Mcc mcc;
+
+struct BsBlock {
+	u32 erased;
+	bool locked, erasing;
+	bool statusVppLow, statusQueueFull, statusAborted, statusFailed, statusLocked, statusReady;
+};
+struct BsMemory {
+	struct Thread th;
+	u32 state;
+	u32 erasingBlock;
+	bool rom, writable;
+	u16 vendor, device;
+	u64 serial;
+	u8 page[2][256];
+	struct BsBlock blocks[64];
+	bool compatibleVppLow, compatibleWriteFailed, compatibleEraseFailed, compatibleEraseSuspended, compatibleReady;
+	bool globalPage, globalPageReady, globalPageAvailable, globalQueueFull, globalSleeping, globalFailed;
+	bool globalSuspended, globalReady;
+	u8 mode, readyBusyMode;
+	struct {
+		bool valid;
+		u32 address;
+		u8 data;
+	} queue[4];
+};
+extern struct BsMemory bsmemory;
+
+void mccLoad(void);
+void mccPower(void);
+u8 mccRead(u32 address, u8 data);
+void mccWrite(u32 address, u8 data);
+u8 mccReadMCU(u32 address, u8 data);
+void mccWriteMCU(u32 address, u8 data);
+u8* mccPsram(u32* size);
+void bsLoad(const u8* data, size_t size);
+void bsPower(void);
+void bsRun(void);
+bool bsPresent(void);
+bool bsRunning(void);
+u8 bsRead(u32 address, u8 data);
+void bsWrite(u32 address, u8 data);
+u8* bsData(u32* size);
+// A memory pack put in the slot, after the game is loaded and before it is powered on.
+bool cartInsertPack(const u8* data, size_t size);
 
 // The S-CPU's DMA registers, for a chip that watches them.
 u8 cpuReadDMA(u32 address, u8 data);

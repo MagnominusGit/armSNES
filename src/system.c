@@ -102,6 +102,8 @@ void systemPower(bool reset) {
 	// The SPC7110 comes after its board's RTC.
 	spc7110.th.clock = cart.epsonRtc ? 5 : 4;
 	st018.th.clock = 4;
+	// A flash pack's clock comes after the SA-1's.
+	bsmemory.th.clock = cart.sa1 ? 5 : 4;
 }
 
 // The PPU finished a frame. The clocks all drop by the same amount, so they never overflow.
@@ -137,6 +139,9 @@ void systemFrameEvent(void) {
 	if (cart.st018 && st018.th.clock - 4 < minimum) {
 		minimum = st018.th.clock - 4;
 	}
+	if (bsRunning() && bsmemory.th.clock - (cart.sa1 ? 5 : 4) < minimum) {
+		minimum = bsmemory.th.clock - (cart.sa1 ? 5 : 4);
+	}
 	if (cart.spc7110 && spc7110.th.clock - (cart.epsonRtc ? 5 : 4) < minimum) {
 		minimum = spc7110.th.clock - (cart.epsonRtc ? 5 : 4);
 	}
@@ -167,6 +172,9 @@ void systemFrameEvent(void) {
 	}
 	if (cart.st018) {
 		st018.th.clock -= minimum;
+	}
+	if (bsRunning()) {
+		bsmemory.th.clock -= minimum;
 	}
 
 	sys.frames++;

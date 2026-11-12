@@ -9,7 +9,8 @@
 
 // snesrun game frames: runs a game with no frontend and says what came out.
 // env: FRAMELOG (a hash of every frame's canvas), AUDIOOUT (the sound, 16-bit stereo),
-//      INPUT=1 (presses buttons on a fixed schedule; 2: A, Down, A every two seconds), PPMOUT (the last frame as a picture),
+//      INPUT=1 (presses buttons on a fixed schedule; 2: A, Down, A every two seconds), INPUTSCRIPT (lines of
+//      "frame button frames", six if the length is left out), PPMOUT (the last frame as a picture),
 //      RAWOUT and RAWFRAME (the canvas of that frame, counted from 1), HASHLOG (a hash of the saved
 //      state after every frame), RUNAHEAD=n (after each frame, n more are run and undone by a state),
 //      RESETAT=n (the reset button is pressed after frame n), SYSDIR (where chip firmware is),
@@ -86,7 +87,46 @@ bool cartFirmware(const char* name, u8* data, size_t size) {
 
 // The buttons a test run holds: Start, then A, then the D-pad, round and round. Both this and the
 // reference runner go by the number of frames finished.
+static u32 scriptFrame[4096];
+static u16 scriptButtons[4096];
+static u32 scriptHold[4096];
+static int scriptLength;
+
+// INPUTSCRIPT: lines of "frame button frames", each held that long (six frames if left out).
+static void loadScript(const char* path) {
+	static const char* names[] = { "B", "Y", "Select", "Start", "Up", "Down", "Left", "Right", "A", "X", "L", "R" };
+	static const int pads[] = { PAD_B, PAD_Y, PAD_SELECT, PAD_START, PAD_UP, PAD_DOWN, PAD_LEFT, PAD_RIGHT, PAD_A, PAD_X, PAD_L, PAD_R };
+	FILE* file = fopen(path, "r");
+	char line[64], name[16];
+	u32 frame, hold;
+	while (file && scriptLength < 4096 && fgets(line, sizeof(line), file)) {
+		int fields = sscanf(line, "%u %15s %u", &frame, name, &hold);
+		if (fields < 2) {
+			continue;
+		}
+		for (int n = 0; n < 12; n++) {
+			if (!strcmp(name, names[n])) {
+				scriptFrame[scriptLength] = frame;
+				scriptHold[scriptLength] = fields == 3 ? hold : 6;
+				scriptButtons[scriptLength++] = 1 << pads[n];
+			}
+		}
+	}
+	if (file) {
+		fclose(file);
+	}
+}
+
 u16 inputPoll(int port) {
+	if (scriptLength) {
+		u16 buttons = 0;
+		for (int n = 0; port == 0 && n < scriptLength; n++) {
+			if (sys.frames >= scriptFrame[n] && sys.frames < scriptFrame[n] + scriptHold[n]) {
+				buttons |= scriptButtons[n];
+			}
+		}
+		return buttons;
+	}
 	if (!pressing || port != 0) {
 		return 0;
 	}
@@ -142,6 +182,22 @@ int main(int argc, char** argv) {
 		return 3;
 	}
 
+	if (getenv("BSPACK")) {
+		FILE* pack = fopen(getenv("BSPACK"), "rb");
+		if (!pack) {
+			return 1;
+		}
+		fseek(pack, 0, SEEK_END);
+		long packSize = ftell(pack);
+		fseek(pack, 0, SEEK_SET);
+		u8* data = malloc(packSize);
+		if (fread(data, 1, packSize, pack) != (size_t) packSize || !cartInsertPack(data, packSize)) {
+			fprintf(stderr, "can't insert the pack\n");
+			return 1;
+		}
+		fclose(pack);
+		free(data);
+	}
 	if (getenv("SAVEIN")) {
 		FILE* save = fopen(getenv("SAVEIN"), "rb");
 		if (save) {
@@ -156,6 +212,9 @@ int main(int argc, char** argv) {
 	}
 	if (getenv("AUDIOOUT")) {
 		audioOut = fopen(getenv("AUDIOOUT"), "wb");
+	}
+	if (getenv("INPUTSCRIPT")) {
+		loadScript(getenv("INPUTSCRIPT"));
 	}
 	pressing = getenv("INPUT") != NULL;
 	pressingA = pressing && !strcmp(getenv("INPUT"), "2");

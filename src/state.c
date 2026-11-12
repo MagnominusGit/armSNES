@@ -12,17 +12,18 @@
 // A state is taken between frames. The canvas is usually clear then, but not after a DMA that ran on
 // into the next frame.
 
-enum { STATE_MAGIC = 0x534e5341, STATE_VERSION = 8 };
+enum { STATE_MAGIC = 0x534e5341, STATE_VERSION = 9 };
 
 struct StateHeader {
 	u32 magic;
 	u32 version;
-	u32 sizes[16];
+	u32 sizes[18];
 	u32 ramSize;
-	u32 reserved;
+	// The BS-X cartridge's PSRAM and flash pack together.
+	u32 extraSize;
 };
 
-static void layout(u32 sizes[16]) {
+static void layout(u32 sizes[18]) {
 	sizes[0] = sizeof(sys);
 	sizes[1] = sizeof(cpu);
 	sizes[2] = sizeof(smp);
@@ -39,12 +40,50 @@ static void layout(u32 sizes[16]) {
 	sizes[13] = sizeof(epsonRtc);
 	sizes[14] = sizeof(sharpRtc);
 	sizes[15] = sizeof(st018);
+	sizes[16] = sizeof(mcc);
+	sizes[17] = sizeof(bsmemory);
+}
+
+// What a BS-X cartridge adds: its PSRAM, and a flash pack's contents.
+static u32 extraSize(void) {
+	u32 psram = 0, pack = 0;
+	if (cart.mcc) {
+		mccPsram(&psram);
+	}
+	bsData(&pack);
+	return psram + pack;
+}
+
+static u8* putExtra(u8* out) {
+	u32 size = 0;
+	u8* data;
+	if (cart.mcc) {
+		data = mccPsram(&size);
+		memcpy(out, data, size);
+		out += size;
+	}
+	data = bsData(&size);
+	memcpy(out, data, size);
+	return out + size;
+}
+
+static const u8* getExtra(const u8* in) {
+	u32 size = 0;
+	u8* data;
+	if (cart.mcc) {
+		data = mccPsram(&size);
+		memcpy(data, in, size);
+		in += size;
+	}
+	data = bsData(&size);
+	memcpy(data, in, size);
+	return in + size;
 }
 
 size_t stateSize(void) {
 	return sizeof(struct StateHeader) + sizeof(sys) + sizeof(cpu) + sizeof(smp) + sizeof(dsp) + sizeof(ppu) + sizeof(input) +
 		sizeof(necdsp) + sizeof(sa1) + sizeof(gsu) + sizeof(sdd1) + sizeof(obc1) + sizeof(cx4) + sizeof(spc7110) + sizeof(epsonRtc) +
-		sizeof(sharpRtc) + sizeof(st018) + cart.ramSize + sizeof(ppuCanvas);
+		sizeof(sharpRtc) + sizeof(st018) + sizeof(mcc) + sizeof(bsmemory) + cart.ramSize + extraSize() + sizeof(ppuCanvas);
 }
 
 #define PUT(object) \
@@ -62,7 +101,7 @@ bool stateSave(void* data, size_t size) {
 	if (size < stateSize()) {
 		return false;
 	}
-	struct StateHeader header = { .magic = STATE_MAGIC, .version = STATE_VERSION, .ramSize = cart.ramSize };
+	struct StateHeader header = { .magic = STATE_MAGIC, .version = STATE_VERSION, .ramSize = cart.ramSize, .extraSize = extraSize() };
 	layout(header.sizes);
 
 	u8* out = data;
@@ -83,8 +122,11 @@ bool stateSave(void* data, size_t size) {
 	PUT(epsonRtc);
 	PUT(sharpRtc);
 	PUT(st018);
+	PUT(mcc);
+	PUT(bsmemory);
 	memcpy(out, cart.ram, cart.ramSize);
 	out += cart.ramSize;
+	out = putExtra(out);
 	memcpy(out, ppuCanvas, ppu.drawnTo * sizeof(u32));
 	out += ppu.drawnTo * sizeof(u32);
 	memset(out, 0, size - (out - (u8*) data));
@@ -98,10 +140,10 @@ bool stateLoad(const void* data, size_t size) {
 	}
 	memcpy(&header, data, sizeof(header));
 
-	u32 sizes[16];
+	u32 sizes[18];
 	layout(sizes);
 	if (header.magic != STATE_MAGIC || header.version != STATE_VERSION || memcmp(header.sizes, sizes, sizeof(sizes)) ||
-	    header.ramSize != cart.ramSize || size < stateSize()) {
+	    header.ramSize != cart.ramSize || header.extraSize != extraSize() || size < stateSize()) {
 		return false;
 	}
 
@@ -125,8 +167,11 @@ bool stateLoad(const void* data, size_t size) {
 	GET(epsonRtc);
 	GET(sharpRtc);
 	GET(st018);
+	GET(mcc);
+	GET(bsmemory);
 	memcpy(cart.ram, in, cart.ramSize);
 	in += cart.ramSize;
+	in = getExtra(in);
 
 	sys.pal = pal;
 	if (ppu.drawnTo > CANVAS_WIDTH * CANVAS_HEIGHT) {

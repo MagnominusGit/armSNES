@@ -14,7 +14,8 @@
 //      RAWOUT and RAWFRAME (the canvas of that frame, counted from 1), HASHLOG (a hash of the saved
 //      state after every frame), RUNAHEAD=n (after each frame, n more are run and undone by a state),
 //      RESETAT=n (the reset button is pressed after frame n), SYSDIR (where chip firmware is),
-//      BSPACK (a memory pack), SUFAMIA and SUFAMIB (Sufami Turbo cartridges),
+//      BSPACK (a memory pack), SUFAMIA and SUFAMIB (Sufami Turbo cartridges), GAMEBOY (a Game Boy game for
+//      the Super Game Boy, with sgb1.boot.rom from SYSDIR),
 //      SAVEIN (the save RAM it starts with)
 
 static FILE* frameLog;
@@ -195,6 +196,28 @@ int main(int argc, char** argv) {
 		u8* data = malloc(length);
 		if (fread(data, 1, length, file) != (size_t) length || !cartInsertSufami(slot, data, length)) {
 			fprintf(stderr, "can't insert the Sufami Turbo cartridge\n");
+			return 1;
+		}
+		fclose(file);
+		free(data);
+	}
+	if (getenv("GAMEBOY")) {
+		FILE* file = fopen(getenv("GAMEBOY"), "rb");
+		u8 boot[256];
+		char path[4096];
+		snprintf(path, sizeof(path), "%s/sgb1.boot.rom", getenv("SYSDIR") ? getenv("SYSDIR") : ".");
+		FILE* bootFile = fopen(path, "rb");
+		if (!file || !bootFile || fread(boot, 1, sizeof(boot), bootFile) != sizeof(boot)) {
+			fprintf(stderr, "can't read the Game Boy game or sgb1.boot.rom\n");
+			return 1;
+		}
+		fclose(bootFile);
+		fseek(file, 0, SEEK_END);
+		long length = ftell(file);
+		fseek(file, 0, SEEK_SET);
+		u8* data = malloc(length);
+		if (fread(data, 1, length, file) != (size_t) length || !cartInsertGameBoy(data, length, boot, sizeof(boot))) {
+			fprintf(stderr, "can't insert the Game Boy game\n");
 			return 1;
 		}
 		fclose(file);

@@ -4,11 +4,19 @@ A Super Nintendo core in C for ARM and x86 handhelds, ported from [ares](https:/
 
 It is early work. What is here runs games on plain cartridge boards (LoROM, HiROM and their extended
 forms, with or without save RAM), and on boards with an NEC DSP (DSP-1 to DSP-4, ST010, ST011), an
-SA-1, a Super FX, an S-DD1, an OBC1, a Cx4, an SPC7110 or an ST018, and with the Epson or Sharp real-time clock. It gives the same picture and sound as ares's most accurate renderer,
-frame for frame and sample for sample. Games with a DSP or a Cx4 need its firmware (`dsp1.rom`,
-`dsp1b.rom`, `st010.rom`, `cx4.rom`, `st018.rom` and so on, or the `.program.rom` and `.data.rom` halves) in the
-frontend's system folder, unless the dump carries it. It builds as a libretro core with saved states; the standalone app comes later. The
-plan is in [docs/ROADMAP.md](docs/ROADMAP.md).
+SA-1, a Super FX, an S-DD1, an OBC1, a Cx4, an SPC7110 or an ST018, and with the Epson or Sharp
+real-time clock. It gives the same picture and sound as ares's most accurate renderer, frame for frame
+and sample for sample. Games with a DSP or a Cx4 need its firmware (`dsp1.rom`, `dsp1b.rom`,
+`st010.rom`, `cx4.rom`, `st018.rom` and so on, or the `.program.rom` and `.data.rom` halves) in the
+frontend's system folder, unless the dump carries it.
+
+It also takes BS-X memory packs (`.bs`, with `BS-X.bin`), Sufami Turbo cartridges (`.st`, with
+`STBIOS.bin`) and Game Boy games for the Super Game Boy (`.gb` and `.gbc`, with `SGB1.sfc` and
+`sgb1.boot.rom`), each with those files in the system folder. The Super Game Boy's Game Boy is
+Gambatte, as armGBA has it.
+
+It builds as a libretro core with saved states; the standalone app comes later. The plan is in
+[docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Build
 
@@ -25,7 +33,8 @@ build/snesrun game.sfc 600
 ## License
 
 GPL-2.0-or-later; see [LICENSE](LICENSE). The code ported from ares keeps ares's notice, in
-[LICENSES/ISC-ares.txt](LICENSES/ISC-ares.txt).
+[LICENSES/ISC-ares.txt](LICENSES/ISC-ares.txt). `gambatte/` is Gambatte-Speedrun's core under
+GPL-2.0 (its [COPYING](gambatte/COPYING)), so the built core is GPL-2.0.
 
 armSNES comes with no games. Play only games you own. It is not affiliated with or endorsed by
 Nintendo.

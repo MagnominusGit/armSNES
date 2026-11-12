@@ -28,4 +28,5 @@ mkdir -p ../b/Database
 : > "../b/Database/Super Famicom.bml"
 : > "../b/Database/BS Memory.bml"
 : > "../b/Database/Sufami Turbo.bml"
+: > "../b/Database/Game Boy.bml"
 echo "$out/b/aresrun"

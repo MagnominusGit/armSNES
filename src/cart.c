@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  * Ported from ares (ISC); see LICENSES/ISC-ares.txt. */
 #include "snes.h"
+#include "chips/gb.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -313,6 +314,10 @@ static bool partSupported(u16 part) {
 	case PART_PROCESSOR_MCC_MCU_MEMORY_RAM_DOWNLOAD:
 	case PART_PROCESSOR_MCC_MCU_SLOT_BSMEMORY:
 	case PART_SLOT_BSMEMORY:
+	case PART_PROCESSOR_ICD:
+	case PART_PROCESSOR_ICD_MEMORY_ROM_BOOT_SM83:
+	case PART_PROCESSOR_ICD_OSCILLATOR:
+	case PART_PROCESSOR_ICD_SLOT_GAMEBOY:
 	case PART_SLOT_SUFAMITURBO:
 	case PART_SLOT_SUFAMITURBO_ROM:
 	case PART_SLOT_SUFAMITURBO_RAM:
@@ -569,6 +574,9 @@ bool cartLoad(const u8* data, u32 size) {
 		if (board->parts[n] == PART_SLOT_SUFAMITURBO) {
 			cart.sufami = true;
 		}
+		if (board->parts[n] == PART_PROCESSOR_ICD) {
+			cart.icd = true;
+		}
 		if (board->parts[n] == PART_PROCESSOR_UPD7725 || board->parts[n] == PART_PROCESSOR_UPD96050) {
 			cart.necdsp = true;
 			necdsp.uPD96050 = board->parts[n] == PART_PROCESSOR_UPD96050;
@@ -604,11 +612,17 @@ bool cartLoad(const u8* data, u32 size) {
 	if (cart.st018 && !loadSt018Firmware()) {
 		return false;
 	}
+	if (cart.icd) {
+		// The SGB2 has its own oscillator; the SGB1 runs off the CPU's.
+		memset(&icd, 0, sizeof(icd));
+		icd.frequency = titleIs("Super GAMEBOY2") ? 20971520 : 0;
+	}
 	if (cart.mcc) {
 		mccLoad();
 	}
 	bsLoad(NULL, 0);
 	sufamiInsert(0, NULL, 0);
+	gbUnload();
 	sufamiInsert(1, NULL, 0);
 	if (cart.epsonRtc) {
 		epsonRtcLoad();
@@ -719,6 +733,9 @@ void cartMap(void) {
 		case PART_SLOT_BSMEMORY:
 			busMap(bsRead, bsWrite, map->address, map->size, map->base, map->mask);
 			break;
+		case PART_PROCESSOR_ICD:
+			busMap(icdRead, icdWrite, map->address, map->size, map->base, map->mask);
+			break;
 		// The first slot on the board is A, the second B.
 		case PART_SLOT_SUFAMITURBO_ROM:
 			busMap(sufamiRoms++ ? sufamiReadRomB : sufamiReadRomA, sufamiWriteRom, map->address, map->size, map->base, map->mask);
@@ -753,6 +770,16 @@ void cartMap(void) {
 	if (cart.sdd1) {
 		sdd1Map();
 	}
+}
+
+bool cartInsertGameBoy(const u8* rom, size_t size, const u8* boot, size_t bootSize) {
+	if (!cart.icd || !gbLoad(rom, size, boot, bootSize)) {
+		return false;
+	}
+	unsigned saveSize;
+	cart.saveRam = gbSaveRam(&saveSize);
+	cart.saveRamSize = saveSize;
+	return true;
 }
 
 bool cartInsertSufami(int slot, const u8* data, size_t size) {
@@ -811,6 +838,9 @@ void cartPower(bool reset) {
 	if (cart.bsSlot) {
 		bsPower();
 	}
+	if (cart.icd) {
+		icdPower(reset);
+	}
 }
 
 // The coprocessors, brought up to the CPU's clock.
@@ -835,6 +865,9 @@ void cartSync(void) {
 	}
 	if (cart.spc7110 && spc7110.th.clock < cpu.th.clock) {
 		spc7110Run();
+	}
+	if (cart.icd && icd.th.clock < cpu.th.clock) {
+		icdRun();
 	}
 	if (cart.st018 && st018.th.clock < cpu.th.clock) {
 		st018Run();

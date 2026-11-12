@@ -2,6 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "snes.h"
+#include "chips/gb.h"
 
 // A saved state is the machine and nothing else: the processors' structs as they are, the cartridge's
 // RAM, the part of the next frame already drawn, and a header that says which build's layout they are
@@ -17,13 +18,13 @@ enum { STATE_MAGIC = 0x534e5341, STATE_VERSION = 9 };
 struct StateHeader {
 	u32 magic;
 	u32 version;
-	u32 sizes[18];
+	u32 sizes[19];
 	u32 ramSize;
 	// The BS-X cartridge's PSRAM and flash pack together.
 	u32 extraSize;
 };
 
-static void layout(u32 sizes[18]) {
+static void layout(u32 sizes[19]) {
 	sizes[0] = sizeof(sys);
 	sizes[1] = sizeof(cpu);
 	sizes[2] = sizeof(smp);
@@ -42,10 +43,11 @@ static void layout(u32 sizes[18]) {
 	sizes[15] = sizeof(st018);
 	sizes[16] = sizeof(mcc);
 	sizes[17] = sizeof(bsmemory);
+	sizes[18] = sizeof(icd);
 }
 
 // What a BS-X cartridge adds: its PSRAM, and a flash pack's contents. Then the Sufami Turbo
-// cartridges' save RAM.
+// cartridges' save RAM, and the Super Game Boy's Game Boy.
 static u32 extraSize(void) {
 	u32 psram = 0, pack = 0, a, b;
 	if (cart.mcc) {
@@ -54,7 +56,7 @@ static u32 extraSize(void) {
 	bsData(&pack);
 	sufamiRam(0, &a);
 	sufamiRam(1, &b);
-	return psram + pack + a + b;
+	return psram + pack + a + b + gbStateSize();
 }
 
 static u8* putExtra(u8* out) {
@@ -72,6 +74,10 @@ static u8* putExtra(u8* out) {
 		data = sufamiRam(slot, &size);
 		memcpy(out, data, size);
 		out += size;
+	}
+	if (gbStateSize()) {
+		gbStateSave(out);
+		out += gbStateSize();
 	}
 	return out;
 }
@@ -92,13 +98,17 @@ static const u8* getExtra(const u8* in) {
 		memcpy(data, in, size);
 		in += size;
 	}
+	if (gbStateSize()) {
+		gbStateLoad(in, gbStateSize());
+		in += gbStateSize();
+	}
 	return in;
 }
 
 size_t stateSize(void) {
 	return sizeof(struct StateHeader) + sizeof(sys) + sizeof(cpu) + sizeof(smp) + sizeof(dsp) + sizeof(ppu) + sizeof(input) +
 		sizeof(necdsp) + sizeof(sa1) + sizeof(gsu) + sizeof(sdd1) + sizeof(obc1) + sizeof(cx4) + sizeof(spc7110) + sizeof(epsonRtc) +
-		sizeof(sharpRtc) + sizeof(st018) + sizeof(mcc) + sizeof(bsmemory) + cart.ramSize + extraSize() + sizeof(ppuCanvas);
+		sizeof(sharpRtc) + sizeof(st018) + sizeof(mcc) + sizeof(bsmemory) + sizeof(icd) + cart.ramSize + extraSize() + sizeof(ppuCanvas);
 }
 
 #define PUT(object) \
@@ -139,6 +149,7 @@ bool stateSave(void* data, size_t size) {
 	PUT(st018);
 	PUT(mcc);
 	PUT(bsmemory);
+	PUT(icd);
 	memcpy(out, cart.ram, cart.ramSize);
 	out += cart.ramSize;
 	out = putExtra(out);
@@ -155,7 +166,7 @@ bool stateLoad(const void* data, size_t size) {
 	}
 	memcpy(&header, data, sizeof(header));
 
-	u32 sizes[18];
+	u32 sizes[19];
 	layout(sizes);
 	if (header.magic != STATE_MAGIC || header.version != STATE_VERSION || memcmp(header.sizes, sizes, sizeof(sizes)) ||
 	    header.ramSize != cart.ramSize || header.extraSize != extraSize() || size < stateSize()) {
@@ -184,6 +195,7 @@ bool stateLoad(const void* data, size_t size) {
 	GET(st018);
 	GET(mcc);
 	GET(bsmemory);
+	GET(icd);
 	memcpy(cart.ram, in, cart.ramSize);
 	in += cart.ramSize;
 	in = getExtra(in);

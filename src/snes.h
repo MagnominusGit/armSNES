@@ -410,6 +410,8 @@ struct Cart {
 	bool bsSlot;
 	// The Sufami Turbo's two cartridge slots.
 	bool sufami;
+	// The Super Game Boy's ICD2 and its Game Boy slot.
+	bool icd;
 	// What the game saves to: the save RAM, or a chip's own memory. Little-endian hosts only.
 	u8* saveRam;
 	u32 saveRamSize;
@@ -1236,6 +1238,49 @@ void bsWrite(u32 address, u8 data);
 u8* bsData(u32* size);
 // A memory pack put in the slot, after the game is loaded and before it is powered on.
 bool cartInsertPack(const u8* data, size_t size);
+
+// --- The Super Game Boy's ICD2 ---
+
+// The Game Boy's clocks run at a time, and the Game Boy sound samples kept for the DSP.
+#define ICD_SLICE 256
+#define ICD_SOUND 1024
+
+struct Icd {
+	struct Thread th;
+	// The SGB2's own oscillator, or 0 for the CPU's; and that over the control port's divider.
+	u32 frequency;
+	u32 clockFrequency;
+	u8 joypId;
+	bool pulseLock, strobeLock, packetLock;
+	u8 packetOffset;
+	bool packetReady;
+	u8 bitData, bitOffset;
+	bool previousP15;
+	u8 output[4 * 512];
+	u8 readBank;
+	u16 readAddress;
+	u8 writeBank;
+	u8 r6003;
+	u8 joypads[4];
+	u8 r7000[16];
+	u8 mltReq;
+	u8 hcounter, vcounter;
+	s32 sumLeft, sumRight;
+	u32 summed, phase;
+	s16 sound[ICD_SOUND][2];
+	u32 soundRead, soundWrite;
+};
+extern struct Icd icd;
+
+void icdPower(bool reset);
+void icdRun(void);
+u8 icdRead(u32 address, u8 data);
+void icdWrite(u32 address, u8 data);
+// Adds the Game Boy's sound to a DSP sample.
+void icdMix(s32* left, s32* right);
+// The Game Boy game for the slot (and the Game Boy's boot ROM), after the base is loaded and before
+// it is powered on. Its save RAM becomes the save.
+bool cartInsertGameBoy(const u8* rom, size_t size, const u8* boot, size_t bootSize);
 
 // --- The Sufami Turbo's slots ---
 

@@ -74,6 +74,12 @@ Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips 
   system folder), and its save RAM is the game's save. Slot B maps its own save RAM where ares maps
   the slot's ROM; with that one difference copied, two cartridges match ares. The frontend can't put
   a cartridge in slot B yet;
+- the Super Game Boy's ICD2, with Gambatte as its Game Boy. A `.gb` or `.gbc` game loads with
+  `SGB1.sfc` and `sgb1.boot.rom` from the system folder, and the game's save RAM is the save. Gambatte
+  tells the ICD2 of each line as its pixels are done and of each JOYP write. Next to ares the picture
+  is the same until the two Game Boys' timing parts, a few hundred frames in, and looks the same after.
+  The Game Boy's sound is averaged down to the DSP's rate and added to it. The SGB2 runs on its own
+  oscillator; a cartridge's clock (MBC3, HuC3) isn't given to the frontend yet;
 - the Epson RTC-4513 and the Sharp S-RTC. They keep time by the machine's clock; the frontend keeps
   them as RTC memory, and loading one moves it on by the time the game was off.
 

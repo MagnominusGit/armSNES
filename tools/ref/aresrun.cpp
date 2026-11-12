@@ -5,7 +5,7 @@
 // aresrun game frames: unmodified ares (its dot renderer) with no frontend, saying what came out in
 // the same form as tests/snesrun.c, for the two to be compared.
 // env: FRAMELOG, AUDIOOUT, INPUT=1 (or 2: A, Down, A every two seconds), RAWOUT and RAWFRAME, RESETAT, SAVEIN (the save RAM it starts with),
-// BSPACK (a memory pack for the slot), SUFAMIA and SUFAMIB (Sufami Turbo cartridges),
+// BSPACK (a memory pack for the slot), SUFAMIA and SUFAMIB (Sufami Turbo cartridges), GAMEBOY (a Game Boy game),
 // INPUTSCRIPT (lines of "frame button frames", six if the length is left out)
 #include <ares/ares.hpp>
 #include <mia/mia.hpp>
@@ -31,6 +31,7 @@ struct Runner : ares::Platform {
   std::shared_ptr<mia::Pak> game;
   std::shared_ptr<mia::Pak> pack;
   std::shared_ptr<mia::Pak> sufami[2];
+  std::shared_ptr<mia::Pak> gameBoy;
   std::shared_ptr<vfs::directory> system = std::make_shared<vfs::directory>();
   FILE* frameLog = nullptr;
   FILE* audioOut = nullptr;
@@ -44,6 +45,7 @@ struct Runner : ares::Platform {
     if(node->name() == "Super Famicom") return system;
     if(node->name() == "Super Famicom Cartridge") return game->pak;
     if(node->name() == "BS Memory Cartridge" && pack) return pack->pak;
+    if(node->name() == "Game Boy Cartridge" && gameBoy) return gameBoy->pak;
     if(node->name() == "Sufami Turbo Cartridge") {
       auto port = node->parent().lock();
       auto& slot = sufami[port && port->name() == "Sufami Turbo Slot B"];
@@ -52,8 +54,8 @@ struct Runner : ares::Platform {
     return {};
   }
 
+  //a Super Game Boy's Game Boy sends frame events of its own; frames are counted as run() returns
   auto event(ares::Event event) -> void override {
-    if(event == ares::Event::Frame) frames++;
   }
 
   //called on the screen's own thread, once for every frame in order, before the screen clears the
@@ -61,11 +63,13 @@ struct Runner : ares::Platform {
   auto video(ares::Node::Video::Screen screen, const u32*, u32, u32, u32) -> void override {
     auto pixels = screen->pixels(1);
     lastHash = fnv(14695981039346656037ull, pixels.data(), 564 * rows * sizeof(u32));
-    shown++;
-    if(frameLog) std::fprintf(frameLog, "%llu %016llx\n", (unsigned long long)shown.load(), (unsigned long long)lastHash);
-    if(auto path = std::getenv("RAWOUT"); path && shown == std::strtoull(std::getenv("RAWFRAME"), nullptr, 10)) {
+    uint64_t frame = shown + 1;
+    if(frameLog) std::fprintf(frameLog, "%llu %016llx\n", (unsigned long long)frame, (unsigned long long)lastHash);
+    if(auto path = std::getenv("RAWOUT"); path && frame == std::strtoull(std::getenv("RAWFRAME"), nullptr, 10)) {
       if(FILE* out = std::fopen(path, "wb")) { std::fwrite(pixels.data(), sizeof(u32), 564 * rows, out); std::fclose(out); }
     }
+    //counted last: the main thread exits once the last frame is counted
+    shown = frame;
   }
 
   auto audio(ares::Node::Audio::Stream stream) -> void override {
@@ -145,6 +149,16 @@ auto nall::main(Arguments arguments) -> void {
   auto cartridge = slot->allocate();
   slot->connect();
   if(!cartridge || !cartridge->pak()) { std::fprintf(stderr, "the cartridge didn't connect\n"); std::exit(1); }
+  if(auto path = std::getenv("GAMEBOY")) {
+    runner.gameBoy = mia::Medium::create("Game Boy");
+    if(!runner.gameBoy || runner.gameBoy->load(path) != successful) { std::fprintf(stderr, "can't load the Game Boy game\n"); std::exit(1); }
+    //the Super Game Boy's own cartridge slot, not the Super Famicom's
+    ares::Node::Port port;
+    for(auto& candidate : root->find<ares::Node::Port>()) if(candidate->name() == "Cartridge Slot" && candidate != slot) port = candidate;
+    if(!port) { std::fprintf(stderr, "no Game Boy slot\n"); std::exit(1); }
+    port->allocate();
+    port->connect();
+  }
   for(u32 n : range(2)) {
     auto path = std::getenv(n ? "SUFAMIB" : "SUFAMIA");
     if(!path) continue;
@@ -189,6 +203,7 @@ auto nall::main(Arguments arguments) -> void {
   uint64_t resetAt = std::getenv("RESETAT") ? std::strtoull(std::getenv("RESETAT"), nullptr, 10) : 0;
   while(runner.frames < count) {
     root->run();
+    runner.frames++;
     if(resetAt && runner.frames == resetAt) { root->power(true); resetAt = 0; }
   }
   while(runner.shown < count) std::this_thread::yield();

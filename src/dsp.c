@@ -424,6 +424,9 @@ static void echo27(void) {
 		outl = 0;
 		outr = 0;
 	}
+	if (cart.icd) {
+		icdMix(&outl, &outr);
+	}
 	audioSample(outl, outr);
 }
 

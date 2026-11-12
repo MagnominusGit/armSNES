@@ -225,7 +225,7 @@ void retro_get_system_info(struct retro_system_info* info) {
 	memset(info, 0, sizeof(*info));
 	info->library_name = "armSNES";
 	info->library_version = "0.1";
-	info->valid_extensions = "sfc|smc|bs|st";
+	info->valid_extensions = "sfc|smc|bs|st|gb|gbc";
 	info->need_fullpath = false;
 	info->block_extract = false;
 }
@@ -316,10 +316,21 @@ bool retro_load_game(const struct retro_game_info* info) {
 	// A memory pack goes in the BS-X cartridge's slot, a Sufami Turbo cartridge in the base's slot A.
 	bool pack = hasExtension(info->path, "bs");
 	bool sufami = hasExtension(info->path, "st");
-	if (pack || sufami) {
-		const char* base = pack ? "BS-X.bin" : "STBIOS.bin";
+	bool gameBoy = hasExtension(info->path, "gb") || hasExtension(info->path, "gbc");
+	size_t bootSize = 0;
+	u8* boot = gameBoy ? systemFile("sgb1.boot.rom", &bootSize) : NULL;
+	if (gameBoy && (!boot || bootSize != 256)) {
+		free(boot);
+		if (logPrintf) {
+			logPrintf(RETRO_LOG_ERROR, "armSNES: a Game Boy game needs sgb1.boot.rom in the system folder\n");
+		}
+		return false;
+	}
+	if (pack || sufami || gameBoy) {
+		const char* base = pack ? "BS-X.bin" : sufami ? "STBIOS.bin" : "SGB1.sfc";
 		game = systemFile(base, &size);
 		if (!game) {
+			free(boot);
 			if (logPrintf) {
 				logPrintf(RETRO_LOG_ERROR, "armSNES: this needs %s in the system folder\n", base);
 			}
@@ -330,7 +341,9 @@ bool retro_load_game(const struct retro_game_info* info) {
 		memcpy(game, info->data, size);
 	}
 	if (!cartLoad(game, size) || (pack && !cartInsertPack(info->data, info->size)) ||
-	    (sufami && !cartInsertSufami(0, info->data, info->size))) {
+	    (sufami && !cartInsertSufami(0, info->data, info->size)) ||
+	    (gameBoy && !cartInsertGameBoy(info->data, info->size, boot, bootSize))) {
+		free(boot);
 		if (logPrintf) {
 			logPrintf(RETRO_LOG_ERROR, "armSNES: the %s board can't be loaded without %s\n", cart.board, cart.missing);
 		}
@@ -338,6 +351,7 @@ bool retro_load_game(const struct retro_game_info* info) {
 		game = NULL;
 		return false;
 	}
+	free(boot);
 
 	static const struct retro_input_descriptor descriptors[] = {
 #define PAD(port) \

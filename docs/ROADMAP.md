@@ -68,5 +68,5 @@ Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips 
   them as RTC memory, and loading one moves it on by the time the game was off.
 
 A new SPC7110 cartridge held "SPC7110 CHECK OK" at the end of its save RAM. Without it the game runs
-its factory check program and asks for the power to be cut, as on ares. Whether a new save should
-start with it is still open.
+its factory check program and asks for the power to be cut, as it does on ares, so a new save here
+starts with it.

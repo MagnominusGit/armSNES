@@ -597,6 +597,11 @@ bool cartLoad(const u8* data, u32 size) {
 	if (cart.ramSize) {
 		cart.ram = malloc(cart.ramSize);
 		memset(cart.ram, 0xff, cart.ramSize);
+		// A new SPC7110 cartridge left the factory with its check passed, noted at 00:7ff0; without it
+		// the game runs the check program instead. A save the frontend loads replaces it.
+		if (cart.spc7110 && cart.ramSize >= 16) {
+			memcpy(cart.ram + busMirror(0x1ff0, cart.ramSize), "SPC7110 CHECK OK", 16);
+		}
 	}
 	if (cart.necdsp && necdsp.uPD96050) {
 		// A save not there yet is 0xff, as other save RAM.

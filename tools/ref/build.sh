@@ -14,6 +14,8 @@ mkdir -p "$out/ares"
 git -C "$ares" archive "$commit" | tar -x -C "$out/ares"
 cp "$here/aresrun.cpp" "$out/ares/aresrun.cpp"
 cd "$out/ares"
+# CLEARRAM picks ares's no-entropy power on, everything at 0, as snesrun's CLEARRAM does.
+sed -i 's|  random.entropy(Random::Entropy::Low);|  random.entropy(getenv("CLEARRAM") ? Random::Entropy::None : Random::Entropy::Low);|' ares/sfc/system/system.cpp
 sed -i -e '/^add_subdirectory(ruby)$/d' -e '/^add_subdirectory(hiro)$/d' -e '/^add_subdirectory(desktop-ui)$/d' -e '/^return()$/d' CMakeLists.txt
 cat >> CMakeLists.txt <<'CMAKE'
 add_executable(aresrun aresrun.cpp)

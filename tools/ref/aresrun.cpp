@@ -5,7 +5,7 @@
 // aresrun game frames: unmodified ares (its dot renderer) with no frontend, saying what came out in
 // the same form as tests/snesrun.c, for the two to be compared.
 // env: FRAMELOG, AUDIOOUT, INPUT=1 (or 2: A, Down, A every two seconds), RAWOUT and RAWFRAME, RESETAT, SAVEIN (the save RAM it starts with),
-// BSPACK (a memory pack for the slot), SUFAMIA and SUFAMIB (Sufami Turbo cartridges), GAMEBOY (a Game Boy game),
+// CLEARRAM (everything 0 at power on), BSPACK (a memory pack for the slot), SUFAMIA and SUFAMIB (Sufami Turbo cartridges), GAMEBOY (a Game Boy game),
 // INPUTSCRIPT (lines of "frame button frames", six if the length is left out)
 #include <ares/ares.hpp>
 #include <mia/mia.hpp>

@@ -5,9 +5,13 @@
  * Ported from ares (ISC); see LICENSES/ISC-ares.txt. */
 #include "snes.h"
 
-struct System sys;
+#include <string.h>
 
-// ares's generator (PCG), on its low-entropy setting.
+struct System sys;
+bool systemClearPowerOn;
+
+// ares's generator (PCG), on its low-entropy setting, or ares's no-entropy setting: everything
+// starts at 0.
 
 static u32 randomStep(void) {
 	u64 state = sys.randomState;
@@ -26,17 +30,26 @@ static void randomSeed(u64 seed) {
 }
 
 u64 randomNext(void) {
+	if (systemClearPowerOn) {
+		return 0;
+	}
 	u64 hi = randomStep();
 	return hi << 32 | randomStep();
 }
 
 u64 randomBias(u64 bias) {
-	(void) bias;
+	if (systemClearPowerOn) {
+		return bias;
+	}
 	return randomNext();
 }
 
 // What RAM holds at power on: stripes of two values, with a stray bit here and there.
 void randomArray(u8* buffer, u32 size) {
+	if (systemClearPowerOn) {
+		memset(buffer, 0, size);
+		return;
+	}
 	u32 lobit = randomNext() & 3;
 	u32 hibit = (lobit + 8 + (randomNext() & 3)) & 15;
 	u32 lovalue = randomNext() & 255;

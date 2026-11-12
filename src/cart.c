@@ -80,6 +80,9 @@ static void serial(char out[5]) {
 	}
 }
 
+// Set by cartLoad when the header's RAM size is more than any board has.
+static bool badRamSize;
+
 static u32 headerRamSize(void) {
 	u8 size = rom[headerAddress + 0x28];
 	if (size) {
@@ -575,7 +578,8 @@ bool cartLoad(const u8* data, u32 size) {
 		headerAddress = 0x7fb0;
 	} else if (hi >= exLo && hi >= exHi) {
 		headerAddress = 0xffb0;
-	} else if (exLo >= exHi) {
+	// A tie goes to ExHiROM, which the licensed games past 4 MiB are.
+	} else if (exLo > exHi) {
 		headerAddress = 0x407fb0;
 	} else {
 		headerAddress = 0x40ffb0;
@@ -612,7 +616,9 @@ bool cartLoad(const u8* data, u32 size) {
 	cart.romSize = romSize;
 
 	u8 region = rom[headerAddress + 0x29];
-	cart.pal = !known && !(region == 0x00 || region == 0x01 || region == 0x0b || region == 0x0d || region == 0x0f || region == 0x10);
+	// A region code past the last there is, as a dump with no real header has, is taken as NTSC.
+	cart.pal = !known && region <= 0x11 &&
+	           !(region == 0x00 || region == 0x01 || region == 0x0b || region == 0x0d || region == 0x0f || region == 0x10);
 
 	board = findBoard(cart.board);
 	// A header that names a board there is no such thing as, as some betas, hacks and unlicensed games
@@ -739,6 +745,7 @@ bool cartLoad(const u8* data, u32 size) {
 
 	// Save RAM starts out as 0xff. The uPD96050 keeps its saves in its own data RAM.
 	cart.ramSize = headerRamSize() ? headerRamSize() : expansionRamSize();
+	badRamSize = rom[headerAddress + 0x28] > 8;
 	if (known) {
 		cart.ramSize = known->ramSize;
 	}
@@ -887,6 +894,11 @@ void cartMap(void) {
 	}
 	if (cart.msu1) {
 		busMap(msu1Read, msu1Write, "00-3f,80-bf:2000-2007", 0, 0, 0);
+	}
+	// A header RAM size no licensed board has is an unlicensed board's, which some have where a
+	// HiROM board has it.
+	if (badRamSize && cart.ramSize && !strncmp(cart.board, "LOROM", 5)) {
+		busMap(readRam, writeRam, "20-3f,a0-bf:6000-7fff", cart.ramSize, 0, 0xe000);
 	}
 	// A Cx4 board reaches 2 MiB of ROM; a bigger dump, which some hacks are, goes on in banks
 	// 40-7d and c0-ff as a LoROM board has it.

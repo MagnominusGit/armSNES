@@ -75,6 +75,9 @@ struct System {
 	bool frameEvent;
 };
 extern struct System sys;
+// RAM and registers start at 0 at power on, as on ares's no-entropy setting, not ares's usual
+// stripes; some unlicensed games and betas read memory they never wrote.
+extern bool systemClearPowerOn;
 
 void systemLoad(bool pal);
 void systemPower(bool reset);

@@ -178,6 +178,13 @@ void retro_set_environment(retro_environment_t callback) {
 		logPrintf = log.log;
 	}
 
+	// The first value is the default.
+	static const struct retro_variable variables[] = {
+		{ "armsnes_power_on_ram", "Power-On RAM; Patterned|Cleared" },
+		{ NULL, NULL },
+	};
+	callback(RETRO_ENVIRONMENT_SET_VARIABLES, (void*) variables);
+
 	static const struct retro_controller_description pads[] = {
 		{ "SNES Controller", RETRO_DEVICE_JOYPAD },
 	};
@@ -301,6 +308,14 @@ void retro_cheat_set(unsigned index, bool enabled, const char* code) {
 	(void) code;
 }
 
+// Patterned is ares's: stripes of two values. Cleared is all 0, which some unlicensed games and
+// betas need.
+static void readOptions(void) {
+	struct retro_variable variable = { "armsnes_power_on_ram", NULL };
+	systemClearPowerOn = environment(RETRO_ENVIRONMENT_GET_VARIABLE, &variable) && variable.value &&
+	                     !strcmp(variable.value, "Cleared");
+}
+
 bool retro_load_game(const struct retro_game_info* info) {
 	if (!info || !info->data) {
 		return false;
@@ -384,6 +399,7 @@ bool retro_load_game(const struct retro_game_info* info) {
 	};
 	environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void*) descriptors);
 
+	readOptions();
 	systemLoad(cart.pal);
 	systemPower(false);
 	if (rtcPresent()) {

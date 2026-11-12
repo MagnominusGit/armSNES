@@ -408,6 +408,8 @@ struct Cart {
 	bool mcc;
 	// A memory-pack slot, on the BS-X base cartridge or a game's board.
 	bool bsSlot;
+	// The Sufami Turbo's two cartridge slots.
+	bool sufami;
 	// What the game saves to: the save RAM, or a chip's own memory. Little-endian hosts only.
 	u8* saveRam;
 	u32 saveRamSize;
@@ -1234,6 +1236,21 @@ void bsWrite(u32 address, u8 data);
 u8* bsData(u32* size);
 // A memory pack put in the slot, after the game is loaded and before it is powered on.
 bool cartInsertPack(const u8* data, size_t size);
+
+// --- The Sufami Turbo's slots ---
+
+// A cartridge put in slot 0 (A) or 1 (B), after the base is loaded and before it is powered on.
+bool sufamiInsert(int slot, const u8* data, size_t size);
+u8* sufamiRam(int slot, u32* size);
+u8 sufamiReadRomA(u32 address, u8 data);
+u8 sufamiReadRomB(u32 address, u8 data);
+void sufamiWriteRom(u32 address, u8 data);
+u8 sufamiReadRamA(u32 address, u8 data);
+u8 sufamiReadRamB(u32 address, u8 data);
+void sufamiWriteRamA(u32 address, u8 data);
+void sufamiWriteRamB(u32 address, u8 data);
+// A cartridge for a Sufami Turbo slot, after the base is loaded. Slot A's save RAM becomes the save.
+bool cartInsertSufami(int slot, const u8* data, size_t size);
 
 // The S-CPU's DMA registers, for a chip that watches them.
 u8 cpuReadDMA(u32 address, u8 data);

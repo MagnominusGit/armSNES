@@ -313,6 +313,9 @@ static bool partSupported(u16 part) {
 	case PART_PROCESSOR_MCC_MCU_MEMORY_RAM_DOWNLOAD:
 	case PART_PROCESSOR_MCC_MCU_SLOT_BSMEMORY:
 	case PART_SLOT_BSMEMORY:
+	case PART_SLOT_SUFAMITURBO:
+	case PART_SLOT_SUFAMITURBO_ROM:
+	case PART_SLOT_SUFAMITURBO_RAM:
 		return true;
 	}
 	return false;
@@ -563,6 +566,9 @@ bool cartLoad(const u8* data, u32 size) {
 		    board->parts[n] == PART_PROCESSOR_W65C816S_MCU_SLOT_BSMEMORY) {
 			cart.bsSlot = true;
 		}
+		if (board->parts[n] == PART_SLOT_SUFAMITURBO) {
+			cart.sufami = true;
+		}
 		if (board->parts[n] == PART_PROCESSOR_UPD7725 || board->parts[n] == PART_PROCESSOR_UPD96050) {
 			cart.necdsp = true;
 			necdsp.uPD96050 = board->parts[n] == PART_PROCESSOR_UPD96050;
@@ -602,6 +608,8 @@ bool cartLoad(const u8* data, u32 size) {
 		mccLoad();
 	}
 	bsLoad(NULL, 0);
+	sufamiInsert(0, NULL, 0);
+	sufamiInsert(1, NULL, 0);
 	if (cart.epsonRtc) {
 		epsonRtcLoad();
 	}
@@ -636,6 +644,7 @@ void cartMap(void) {
 	if (!board) {
 		return;
 	}
+	int sufamiRoms = 0, sufamiRams = 0;
 	for (u8 n = 0; n < board->mapCount; ++n) {
 		const struct BoardMap* map = &board->maps[n];
 		switch (map->part) {
@@ -710,6 +719,17 @@ void cartMap(void) {
 		case PART_SLOT_BSMEMORY:
 			busMap(bsRead, bsWrite, map->address, map->size, map->base, map->mask);
 			break;
+		// The first slot on the board is A, the second B.
+		case PART_SLOT_SUFAMITURBO_ROM:
+			busMap(sufamiRoms++ ? sufamiReadRomB : sufamiReadRomA, sufamiWriteRom, map->address, map->size, map->base, map->mask);
+			break;
+		case PART_SLOT_SUFAMITURBO_RAM:
+			if (sufamiRams++) {
+				busMap(sufamiReadRamB, sufamiWriteRamB, map->address, map->size, map->base, map->mask);
+			} else {
+				busMap(sufamiReadRamA, sufamiWriteRamA, map->address, map->size, map->base, map->mask);
+			}
+			break;
 		case PART_PROCESSOR_ARM6:
 			busMap(st018Read, st018Write, map->address, map->size, map->base, map->mask);
 			break;
@@ -733,6 +753,16 @@ void cartMap(void) {
 	if (cart.sdd1) {
 		sdd1Map();
 	}
+}
+
+bool cartInsertSufami(int slot, const u8* data, size_t size) {
+	if (!cart.sufami || !sufamiInsert(slot, data, size)) {
+		return false;
+	}
+	if (slot == 0) {
+		cart.saveRam = sufamiRam(0, &cart.saveRamSize);
+	}
+	return true;
 }
 
 bool cartInsertPack(const u8* data, size_t size) {

@@ -70,6 +70,10 @@ Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips 
   is still to be tried by hand. The pack and the 512 KiB download RAM aren't kept between runs, the
   three mask-ROM packs are run as flash, a slotted game cartridge can't be given a pack from the
   frontend yet, and the Satellaview receiver isn't there;
+- the Sufami Turbo's two slots. A `.st` cartridge loads into slot A of the base (`STBIOS.bin` from the
+  system folder), and its save RAM is the game's save. Slot B maps its own save RAM where ares maps
+  the slot's ROM; with that one difference copied, two cartridges match ares. The frontend can't put
+  a cartridge in slot B yet;
 - the Epson RTC-4513 and the Sharp S-RTC. They keep time by the machine's clock; the frontend keeps
   them as RTC memory, and loading one moves it on by the time the game was off.
 

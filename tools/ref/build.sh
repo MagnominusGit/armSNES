@@ -27,4 +27,5 @@ cmake --build ../b --target aresrun -j"${JOBS:-4}"
 mkdir -p ../b/Database
 : > "../b/Database/Super Famicom.bml"
 : > "../b/Database/BS Memory.bml"
+: > "../b/Database/Sufami Turbo.bml"
 echo "$out/b/aresrun"

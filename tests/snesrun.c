@@ -14,6 +14,7 @@
 //      RAWOUT and RAWFRAME (the canvas of that frame, counted from 1), HASHLOG (a hash of the saved
 //      state after every frame), RUNAHEAD=n (after each frame, n more are run and undone by a state),
 //      RESETAT=n (the reset button is pressed after frame n), SYSDIR (where chip firmware is),
+//      BSPACK (a memory pack), SUFAMIA and SUFAMIB (Sufami Turbo cartridges),
 //      SAVEIN (the save RAM it starts with)
 
 static FILE* frameLog;
@@ -182,6 +183,23 @@ int main(int argc, char** argv) {
 		return 3;
 	}
 
+	for (int slot = 0; slot < 2; slot++) {
+		const char* path = getenv(slot ? "SUFAMIB" : "SUFAMIA");
+		FILE* file = path ? fopen(path, "rb") : NULL;
+		if (!file) {
+			continue;
+		}
+		fseek(file, 0, SEEK_END);
+		long length = ftell(file);
+		fseek(file, 0, SEEK_SET);
+		u8* data = malloc(length);
+		if (fread(data, 1, length, file) != (size_t) length || !cartInsertSufami(slot, data, length)) {
+			fprintf(stderr, "can't insert the Sufami Turbo cartridge\n");
+			return 1;
+		}
+		fclose(file);
+		free(data);
+	}
 	if (getenv("BSPACK")) {
 		FILE* pack = fopen(getenv("BSPACK"), "rb");
 		if (!pack) {

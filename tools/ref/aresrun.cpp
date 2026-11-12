@@ -5,8 +5,8 @@
 // aresrun game frames: unmodified ares (its dot renderer) with no frontend, saying what came out in
 // the same form as tests/snesrun.c, for the two to be compared.
 // env: FRAMELOG, AUDIOOUT, INPUT=1 (or 2: A, Down, A every two seconds), RAWOUT and RAWFRAME, RESETAT, SAVEIN (the save RAM it starts with),
-// BSPACK (a memory pack for the slot), INPUTSCRIPT (lines of "frame button frames",
-// six if the length is left out)
+// BSPACK (a memory pack for the slot), SUFAMIA and SUFAMIB (Sufami Turbo cartridges),
+// INPUTSCRIPT (lines of "frame button frames", six if the length is left out)
 #include <ares/ares.hpp>
 #include <mia/mia.hpp>
 #include <atomic>
@@ -30,6 +30,7 @@ static uint64_t fnv(uint64_t hash, const void* data, size_t size) {
 struct Runner : ares::Platform {
   std::shared_ptr<mia::Pak> game;
   std::shared_ptr<mia::Pak> pack;
+  std::shared_ptr<mia::Pak> sufami[2];
   std::shared_ptr<vfs::directory> system = std::make_shared<vfs::directory>();
   FILE* frameLog = nullptr;
   FILE* audioOut = nullptr;
@@ -43,6 +44,11 @@ struct Runner : ares::Platform {
     if(node->name() == "Super Famicom") return system;
     if(node->name() == "Super Famicom Cartridge") return game->pak;
     if(node->name() == "BS Memory Cartridge" && pack) return pack->pak;
+    if(node->name() == "Sufami Turbo Cartridge") {
+      auto port = node->parent().lock();
+      auto& slot = sufami[port && port->name() == "Sufami Turbo Slot B"];
+      if(slot) return slot->pak;
+    }
     return {};
   }
 
@@ -139,6 +145,16 @@ auto nall::main(Arguments arguments) -> void {
   auto cartridge = slot->allocate();
   slot->connect();
   if(!cartridge || !cartridge->pak()) { std::fprintf(stderr, "the cartridge didn't connect\n"); std::exit(1); }
+  for(u32 n : range(2)) {
+    auto path = std::getenv(n ? "SUFAMIB" : "SUFAMIA");
+    if(!path) continue;
+    runner.sufami[n] = mia::Medium::create("Sufami Turbo");
+    if(!runner.sufami[n] || runner.sufami[n]->load(path) != successful) { std::fprintf(stderr, "can't load the Sufami Turbo cartridge\n"); std::exit(1); }
+    auto port = cartridge->find<ares::Node::Port>(n ? "Sufami Turbo Slot B" : "Sufami Turbo Slot A");
+    if(!port) { std::fprintf(stderr, "no Sufami Turbo slot\n"); std::exit(1); }
+    port->allocate();
+    port->connect();
+  }
   if(auto path = std::getenv("BSPACK")) {
     runner.pack = mia::Medium::create("BS Memory");
     if(!runner.pack || runner.pack->load(path) != successful) { std::fprintf(stderr, "can't load the pack\n"); std::exit(1); }

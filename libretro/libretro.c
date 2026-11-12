@@ -136,9 +136,9 @@ static u8* systemFile(const char* name, size_t* size) {
 	return data;
 }
 
-static bool isPack(const char* path) {
+static bool hasExtension(const char* path, const char* extension) {
 	const char* dot = path ? strrchr(path, '.') : NULL;
-	return dot && !strcasecmp(dot, ".bs");
+	return dot && !strcasecmp(dot + 1, extension);
 }
 
 // The cartridge's clock as the frontend keeps it. What the frontend gives back after loading the game
@@ -225,7 +225,7 @@ void retro_get_system_info(struct retro_system_info* info) {
 	memset(info, 0, sizeof(*info));
 	info->library_name = "armSNES";
 	info->library_version = "0.1";
-	info->valid_extensions = "sfc|smc|bs";
+	info->valid_extensions = "sfc|smc|bs|st";
 	info->need_fullpath = false;
 	info->block_extract = false;
 }
@@ -313,13 +313,15 @@ bool retro_load_game(const struct retro_game_info* info) {
 
 	free(game);
 	size_t size = info->size;
-	// A memory pack goes in the BS-X cartridge's slot.
-	bool pack = isPack(info->path);
-	if (pack) {
-		game = systemFile("BS-X.bin", &size);
+	// A memory pack goes in the BS-X cartridge's slot, a Sufami Turbo cartridge in the base's slot A.
+	bool pack = hasExtension(info->path, "bs");
+	bool sufami = hasExtension(info->path, "st");
+	if (pack || sufami) {
+		const char* base = pack ? "BS-X.bin" : "STBIOS.bin";
+		game = systemFile(base, &size);
 		if (!game) {
 			if (logPrintf) {
-				logPrintf(RETRO_LOG_ERROR, "armSNES: a memory pack needs BS-X.bin in the system folder\n");
+				logPrintf(RETRO_LOG_ERROR, "armSNES: this needs %s in the system folder\n", base);
 			}
 			return false;
 		}
@@ -327,7 +329,8 @@ bool retro_load_game(const struct retro_game_info* info) {
 		game = malloc(size);
 		memcpy(game, info->data, size);
 	}
-	if (!cartLoad(game, size) || (pack && !cartInsertPack(info->data, info->size))) {
+	if (!cartLoad(game, size) || (pack && !cartInsertPack(info->data, info->size)) ||
+	    (sufami && !cartInsertSufami(0, info->data, info->size))) {
 		if (logPrintf) {
 			logPrintf(RETRO_LOG_ERROR, "armSNES: the %s board can't be loaded without %s\n", cart.board, cart.missing);
 		}

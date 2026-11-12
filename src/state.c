@@ -44,14 +44,17 @@ static void layout(u32 sizes[18]) {
 	sizes[17] = sizeof(bsmemory);
 }
 
-// What a BS-X cartridge adds: its PSRAM, and a flash pack's contents.
+// What a BS-X cartridge adds: its PSRAM, and a flash pack's contents. Then the Sufami Turbo
+// cartridges' save RAM.
 static u32 extraSize(void) {
-	u32 psram = 0, pack = 0;
+	u32 psram = 0, pack = 0, a, b;
 	if (cart.mcc) {
 		mccPsram(&psram);
 	}
 	bsData(&pack);
-	return psram + pack;
+	sufamiRam(0, &a);
+	sufamiRam(1, &b);
+	return psram + pack + a + b;
 }
 
 static u8* putExtra(u8* out) {
@@ -64,7 +67,13 @@ static u8* putExtra(u8* out) {
 	}
 	data = bsData(&size);
 	memcpy(out, data, size);
-	return out + size;
+	out += size;
+	for (int slot = 0; slot < 2; slot++) {
+		data = sufamiRam(slot, &size);
+		memcpy(out, data, size);
+		out += size;
+	}
+	return out;
 }
 
 static const u8* getExtra(const u8* in) {
@@ -77,7 +86,13 @@ static const u8* getExtra(const u8* in) {
 	}
 	data = bsData(&size);
 	memcpy(data, in, size);
-	return in + size;
+	in += size;
+	for (int slot = 0; slot < 2; slot++) {
+		data = sufamiRam(slot, &size);
+		memcpy(data, in, size);
+		in += size;
+	}
+	return in;
 }
 
 size_t stateSize(void) {

@@ -413,6 +413,8 @@ struct Cart {
 	// The Super Game Boy's ICD2 and its Game Boy slot.
 	bool icd;
 	bool msu1;
+	// An event cartridge's uPD78214.
+	bool competition;
 	// What the game saves to: the save RAM, or a chip's own memory. Little-endian hosts only.
 	u8* saveRam;
 	u32 saveRamSize;
@@ -1292,6 +1294,31 @@ void icdWrite(u32 address, u8 data);
 // The Game Boy game for the slot (and the Game Boy's boot ROM), after the base is loaded and before
 // it is powered on. Its save RAM becomes the save.
 bool cartInsertGameBoy(const u8* rom, size_t size, const u8* boot, size_t bootSize);
+
+// --- The event cartridges' uPD78214 ---
+
+enum { COMPETITION_CC92 = 1, COMPETITION_PF94 };
+
+struct Competition {
+	struct Thread th;
+	u32 timer;
+	u8 status, select;
+	bool timerActive, scoreActive;
+	u32 timerSecondsRemaining, scoreSecondsRemaining;
+};
+extern struct Competition competition;
+
+// The board and the dump, cut into the program ROM and the three levels'.
+void competitionLoad(int board, const u8* data, const u32 sizes[4]);
+void competitionPower(void);
+void competitionRun(void);
+u8 competitionRead(u32 address, u8 data);
+void competitionWrite(u32 address, u8 data);
+u8 competitionReadMCU(u32 address, u8 data);
+void competitionWriteMCU(u32 address, u8 data);
+
+// The hash of data as 64 lowercase hex digits.
+void sha256Hex(const u8* data, size_t size, char out[65]);
 
 // --- The MSU-1 ---
 

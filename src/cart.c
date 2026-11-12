@@ -314,6 +314,14 @@ static bool partSupported(u16 part) {
 	case PART_PROCESSOR_MCC_MCU_MEMORY_RAM_DOWNLOAD:
 	case PART_PROCESSOR_MCC_MCU_SLOT_BSMEMORY:
 	case PART_SLOT_BSMEMORY:
+	case PART_PROCESSOR_UPD78214:
+	case PART_PROCESSOR_UPD78214_DIP:
+	case PART_PROCESSOR_UPD78214_IDENTIFIER_:
+	case PART_PROCESSOR_UPD78214_MCU:
+	case PART_PROCESSOR_UPD78214_MCU_MEMORY_ROM_PROGRAM:
+	case PART_PROCESSOR_UPD78214_MCU_MEMORY_ROM_LEVEL_1:
+	case PART_PROCESSOR_UPD78214_MCU_MEMORY_ROM_LEVEL_2:
+	case PART_PROCESSOR_UPD78214_MCU_MEMORY_ROM_LEVEL_3:
 	case PART_PROCESSOR_ICD:
 	case PART_PROCESSOR_ICD_MEMORY_ROM_BOOT_SM83:
 	case PART_PROCESSOR_ICD_OSCILLATOR:
@@ -340,6 +348,33 @@ static const struct {
 	{ "TOP GEAR 3000", "dsp4" },
 };
 
+// The event cartridges have no header to go by; they are known by their hash, as ares's database
+// knows them.
+static const struct {
+	const char* sha256;
+	int board;
+} eventCarts[] = {
+	{ "67c1a4917f4cd0fd704b83330a7e91763736c2d2a10a7e12318fdac54cd9c6c6", COMPETITION_CC92 },
+	{ "6c83ee132db777b306caeb2da6f2cd971735fb06805af55979d99028b33bf659", COMPETITION_CC92 },
+	{ "8727da57fefe7fe91655a1c693892a1272a3cda6f1f57b529e06a6617de6ce39", COMPETITION_CC92 },
+	{ "5443a97e9c40e25821a8fb8c91b63c7bd8c3060d9ff888ee6c573b87b53935f4", COMPETITION_PF94 },
+	{ "7fa4550886acb4d56b86a848ee1fb92e1cd12b87f1e7c0c510227959c041666f", COMPETITION_PF94 },
+};
+
+static int eventBoard(void) {
+	if (romSize != 0x1c0000 && romSize != 0x240000) {
+		return 0;
+	}
+	char hash[65];
+	sha256Hex(rom, romSize, hash);
+	for (size_t n = 0; n < sizeof(eventCarts) / sizeof(*eventCarts); ++n) {
+		if (!strcmp(hash, eventCarts[n].sha256)) {
+			return eventCarts[n].board;
+		}
+	}
+	return 0;
+}
+
 // Whether the header's title is this, padded with spaces or empty bytes.
 static bool titleIs(const char* title) {
 	size_t length = strlen(title);
@@ -356,6 +391,9 @@ static bool titleIs(const char* title) {
 }
 
 static const char* necdspFirmwareName(void) {
+	if (cart.competition) {
+		return "dsp1";
+	}
 	for (size_t n = 0; n < sizeof(necdspFirmwareTable) / sizeof(*necdspFirmwareTable); ++n) {
 		if (titleIs(necdspFirmwareTable[n].title)) {
 			return necdspFirmwareTable[n].firmware;
@@ -498,6 +536,10 @@ bool cartLoad(const u8* data, u32 size) {
 	free(cart.ram);
 	memset(&cart, 0, sizeof(cart));
 	boardName(cart.board, sizeof(cart.board));
+	int event = eventBoard();
+	if (event) {
+		snprintf(cart.board, sizeof(cart.board), "%s", event == COMPETITION_CC92 ? "EVENT-CC92" : "EVENT-PF94");
+	}
 
 	// Firmware some dumps carry after the game.
 	u8 typeLo = rom[headerAddress + 0x26] & 15;
@@ -521,7 +563,7 @@ bool cartLoad(const u8* data, u32 size) {
 	cart.romSize = romSize;
 
 	u8 region = rom[headerAddress + 0x29];
-	cart.pal = !(region == 0x00 || region == 0x01 || region == 0x0b || region == 0x0d || region == 0x0f || region == 0x10);
+	cart.pal = !event && !(region == 0x00 || region == 0x01 || region == 0x0b || region == 0x0d || region == 0x0f || region == 0x10);
 
 	board = NULL;
 	for (size_t n = 0; n < sizeof(boardEntries) / sizeof(*boardEntries); ++n) {
@@ -577,6 +619,9 @@ bool cartLoad(const u8* data, u32 size) {
 		if (board->parts[n] == PART_PROCESSOR_ICD) {
 			cart.icd = true;
 		}
+		if (board->parts[n] == PART_PROCESSOR_UPD78214) {
+			cart.competition = true;
+		}
 		if (board->parts[n] == PART_PROCESSOR_UPD7725 || board->parts[n] == PART_PROCESSOR_UPD96050) {
 			cart.necdsp = true;
 			necdsp.uPD96050 = board->parts[n] == PART_PROCESSOR_UPD96050;
@@ -612,6 +657,11 @@ bool cartLoad(const u8* data, u32 size) {
 	if (cart.st018 && !loadSt018Firmware()) {
 		return false;
 	}
+	if (cart.competition) {
+		// The program ROM, then the three levels'.
+		u32 sizes[4] = { 0x40000, 0x80000, 0x80000, event == COMPETITION_CC92 ? 0x80000 : 0x100000 };
+		competitionLoad(event, rom, sizes);
+	}
 	if (cart.icd) {
 		// The SGB2 has its own oscillator; the SGB1 runs off the CPU's.
 		memset(&icd, 0, sizeof(icd));
@@ -634,6 +684,9 @@ bool cartLoad(const u8* data, u32 size) {
 
 	// Save RAM starts out as 0xff. The uPD96050 keeps its saves in its own data RAM.
 	cart.ramSize = headerRamSize() ? headerRamSize() : expansionRamSize();
+	if (cart.competition) {
+		cart.ramSize = 0x2000;
+	}
 	if (cart.ramSize) {
 		cart.ram = malloc(cart.ramSize);
 		memset(cart.ram, 0xff, cart.ramSize);
@@ -737,6 +790,12 @@ void cartMap(void) {
 		case PART_PROCESSOR_ICD:
 			busMap(icdRead, icdWrite, map->address, map->size, map->base, map->mask);
 			break;
+		case PART_PROCESSOR_UPD78214:
+			busMap(competitionRead, competitionWrite, map->address, map->size, map->base, map->mask);
+			break;
+		case PART_PROCESSOR_UPD78214_MCU:
+			busMap(competitionReadMCU, competitionWriteMCU, map->address, map->size, map->base, map->mask);
+			break;
 		// The first slot on the board is A, the second B.
 		case PART_SLOT_SUFAMITURBO_ROM:
 			busMap(sufamiRoms++ ? sufamiReadRomB : sufamiReadRomA, sufamiWriteRom, map->address, map->size, map->base, map->mask);
@@ -814,6 +873,9 @@ void cartPower(bool reset) {
 	if (cart.mcc) {
 		mccPower();
 	}
+	if (cart.competition) {
+		competitionPower();
+	}
 	if (cart.necdsp) {
 		necdspPower();
 	}
@@ -877,6 +939,9 @@ void cartSync(void) {
 	}
 	if (cart.spc7110 && spc7110.th.clock < cpu.th.clock) {
 		spc7110Run();
+	}
+	if (cart.competition && competition.th.clock < cpu.th.clock) {
+		competitionRun();
 	}
 	if (cart.msu1 && msu1.th.clock < cpu.th.clock) {
 		msu1Run();

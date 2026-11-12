@@ -79,7 +79,8 @@ void systemLoad(bool pal) {
 
 // The MSU-1's clock comes after the other chips'.
 static u64 msu1Id(void) {
-	return 4 + cart.sa1 + cart.gsu + cart.st018 + cart.cx4 + cart.necdsp + cart.epsonRtc + cart.sharpRtc + cart.spc7110;
+	return 4 + cart.competition + cart.sa1 + cart.gsu + cart.st018 + cart.cx4 + cart.necdsp + cart.epsonRtc + cart.sharpRtc +
+	       cart.spc7110;
 }
 
 static u64 bsId(void) {
@@ -102,7 +103,9 @@ void systemPower(bool reset) {
 	dsp.th.clock = 2;
 	ppu.th.clock = 3;
 	// A cartridge has one coprocessor at most, and it comes next.
-	necdsp.th.clock = 4;
+	competition.th.clock = 4;
+	// An event cartridge's NEC DSP comes after its uPD78214.
+	necdsp.th.clock = 4 + cart.competition;
 	sa1.th.clock = 4;
 	gsu.th.clock = 4;
 	cx4.th.clock = 4;
@@ -129,8 +132,11 @@ void systemFrameEvent(void) {
 	if (ppu.th.clock - 3 < minimum) {
 		minimum = ppu.th.clock - 3;
 	}
-	if (cart.necdsp && necdsp.th.clock - 4 < minimum) {
-		minimum = necdsp.th.clock - 4;
+	if (cart.necdsp && necdsp.th.clock - (4 + cart.competition) < minimum) {
+		minimum = necdsp.th.clock - (4 + cart.competition);
+	}
+	if (cart.competition && competition.th.clock - 4 < minimum) {
+		minimum = competition.th.clock - 4;
 	}
 	if (cart.sa1 && sa1.th.clock - 4 < minimum) {
 		minimum = sa1.th.clock - 4;
@@ -168,6 +174,9 @@ void systemFrameEvent(void) {
 	ppu.th.clock -= minimum;
 	if (cart.necdsp) {
 		necdsp.th.clock -= minimum;
+	}
+	if (cart.competition) {
+		competition.th.clock -= minimum;
 	}
 	if (cart.sa1) {
 		sa1.th.clock -= minimum;

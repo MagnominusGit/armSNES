@@ -83,6 +83,10 @@ Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips 
 - the MSU-1, for a game with `game.msu` beside it (its tracks `game-1.pcm` and on). Its 44.1 kHz
   tracks are averaged down to the DSP's rate and added to it, muted while the DSP is, as on ares. Only
   a small test cartridge has been run so far: its picture matches ares and its track plays;
+- the event cartridges' uPD78214, as ares has it without its firmware: a timer and the switch between
+  the program ROM and the three levels', six minutes a round. These cartridges have no header, so they
+  are known by their SHA-256, as ares's database knows them; their DSP-1 needs `dsp1.rom`. Both match
+  ares through a round's end;
 - the Epson RTC-4513 and the Sharp S-RTC. They keep time by the machine's clock; the frontend keeps
   them as RTC memory, and loading one moves it on by the time the game was off.
 

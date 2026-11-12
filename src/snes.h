@@ -404,6 +404,7 @@ struct Cart {
 	bool spc7110;
 	bool epsonRtc;
 	bool sharpRtc;
+	bool st018;
 	// What the game saves to: the save RAM, or a chip's own memory. Little-endian hosts only.
 	u8* saveRam;
 	u32 saveRamSize;
@@ -1118,6 +1119,59 @@ void sharpRtcWrite(u32 address, u8 data);
 bool rtcPresent(void);
 void rtcSave(u8 data[16], s64 now);
 void rtcLoad(const u8 data[16], s64 now);
+
+// --- ST018 (ARM6) ---
+
+struct ArmPsr {
+	u8 m;
+	bool t, f, i, v, c, z, n;
+	bool readonly;
+};
+struct ArmInstruction {
+	u32 address;
+	u32 instruction;
+	bool irq;
+	bool thumb;
+};
+struct St018 {
+	struct Thread th;
+	// Where it stopped, and what an instruction keeps across a stop.
+	u32 state;
+	u32 mode, address, word, value, offset, access, rn, rnEnd, idles;
+	u16 list;
+	u8 index;
+	bool usr;
+	u8 cpsrMode;
+
+	// The registers: r8-r14 of the user modes, and each other mode's own.
+	u32 r[16];
+	u32 fiq[7];
+	u32 irqBank[2], svcBank[2], abtBank[2], undBank[2];
+	u32 rNull;
+	struct ArmPsr cpsr, spsrNull, spsrFiq, spsrIrq, spsrSvc, spsrAbt, spsrUnd;
+	struct {
+		bool reload;
+		struct ArmInstruction fetch, decode, execute;
+	} pipeline;
+	u32 opcode;
+	bool carry, irq, nonsequential;
+
+	// The byte ports each way, the timer, and the reset line.
+	struct {
+		bool cputoarmReady, armtocpuReady;
+		u8 cputoarmData, armtocpuData;
+		u32 timer, timerlatch;
+		bool reset, ready, signal;
+	} bridge;
+	u8 programRAM[16384];
+};
+extern struct St018 st018;
+
+void st018Load(const u8* firmware);
+void st018Power(void);
+void st018Run(void);
+u8 st018Read(u32 address, u8 data);
+void st018Write(u32 address, u8 data);
 
 // The S-CPU's DMA registers, for a chip that watches them.
 u8 cpuReadDMA(u32 address, u8 data);

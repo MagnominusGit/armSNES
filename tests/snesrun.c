@@ -9,7 +9,7 @@
 
 // snesrun game frames: runs a game with no frontend and says what came out.
 // env: FRAMELOG (a hash of every frame's canvas), AUDIOOUT (the sound, 16-bit stereo),
-//      INPUT=1 (presses buttons on a fixed schedule), PPMOUT (the last frame as a picture),
+//      INPUT=1 (presses buttons on a fixed schedule; 2: A, Down, A every two seconds), PPMOUT (the last frame as a picture),
 //      RAWOUT and RAWFRAME (the canvas of that frame, counted from 1), HASHLOG (a hash of the saved
 //      state after every frame), RUNAHEAD=n (after each frame, n more are run and undone by a state),
 //      RESETAT=n (the reset button is pressed after frame n), SYSDIR (where chip firmware is),
@@ -21,6 +21,8 @@ static u64 audioHash = 14695981039346656037ull;
 static u64 samples;
 static u64 lastHash;
 static bool pressing;
+// INPUT=2: A, Down, A every two seconds.
+static bool pressingA;
 static u32 rows;
 
 static u64 fnv(u64 hash, const void* data, size_t size) {
@@ -88,6 +90,13 @@ u16 inputPoll(int port) {
 	if (!pressing || port != 0) {
 		return 0;
 	}
+	if (pressingA) {
+		u32 step = sys.frames % 120;
+		if (step >= 30 && step < 36) return 1 << PAD_A;
+		if (step >= 60 && step < 66) return 1 << PAD_DOWN;
+		if (step >= 90 && step < 96) return 1 << PAD_A;
+		return 0;
+	}
 	u32 phase = sys.frames % 240;
 	if (phase >= 60 && phase < 66) {
 		return 1 << PAD_START;
@@ -149,6 +158,7 @@ int main(int argc, char** argv) {
 		audioOut = fopen(getenv("AUDIOOUT"), "wb");
 	}
 	pressing = getenv("INPUT") != NULL;
+	pressingA = pressing && !strcmp(getenv("INPUT"), "2");
 
 	bool pal = cart.pal;
 	rows = (pal ? 288 : 242) * 2;

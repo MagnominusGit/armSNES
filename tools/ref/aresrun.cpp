@@ -4,12 +4,13 @@
 
 // aresrun game frames: unmodified ares (its dot renderer) with no frontend, saying what came out in
 // the same form as tests/snesrun.c, for the two to be compared.
-// env: FRAMELOG, AUDIOOUT, INPUT=1, RAWOUT and RAWFRAME, RESETAT, SAVEIN (the save RAM it starts with)
+// env: FRAMELOG, AUDIOOUT, INPUT=1 (or 2: A, Down, A every two seconds), RAWOUT and RAWFRAME, RESETAT, SAVEIN (the save RAM it starts with)
 #include <ares/ares.hpp>
 #include <mia/mia.hpp>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <thread>
 
@@ -32,6 +33,7 @@ struct Runner : ares::Platform {
   uint64_t audioHash = 14695981039346656037ull, lastHash = 0, samples = 0, frames = 0;
   std::atomic<uint64_t> shown = 0;
   bool pressing = false;
+  bool pressingA = false;
   unsigned rows = 484;
 
   auto pak(ares::Node::Object node) -> std::shared_ptr<vfs::directory> override {
@@ -69,6 +71,13 @@ struct Runner : ares::Platform {
 
   auto held(const string& name) -> bool {
     if(!pressing) return false;
+    if(pressingA) {
+      unsigned step = frames % 120;
+      if(step >= 30 && step < 36) return name == "A";
+      if(step >= 60 && step < 66) return name == "Down";
+      if(step >= 90 && step < 96) return name == "A";
+      return false;
+    }
     unsigned phase = frames % 240;
     if(phase >=  60 && phase <  66) return name == "Start";
     if(phase >= 120 && phase < 126) return name == "A";
@@ -128,6 +137,7 @@ auto nall::main(Arguments arguments) -> void {
   if(auto path = std::getenv("FRAMELOG")) runner.frameLog = std::fopen(path, "w");
   if(auto path = std::getenv("AUDIOOUT")) runner.audioOut = std::fopen(path, "wb");
   runner.pressing = std::getenv("INPUT") != nullptr;
+  runner.pressingA = runner.pressing && !std::strcmp(std::getenv("INPUT"), "2");
 
   root->power();
   uint64_t count = std::strtoull(args[1], nullptr, 10);

@@ -302,6 +302,11 @@ static bool partSupported(u16 part) {
 	case PART_RTC_EPSON_MEMORY_RTC_TIME:
 	case PART_RTC_SHARP:
 	case PART_RTC_SHARP_MEMORY_RTC_TIME:
+	case PART_PROCESSOR_ARM6:
+	case PART_PROCESSOR_ARM6_MEMORY_ROM_PROGRAM_ARM6:
+	case PART_PROCESSOR_ARM6_MEMORY_ROM_DATA_ARM6:
+	case PART_PROCESSOR_ARM6_MEMORY_RAM_DATA_ARM6:
+	case PART_PROCESSOR_ARM6_OSCILLATOR:
 		return true;
 	}
 	return false;
@@ -404,6 +409,21 @@ static bool loadCx4Firmware(void) {
 	return true;
 }
 
+// The ST018's firmware, 160 KiB of program then data ROM, from the end of the dump or the
+// frontend's "st018.rom", or "st018.program.rom" with "st018.data.rom".
+static bool loadSt018Firmware(void) {
+	static u8 buffer[0x28000];
+	if (firmwareSize == sizeof(buffer)) {
+		memcpy(buffer, rom + romSize, sizeof(buffer));
+	} else if (!cartFirmware("st018.rom", buffer, sizeof(buffer)) &&
+	           !(cartFirmware("st018.program.rom", buffer, 0x20000) && cartFirmware("st018.data.rom", buffer + 0x20000, 0x8000))) {
+		snprintf(cart.missing, sizeof(cart.missing), "st018.rom");
+		return false;
+	}
+	st018Load(buffer);
+	return true;
+}
+
 // The last megabyte of a 7 MiB SPC7110 dump.
 static u8 readExpansion(u32 address, u8 data) {
 	(void) data;
@@ -479,6 +499,9 @@ bool cartLoad(const u8* data, u32 size) {
 	if (typeLo >= 0x3 && typeHi == 0xf && subType == 0x10 && (size & 0x7fff) == 0xc00) {
 		firmwareSize = 0xc00;
 	}
+	if (typeLo >= 0x3 && typeHi == 0xf && subType == 0x02 && (size & 0x3ffff) == 0x28000) {
+		firmwareSize = 0x28000;
+	}
 	romSize = size - firmwareSize;
 	cart.rom = rom;
 	cart.romSize = romSize;
@@ -524,6 +547,9 @@ bool cartLoad(const u8* data, u32 size) {
 		if (board->parts[n] == PART_RTC_SHARP) {
 			cart.sharpRtc = true;
 		}
+		if (board->parts[n] == PART_PROCESSOR_ARM6) {
+			cart.st018 = true;
+		}
 		if (board->parts[n] == PART_PROCESSOR_UPD7725 || board->parts[n] == PART_PROCESSOR_UPD96050) {
 			cart.necdsp = true;
 			necdsp.uPD96050 = board->parts[n] == PART_PROCESSOR_UPD96050;
@@ -555,6 +581,9 @@ bool cartLoad(const u8* data, u32 size) {
 	}
 	if (cart.spc7110) {
 		spc7110Load();
+	}
+	if (cart.st018 && !loadSt018Firmware()) {
+		return false;
 	}
 	if (cart.epsonRtc) {
 		epsonRtcLoad();
@@ -650,6 +679,9 @@ void cartMap(void) {
 		case PART_RTC_EPSON:
 			busMap(epsonRtcRead, epsonRtcWrite, map->address, map->size, map->base, map->mask);
 			break;
+		case PART_PROCESSOR_ARM6:
+			busMap(st018Read, st018Write, map->address, map->size, map->base, map->mask);
+			break;
 		case PART_RTC_SHARP:
 			busMap(sharpRtcRead, sharpRtcWrite, map->address, map->size, map->base, map->mask);
 			break;
@@ -701,6 +733,9 @@ void cartPower(bool reset) {
 	if (cart.spc7110) {
 		spc7110Power();
 	}
+	if (cart.st018) {
+		st018Power();
+	}
 }
 
 // The coprocessors, brought up to the CPU's clock.
@@ -725,5 +760,8 @@ void cartSync(void) {
 	}
 	if (cart.spc7110 && spc7110.th.clock < cpu.th.clock) {
 		spc7110Run();
+	}
+	if (cart.st018 && st018.th.clock < cpu.th.clock) {
+		st018Run();
 	}
 }

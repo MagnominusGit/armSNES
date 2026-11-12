@@ -62,6 +62,8 @@ Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips 
   machine, with its data ROM from `cx4.rom` or the end of the dump;
 - the SPC7110 (decompression, data port, ALU and memory controller; its waits before a result are
   stop points), with a 7 MiB dump's expansion ROM;
+- the ST018, ares's ARM7TDMI in ARM state, with a stop point at each clock step (every memory access
+  and idle cycle), its firmware from `st018.rom` or the end of the dump;
 - the Epson RTC-4513 and the Sharp S-RTC. They keep time by the machine's clock; the frontend keeps
   them as RTC memory, and loading one moves it on by the time the game was off.
 

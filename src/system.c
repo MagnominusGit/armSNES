@@ -101,6 +101,7 @@ void systemPower(bool reset) {
 	sharpRtc.th.clock = 4;
 	// The SPC7110 comes after its board's RTC.
 	spc7110.th.clock = cart.epsonRtc ? 5 : 4;
+	st018.th.clock = 4;
 }
 
 // The PPU finished a frame. The clocks all drop by the same amount, so they never overflow.
@@ -133,6 +134,9 @@ void systemFrameEvent(void) {
 	if (cart.sharpRtc && sharpRtc.th.clock - 4 < minimum) {
 		minimum = sharpRtc.th.clock - 4;
 	}
+	if (cart.st018 && st018.th.clock - 4 < minimum) {
+		minimum = st018.th.clock - 4;
+	}
 	if (cart.spc7110 && spc7110.th.clock - (cart.epsonRtc ? 5 : 4) < minimum) {
 		minimum = spc7110.th.clock - (cart.epsonRtc ? 5 : 4);
 	}
@@ -160,6 +164,9 @@ void systemFrameEvent(void) {
 	}
 	if (cart.spc7110) {
 		spc7110.th.clock -= minimum;
+	}
+	if (cart.st018) {
+		st018.th.clock -= minimum;
 	}
 
 	sys.frames++;

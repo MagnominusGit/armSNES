@@ -110,8 +110,9 @@ static const struct {
 	{ "YUYU NO QUIZ DE GO!GO", "LOROM-" },
 };
 
-// The board's name, in ares's form: [slot]-[coprocessor]-[mapper]-[ram]-[rtc].
-static void boardName(char* board, size_t size) {
+// The board's name, in ares's form: [slot]-[coprocessor]-[mapper]-[ram]-[rtc]. Plain leaves out all
+// but the mapper and the RAM.
+static void boardName(char* board, size_t size, bool plain) {
 	u8 mapMode = rom[headerAddress + 0x25];
 	u8 cartridgeTypeLo = rom[headerAddress + 0x26] & 15;
 	u8 cartridgeTypeHi = rom[headerAddress + 0x26] >> 4;
@@ -136,6 +137,11 @@ static void boardName(char* board, size_t size) {
 	if (mapMode == 0x2a || mapMode == 0x3a) {
 		mode = "SPC7110-";
 	}
+	// A map mode for the S-DD1 with no coprocessor in the cartridge type, as an expanded translation
+	// has, says nothing of the mapper.
+	if (!strcmp(mode, "SDD1-") && cartridgeTypeLo < 0x3) {
+		mode = "";
+	}
 	// Many games have a title a character too long, over the map mode; ExLoROM has no map mode value.
 	if (!*mode) {
 		if (headerAddress == 0x7fb0) {
@@ -153,7 +159,7 @@ static void boardName(char* board, size_t size) {
 	}
 
 	board[0] = 0;
-	if (romSize >= 14 && !memcmp(rom, "BANDAI SFC-ADX", 14)) {
+	if (!plain && romSize >= 14 && !memcmp(rom, "BANDAI SFC-ADX", 14)) {
 		snprintf(board, size, "ST-%s", mode);
 	}
 
@@ -166,6 +172,21 @@ static void boardName(char* board, size_t size) {
 	if (!strcmp(mode, "LOROM-") && headerAddress == 0x407fb0) {
 		mode = "EXLOROM-";
 	}
+	// Where the header is tells LoROM from HiROM better than a map mode some betas, hacks and
+	// translations get wrong.
+	if ((headerAddress & 0xffff) == 0xffb0 && (!strcmp(mode, "LOROM-") || !strcmp(mode, "EXLOROM-"))) {
+		mode = headerAddress == 0xffb0 ? "HIROM-" : "EXHIROM-";
+	}
+	if ((headerAddress & 0xffff) == 0x7fb0 && (!strcmp(mode, "HIROM-") || !strcmp(mode, "EXHIROM-"))) {
+		mode = headerAddress == 0x7fb0 ? "LOROM-" : "EXLOROM-";
+	}
+	// More than 4 MiB can only be the extended form, whatever an expanded game's header says.
+	if (romSize > 0x400000 && !strcmp(mode, "HIROM-")) {
+		mode = "EXHIROM-";
+	}
+	if (romSize > 0x400000 && !strcmp(mode, "LOROM-")) {
+		mode = "EXLOROM-";
+	}
 
 	bool epsonRTC = false;
 	bool sharpRTC = false;
@@ -174,7 +195,8 @@ static void boardName(char* board, size_t size) {
 	size_t used = strlen(board);
 #define APPEND(...) used += snprintf(board + used, size - used, __VA_ARGS__)
 
-	if (!strcmp(code, "ZBSJ")) {
+	if (plain) {
+	} else if (!strcmp(code, "ZBSJ")) {
 		APPEND("BS-MCC-");
 	} else if (!strcmp(code, "042J")) {
 		APPEND("GB-%s", mode);
@@ -348,31 +370,48 @@ static const struct {
 	{ "TOP GEAR 3000", "dsp4" },
 };
 
-// The event cartridges have no header to go by; they are known by their hash, as ares's database
-// knows them.
-static const struct {
+// Cartridges with no header to go by, known by their hash: the event cartridges as ares's database
+// knows them, and a tech demo it doesn't.
+static const struct KnownCart {
 	const char* sha256;
-	int board;
-} eventCarts[] = {
-	{ "67c1a4917f4cd0fd704b83330a7e91763736c2d2a10a7e12318fdac54cd9c6c6", COMPETITION_CC92 },
-	{ "6c83ee132db777b306caeb2da6f2cd971735fb06805af55979d99028b33bf659", COMPETITION_CC92 },
-	{ "8727da57fefe7fe91655a1c693892a1272a3cda6f1f57b529e06a6617de6ce39", COMPETITION_CC92 },
-	{ "5443a97e9c40e25821a8fb8c91b63c7bd8c3060d9ff888ee6c573b87b53935f4", COMPETITION_PF94 },
-	{ "7fa4550886acb4d56b86a848ee1fb92e1cd12b87f1e7c0c510227959c041666f", COMPETITION_PF94 },
+	u32 size;
+	const char* board;
+	u32 ramSize;
+	// The event cartridges' uPD78214 board, or 0.
+	int competition;
+} knownCarts[] = {
+	{ "67c1a4917f4cd0fd704b83330a7e91763736c2d2a10a7e12318fdac54cd9c6c6", 0x1c0000, "EVENT-CC92", 0x2000, COMPETITION_CC92 },
+	{ "6c83ee132db777b306caeb2da6f2cd971735fb06805af55979d99028b33bf659", 0x1c0000, "EVENT-CC92", 0x2000, COMPETITION_CC92 },
+	{ "8727da57fefe7fe91655a1c693892a1272a3cda6f1f57b529e06a6617de6ce39", 0x1c0000, "EVENT-CC92", 0x2000, COMPETITION_CC92 },
+	{ "5443a97e9c40e25821a8fb8c91b63c7bd8c3060d9ff888ee6c573b87b53935f4", 0x240000, "EVENT-PF94", 0x2000, COMPETITION_PF94 },
+	{ "7fa4550886acb4d56b86a848ee1fb92e1cd12b87f1e7c0c510227959c041666f", 0x240000, "EVENT-PF94", 0x2000, COMPETITION_PF94 },
+	// Its first code sets the SA-1's ROM banks.
+	{ "88b6f7d6a9d36128572418ccdf5ff03491295d3f4f6073a7aa81cea66e3f6f77", 0x100000, "SA1-RAM", 0x2000, 0 },
 };
 
-static int eventBoard(void) {
-	if (romSize != 0x1c0000 && romSize != 0x240000) {
-		return 0;
-	}
-	char hash[65];
-	sha256Hex(rom, romSize, hash);
-	for (size_t n = 0; n < sizeof(eventCarts) / sizeof(*eventCarts); ++n) {
-		if (!strcmp(hash, eventCarts[n].sha256)) {
-			return eventCarts[n].board;
+static const struct BoardEntry* findBoard(const char* name) {
+	for (size_t n = 0; n < sizeof(boardEntries) / sizeof(*boardEntries); ++n) {
+		if (!strcmp(boardEntries[n].name, name)) {
+			return &boardEntries[n];
 		}
 	}
-	return 0;
+	return NULL;
+}
+
+static const struct KnownCart* knownCart(void) {
+	char hash[65] = "";
+	for (size_t n = 0; n < sizeof(knownCarts) / sizeof(*knownCarts); ++n) {
+		if (romSize != knownCarts[n].size) {
+			continue;
+		}
+		if (!hash[0]) {
+			sha256Hex(rom, romSize, hash);
+		}
+		if (!strcmp(hash, knownCarts[n].sha256)) {
+			return &knownCarts[n];
+		}
+	}
+	return NULL;
 }
 
 // Whether the header's title is this, padded with spaces or empty bytes.
@@ -507,8 +546,17 @@ bool cartLoad(const u8* data, u32 size) {
 		data += 512;
 		size -= 512;
 	}
+	// A ROM smaller than a bank fills it, mirrored.
+	static u8 mirrored[0x8000];
 	if (size < 0x8000) {
-		return false;
+		if (!size || (size & (size - 1))) {
+			return false;
+		}
+		for (u32 n = 0; n < 0x8000; n += size) {
+			memcpy(mirrored + n, data, size);
+		}
+		data = mirrored;
+		size = 0x8000;
 	}
 	rom = data;
 	romSize = size;
@@ -535,10 +583,11 @@ bool cartLoad(const u8* data, u32 size) {
 
 	free(cart.ram);
 	memset(&cart, 0, sizeof(cart));
-	boardName(cart.board, sizeof(cart.board));
-	int event = eventBoard();
-	if (event) {
-		snprintf(cart.board, sizeof(cart.board), "%s", event == COMPETITION_CC92 ? "EVENT-CC92" : "EVENT-PF94");
+	boardName(cart.board, sizeof(cart.board), false);
+	const struct KnownCart* known = knownCart();
+	int event = known ? known->competition : 0;
+	if (known) {
+		snprintf(cart.board, sizeof(cart.board), "%s", known->board);
 	}
 
 	// Firmware some dumps carry after the game.
@@ -563,13 +612,19 @@ bool cartLoad(const u8* data, u32 size) {
 	cart.romSize = romSize;
 
 	u8 region = rom[headerAddress + 0x29];
-	cart.pal = !event && !(region == 0x00 || region == 0x01 || region == 0x0b || region == 0x0d || region == 0x0f || region == 0x10);
+	cart.pal = !known && !(region == 0x00 || region == 0x01 || region == 0x0b || region == 0x0d || region == 0x0f || region == 0x10);
 
-	board = NULL;
-	for (size_t n = 0; n < sizeof(boardEntries) / sizeof(*boardEntries); ++n) {
-		if (!strcmp(boardEntries[n].name, cart.board)) {
-			board = &boardEntries[n];
-		}
+	board = findBoard(cart.board);
+	// A header that names a board there is no such thing as, as some betas, hacks and unlicensed games
+	// have: the board without the RAM, whose chip may bring its own, then the plain board for its mapper.
+	char* ram = strstr(cart.board, "-RAM");
+	if (!board && ram) {
+		memmove(ram, ram + 4, strlen(ram + 4) + 1);
+		board = findBoard(cart.board);
+	}
+	if (!board) {
+		boardName(cart.board, sizeof(cart.board), true);
+		board = findBoard(cart.board);
 	}
 	if (!board) {
 		return false;
@@ -684,8 +739,8 @@ bool cartLoad(const u8* data, u32 size) {
 
 	// Save RAM starts out as 0xff. The uPD96050 keeps its saves in its own data RAM.
 	cart.ramSize = headerRamSize() ? headerRamSize() : expansionRamSize();
-	if (cart.competition) {
-		cart.ramSize = 0x2000;
+	if (known) {
+		cart.ramSize = known->ramSize;
 	}
 	if (cart.ramSize) {
 		cart.ram = malloc(cart.ramSize);
@@ -832,6 +887,15 @@ void cartMap(void) {
 	}
 	if (cart.msu1) {
 		busMap(msu1Read, msu1Write, "00-3f,80-bf:2000-2007", 0, 0, 0);
+	}
+	// A Cx4 board reaches 2 MiB of ROM; a bigger dump, which some hacks are, goes on in banks
+	// 40-7d and c0-ff as a LoROM board has it.
+	if (cart.cx4 && cart.romSize > 0x200000) {
+		busMap(readRom, writeRom, "40-7d,c0-ff:0000-ffff", cart.romSize, 0, 0x8000);
+	}
+	// The same for a DSP LoROM board, whose DSP has the lower halves of banks 60-6f.
+	if (cart.necdsp && !strcmp(cart.board, "NEC-LOROM-RAM") && cart.romSize > 0x200000) {
+		busMap(readRom, writeRom, "40-7d,c0-ff:8000-ffff", cart.romSize, 0, 0x8000);
 	}
 }
 

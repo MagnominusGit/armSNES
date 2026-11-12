@@ -176,7 +176,8 @@ static void soundSample(s16 left, s16 right) {
 
 void icdRun(void) {
 	do {
-		if (I.r6003 & 0x80) {
+		// Without a game in the slot the Game Boy stays halted.
+		if ((I.r6003 & 0x80) && gbLoaded()) {
 			unsigned samples;
 			const unsigned* audio;
 			u32 dots = gbRun(ICD_SLICE, &samples, &audio);

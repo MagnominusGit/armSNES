@@ -223,6 +223,16 @@ int main(int argc, char** argv) {
 		fclose(file);
 		free(data);
 	}
+	// The MSU-1's files sit beside the game: game.msu, game-1.pcm and on.
+	{
+		char path[4096];
+		snprintf(path, sizeof(path), "%s", argv[1]);
+		char* dot = strrchr(path, '.');
+		if (dot) {
+			*dot = 0;
+		}
+		cartLoadMsu1(path);
+	}
 	if (getenv("BSPACK")) {
 		FILE* pack = fopen(getenv("BSPACK"), "rb");
 		if (!pack) {

@@ -77,6 +77,15 @@ void systemLoad(bool pal) {
 	busFinish();
 }
 
+// The MSU-1's clock comes after the other chips'.
+static u64 msu1Id(void) {
+	return 4 + cart.sa1 + cart.gsu + cart.st018 + cart.cx4 + cart.necdsp + cart.epsonRtc + cart.sharpRtc + cart.spc7110;
+}
+
+static u64 bsId(void) {
+	return 4 + cart.sa1 + cart.msu1;
+}
+
 void systemPower(bool reset) {
 	randomSeed(0);
 
@@ -103,8 +112,9 @@ void systemPower(bool reset) {
 	spc7110.th.clock = cart.epsonRtc ? 5 : 4;
 	st018.th.clock = 4;
 	icd.th.clock = 4;
-	// A flash pack's clock comes after the SA-1's.
-	bsmemory.th.clock = cart.sa1 ? 5 : 4;
+	msu1.th.clock = msu1Id();
+	// A flash pack's clock comes after the SA-1's and the MSU-1's.
+	bsmemory.th.clock = bsId();
 }
 
 // The PPU finished a frame. The clocks all drop by the same amount, so they never overflow.
@@ -143,8 +153,11 @@ void systemFrameEvent(void) {
 	if (cart.icd && icd.th.clock - 4 < minimum) {
 		minimum = icd.th.clock - 4;
 	}
-	if (bsRunning() && bsmemory.th.clock - (cart.sa1 ? 5 : 4) < minimum) {
-		minimum = bsmemory.th.clock - (cart.sa1 ? 5 : 4);
+	if (bsRunning() && bsmemory.th.clock - bsId() < minimum) {
+		minimum = bsmemory.th.clock - bsId();
+	}
+	if (cart.msu1 && msu1.th.clock - msu1Id() < minimum) {
+		minimum = msu1.th.clock - msu1Id();
 	}
 	if (cart.spc7110 && spc7110.th.clock - (cart.epsonRtc ? 5 : 4) < minimum) {
 		minimum = spc7110.th.clock - (cart.epsonRtc ? 5 : 4);
@@ -179,6 +192,9 @@ void systemFrameEvent(void) {
 	}
 	if (cart.icd) {
 		icd.th.clock -= minimum;
+	}
+	if (cart.msu1) {
+		msu1.th.clock -= minimum;
 	}
 	if (bsRunning()) {
 		bsmemory.th.clock -= minimum;

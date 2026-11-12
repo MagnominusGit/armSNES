@@ -80,6 +80,9 @@ Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips 
   is the same until the two Game Boys' timing parts, a few hundred frames in, and looks the same after.
   The Game Boy's sound is averaged down to the DSP's rate and added to it. The SGB2 runs on its own
   oscillator; a cartridge's clock (MBC3, HuC3) isn't given to the frontend yet;
+- the MSU-1, for a game with `game.msu` beside it (its tracks `game-1.pcm` and on). Its 44.1 kHz
+  tracks are averaged down to the DSP's rate and added to it, muted while the DSP is, as on ares. Only
+  a small test cartridge has been run so far: its picture matches ares and its track plays;
 - the Epson RTC-4513 and the Sharp S-RTC. They keep time by the machine's clock; the frontend keeps
   them as RTC memory, and loading one moves it on by the time the game was off.
 

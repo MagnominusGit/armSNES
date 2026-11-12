@@ -623,6 +623,7 @@ bool cartLoad(const u8* data, u32 size) {
 	bsLoad(NULL, 0);
 	sufamiInsert(0, NULL, 0);
 	gbUnload();
+	msu1Unload();
 	sufamiInsert(1, NULL, 0);
 	if (cart.epsonRtc) {
 		epsonRtcLoad();
@@ -770,6 +771,14 @@ void cartMap(void) {
 	if (cart.sdd1) {
 		sdd1Map();
 	}
+	if (cart.msu1) {
+		busMap(msu1Read, msu1Write, "00-3f,80-bf:2000-2007", 0, 0, 0);
+	}
+}
+
+bool cartLoadMsu1(const char* path) {
+	cart.msu1 = msu1Load(path);
+	return cart.msu1;
 }
 
 bool cartInsertGameBoy(const u8* rom, size_t size, const u8* boot, size_t bootSize) {
@@ -835,6 +844,9 @@ void cartPower(bool reset) {
 	if (cart.st018) {
 		st018Power();
 	}
+	if (cart.msu1) {
+		msu1Power();
+	}
 	if (cart.bsSlot) {
 		bsPower();
 	}
@@ -865,6 +877,9 @@ void cartSync(void) {
 	}
 	if (cart.spc7110 && spc7110.th.clock < cpu.th.clock) {
 		spc7110Run();
+	}
+	if (cart.msu1 && msu1.th.clock < cpu.th.clock) {
+		msu1Run();
 	}
 	if (cart.icd && icd.th.clock < cpu.th.clock) {
 		icdRun();

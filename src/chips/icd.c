@@ -167,40 +167,9 @@ unsigned icdJoypWrite(unsigned p14, unsigned p15) {
 	return input;
 }
 
-// --- Its sound, averaged down to the DSP's rate ---
-
-#define DSP_RATE 32040
-
+// Its sound comes a sample every two clocks.
 static void soundSample(s16 left, s16 right) {
-	I.sumLeft += left;
-	I.sumRight += right;
-	I.summed++;
-	// A sample comes every two clocks.
-	I.phase += DSP_RATE * 2;
-	if (I.phase < I.clockFrequency) {
-		return;
-	}
-	I.phase -= I.clockFrequency;
-	u32 slot = I.soundWrite % ICD_SOUND;
-	I.sound[slot][0] = I.sumLeft / (s32) I.summed;
-	I.sound[slot][1] = I.sumRight / (s32) I.summed;
-	I.soundWrite++;
-	if (I.soundWrite - I.soundRead > ICD_SOUND) {
-		I.soundRead = I.soundWrite - ICD_SOUND;
-	}
-	I.sumLeft = I.sumRight = 0;
-	I.summed = 0;
-}
-
-void icdMix(s32* left, s32* right) {
-	if (I.soundRead == I.soundWrite) {
-		return;
-	}
-	u32 slot = I.soundRead++ % ICD_SOUND;
-	s32 l = *left + I.sound[slot][0];
-	s32 r = *right + I.sound[slot][1];
-	*left = l > 32767 ? 32767 : l < -32768 ? -32768 : l;
-	*right = r > 32767 ? 32767 : r < -32768 ? -32768 : r;
+	mixerInput(&I.sound, left, right, 32040 * 2, I.clockFrequency);
 }
 
 // --- Running ---

@@ -425,7 +425,10 @@ static void echo27(void) {
 		outr = 0;
 	}
 	if (cart.icd) {
-		icdMix(&outl, &outr);
+		mixerOutput(&icd.sound, &outl, &outr);
+	}
+	if (cart.msu1) {
+		mixerOutput(&msu1.sound, &outl, &outr);
 	}
 	audioSample(outl, outr);
 }

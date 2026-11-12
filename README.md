@@ -12,8 +12,8 @@ frontend's system folder, unless the dump carries it.
 
 It also takes BS-X memory packs (`.bs`, with `BS-X.bin`), Sufami Turbo cartridges (`.st`, with
 `STBIOS.bin`) and Game Boy games for the Super Game Boy (`.gb` and `.gbc`, with `SGB1.sfc` and
-`sgb1.boot.rom`), each with those files in the system folder. The Super Game Boy's Game Boy is
-Gambatte, as armGBA has it.
+`sgb1.boot.rom`), each with those files in the system folder, and the MSU-1 (`game.msu` and
+`game-1.pcm` on beside the game). The Super Game Boy's Game Boy is Gambatte, as armGBA has it.
 
 It builds as a libretro core with saved states; the standalone app comes later. The plan is in
 [docs/ROADMAP.md](docs/ROADMAP.md).

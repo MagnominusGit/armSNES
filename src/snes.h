@@ -412,6 +412,7 @@ struct Cart {
 	bool sufami;
 	// The Super Game Boy's ICD2 and its Game Boy slot.
 	bool icd;
+	bool msu1;
 	// What the game saves to: the save RAM, or a chip's own memory. Little-endian hosts only.
 	u8* saveRam;
 	u32 saveRamSize;
@@ -1239,11 +1240,26 @@ u8* bsData(u32* size);
 // A memory pack put in the slot, after the game is loaded and before it is powered on.
 bool cartInsertPack(const u8* data, size_t size);
 
+// --- A cartridge's own sound, added to the DSP's ---
+
+#define MIXER_SAMPLES 1024
+
+struct Mixer {
+	s32 sumLeft, sumRight;
+	u32 summed, phase;
+	s16 samples[MIXER_SAMPLES][2];
+	u32 read, write;
+};
+
+// Each input sample moves the phase on by step; a DSP sample is due each time it reaches rate.
+void mixerInput(struct Mixer* m, s16 left, s16 right, u32 step, u32 rate);
+// Adds the next sample, if there is one, to a DSP sample.
+void mixerOutput(struct Mixer* m, s32* left, s32* right);
+
 // --- The Super Game Boy's ICD2 ---
 
-// The Game Boy's clocks run at a time, and the Game Boy sound samples kept for the DSP.
+// The Game Boy's clocks run at a time.
 #define ICD_SLICE 256
-#define ICD_SOUND 1024
 
 struct Icd {
 	struct Thread th;
@@ -1265,10 +1281,7 @@ struct Icd {
 	u8 r7000[16];
 	u8 mltReq;
 	u8 hcounter, vcounter;
-	s32 sumLeft, sumRight;
-	u32 summed, phase;
-	s16 sound[ICD_SOUND][2];
-	u32 soundRead, soundWrite;
+	struct Mixer sound;
 };
 extern struct Icd icd;
 
@@ -1276,11 +1289,35 @@ void icdPower(bool reset);
 void icdRun(void);
 u8 icdRead(u32 address, u8 data);
 void icdWrite(u32 address, u8 data);
-// Adds the Game Boy's sound to a DSP sample.
-void icdMix(s32* left, s32* right);
 // The Game Boy game for the slot (and the Game Boy's boot ROM), after the base is loaded and before
 // it is powered on. Its save RAM becomes the save.
 bool cartInsertGameBoy(const u8* rom, size_t size, const u8* boot, size_t bootSize);
+
+// --- The MSU-1 ---
+
+struct Msu1 {
+	struct Thread th;
+	u32 dataSeekOffset, dataReadOffset;
+	u32 audioPlayOffset, audioLoopOffset;
+	u16 audioTrack;
+	u8 audioVolume;
+	u32 audioResumeTrack, audioResumeOffset;
+	bool audioError, audioPlay, audioRepeat, audioBusy, dataBusy;
+	struct Mixer sound;
+};
+extern struct Msu1 msu1;
+
+// Whether path.msu is there; its tracks are path-1.pcm and on.
+bool msu1Load(const char* path);
+void msu1Unload(void);
+void msu1Power(void);
+void msu1Reopen(void);
+void msu1Run(void);
+u8 msu1Read(u32 address, u8 data);
+void msu1Write(u32 address, u8 data);
+// The MSU-1's files, by the game's path without its extension, after the game is loaded and before
+// it is powered on. False if there is no data file.
+bool cartLoadMsu1(const char* path);
 
 // --- The Sufami Turbo's slots ---
 

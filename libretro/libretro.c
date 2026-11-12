@@ -352,6 +352,16 @@ bool retro_load_game(const struct retro_game_info* info) {
 		return false;
 	}
 	free(boot);
+	// The MSU-1's files sit beside the game: game.msu, game-1.pcm and on.
+	if (info->path) {
+		char path[4096];
+		snprintf(path, sizeof(path), "%s", info->path);
+		char* dot = strrchr(path, '.');
+		if (dot) {
+			*dot = 0;
+		}
+		cartLoadMsu1(path);
+	}
 
 	static const struct retro_input_descriptor descriptors[] = {
 #define PAD(port) \

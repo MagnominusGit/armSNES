@@ -1800,7 +1800,43 @@ static void bgSpanSlots(u32 n, u32 start, u32 end, bool hires, bool draws) {
 // A whole line of a tiled background in a mode without offset-per-tile or the double width, with
 // nothing written while it is drawn: its 33 tiles are fetched and shifted out a tile at a time. It
 // leaves the background as the slots would, tile for tile.
-static void bgLineTiles(u32 n, bool fetch) {
+// BG3's offset-per-tile values as each of a line's 33 tiles is fetched: a tile gets the ones read
+// while the tile before it was fetched, and the first what the line started with.
+static u16 lineOptH[34];
+static u16 lineOptV[34];
+
+// A whole line's offset fetches in modes 2 and 4, as bgFetchOffset makes them.
+static void bgLineOffsets(void) {
+	struct Background* bg = &ppu.bg[2];
+	u32 tiles = 3 + bg->io.tileSize;
+	u32 hscreen = bg->io.screenSize & 1 ? 32 << 5 : 0;
+	u32 vscreen = bg->io.screenSize & 2 ? 32 << (5 + (bg->io.screenSize & 1)) : 0;
+	for (u32 k = 0; k < 33; ++k) {
+		lineOptH[k] = bg->opt.hoffset;
+		lineOptV[k] = bg->opt.voffset;
+		for (u32 y = 0; y <= (ppu.io.bgMode == 2 ? 8u : 0u); y += 8) {
+			u32 hoffset = (k << 3) + (bg->io.hoffset & ~7);
+			u32 voffset = y + bg->io.voffset;
+			u32 htile = hoffset >> tiles;
+			u32 vtile = voffset >> tiles;
+			u16 offset = (htile & 31) | (vtile & 31) << 5;
+			if (htile & 0x20) {
+				offset += hscreen;
+			}
+			if (vtile & 0x20) {
+				offset += vscreen;
+			}
+			u16 value = *vramAt((u16) (bg->io.screenAddress + offset));
+			if (y == 0) {
+				bg->opt.hoffset = value;
+			} else {
+				bg->opt.voffset = value;
+			}
+		}
+	}
+}
+
+static void bgLineTiles(u32 n, bool fetch, bool opt) {
 	struct Background* bg = &ppu.bg[n];
 	u32 mode = bg->io.mode;
 	u32 planes = 1u << mode;
@@ -1820,22 +1856,44 @@ static void bgLineTiles(u32 n, bool fetch) {
 	u32 characterIndex = bg->io.tiledataAddress >> (3 + mode);
 	u32 paletteOffset = ppu.io.bgMode == 0 ? bg->id << 5 : 0;
 	u32 paletteSize = 2 << mode;
-	u32 voffsetLine = (vpixel + vscroll) & (vsize - 1);
-	u32 vtile = voffsetLine >> tiles;
-	u16 rowOffset = (vtile & 31) << 5;
-	if (vtile & 0x20) {
-		rowOffset += vscreen;
-	}
 
 	// The fetches, as bgFetchNameTable and bgFetchCharacter make them. A background the mode doesn't
 	// use fetches nothing: it shifts out what its tiles were left with.
 	for (u32 k = 0; fetch && k < 33; ++k) {
-		u32 hoffset = ((k << 3) + hscroll) & (hsize - 1);
-		u32 voffset = voffsetLine;
+		u32 hpixel = k << 3;
+		u32 hoffset = hpixel + hscroll;
+		u32 voffset = vpixel + vscroll;
+		if (opt) {
+			u32 hlookup = lineOptH[k];
+			u32 vlookup = lineOptV[k];
+			u32 valid = 13 + bg->id;
+			if (ppu.io.bgMode == 4) {
+				if (hlookup >> valid & 1) {
+					if (!(hlookup & 0x8000)) {
+						hoffset = hpixel + (hlookup & ~7) + (hscroll & 7);
+					} else {
+						voffset = vpixel + vlookup;
+					}
+				}
+			} else {
+				if (hlookup >> valid & 1) {
+					hoffset = hpixel + (hlookup & ~7) + (hscroll & 7);
+				}
+				if (vlookup >> valid & 1) {
+					voffset = vpixel + vlookup;
+				}
+			}
+		}
+		hoffset &= hsize - 1;
+		voffset &= vsize - 1;
 		u32 htile = hoffset >> tiles;
-		u16 offset = (htile & 31) | rowOffset;
+		u32 vtile = voffset >> tiles;
+		u16 offset = (htile & 31) | (vtile & 31) << 5;
 		if (htile & 0x20) {
 			offset += hscreen;
+		}
+		if (vtile & 0x20) {
+			offset += vscreen;
 		}
 		u16 attributes = *vramAt((u16) (bg->io.screenAddress + offset));
 
@@ -2035,6 +2093,101 @@ static void bgLineTiles(u32 n, bool fetch) {
 	bg->pixelCounter = counter;
 	bg->mosaic.hcounter = mosaicCounter;
 	bg->mosaic.pixel = mosaicPixel;
+	bg->output.above = above;
+	bg->output.below = below;
+}
+
+// A whole line of a mode 7 background, as bgRunMode7 makes each pixel of it: what doesn't change
+// along the line is worked out once.
+static void bgLineMode7(u32 n) {
+	struct Background* bg = &ppu.bg[n];
+	bgBegin(bg);
+
+	s32 a = (s16) ppu.io.m7a;
+	s32 b = (s16) ppu.io.m7b;
+	s32 c = (s16) ppu.io.m7c;
+	s32 d = (s16) ppu.io.m7d;
+	s32 hcenter = signedBits(ppu.io.m7x, 13);
+	s32 vcenter = signedBits(ppu.io.m7y, 13);
+	s32 hoffset = signedBits(ppu.io.hoffsetMode7, 13);
+	s32 voffset = signedBits(ppu.io.voffsetMode7, 13);
+
+	u32 y = VCOUNTER;
+	if (ppu.bg[0].mosaic.enable) {
+		y -= mosaicVoffset();
+	}
+	if (ppu.io.vflipMode7) {
+		y = 255 - y;
+	}
+#define CLIP(n) ((n) & 0x2000 ? ((n) | ~1023) : ((n) & 1023))
+	s32 hclip = CLIP(hoffset - hcenter);
+	s32 vclip = CLIP(voffset - vcenter);
+#undef CLIP
+	u32 originX = ((u32) (a * hclip) & ~63) + ((u32) (b * vclip) & ~63) + (((u32) b * y) & ~63) + ((u32) hcenter << 8);
+	u32 originY = ((u32) (c * hclip) & ~63) + ((u32) (d * vclip) & ~63) + (((u32) d * y) & ~63) + ((u32) vcenter << 8);
+
+	bool mosaic = bg->mosaic.enable;
+	bool hflip = ppu.io.hflipMode7;
+	u32 repeat = ppu.io.repeatMode7;
+	bool second = bg->id == 1;
+	bool aboveEnable = bg->io.aboveEnable, belowEnable = bg->io.belowEnable;
+	u32 mosaicOffset = bg->mosaic.hoffset;
+	u32 mosaicCounter = bg->mosaic.hcounter;
+	u32 mosaicSize = ppu.mosaic.size;
+	struct BgPixel above = bg->output.above;
+	struct BgPixel below = bg->output.below;
+
+	for (u32 at = 0; at < 256; ++at) {
+		u32 x = mosaicOffset;
+		if (!mosaic) {
+			mosaicOffset = (u16) (mosaicOffset + 1);
+		} else {
+			mosaicCounter = (u16) (mosaicCounter - 1);
+			if (mosaicCounter == 0) {
+				mosaicCounter = mosaicSize;
+				mosaicOffset = (u16) (mosaicOffset + mosaicSize);
+			}
+		}
+		if (hflip) {
+			x = 255 - x;
+		}
+
+		s32 pixelX = (originX + (u32) a * x) >> 8;
+		s32 pixelY = (originY + (u32) c * x) >> 8;
+		u16 paletteAddress = (pixelY & 7) << 3 | (pixelX & 7);
+		u8 tileX = pixelX >> 3 & 127;
+		u8 tileY = pixelY >> 3 & 127;
+		u16 tileAddress = tileY << 7 | tileX;
+		bool outOfBounds = (pixelX | pixelY) & ~1023;
+		u8 tile = repeat == 3 && outOfBounds ? 0 : *vramAt(tileAddress) >> 0;
+		u8 palette = repeat == 2 && outOfBounds ? 0 : *vramAt(tile << 6 | paletteAddress) >> 8;
+
+		u32 priority = bg->io.priority[0];
+		if (second) {
+			priority = bg->io.priority[palette >> 7];
+			palette &= 0x7f;
+		}
+
+		above.priority = 0;
+		below.priority = 0;
+		if (palette) {
+			if (aboveEnable) {
+				above.priority = priority;
+				above.palette = palette;
+				above.paletteGroup = 0;
+			}
+			if (belowEnable) {
+				below.priority = priority;
+				below.palette = palette;
+				below.paletteGroup = 0;
+			}
+		}
+		spanAbove[n][at] = above;
+		spanBelow[n][at] = below;
+	}
+
+	bg->mosaic.hoffset = mosaicOffset;
+	bg->mosaic.hcounter = mosaicCounter;
 	bg->output.above = above;
 	bg->output.below = below;
 }
@@ -2278,8 +2431,9 @@ static void renderSpan(u32 start, u32 end) {
 	__typeof__(ppu.bg[0].output) endOutput[4];
 	bool hires = hiresMode();
 	bool draws = VCOUNTER != 0;
-	// A whole line in modes 0, 1 and 3 needs no slots for its tiled backgrounds.
-	bool whole = start == 0 && end == 1080 && draws && (ppu.io.bgMode == 0 || ppu.io.bgMode == 1 || ppu.io.bgMode == 3);
+	// A whole line in modes 0 to 4 needs no slots for its tiled backgrounds.
+	bool whole = start == 0 && end == 1080 && draws && ppu.io.bgMode <= 4;
+	bool opt = ppu.io.bgMode == 2 || ppu.io.bgMode == 4;
 
 	// Below the picture nothing is fetched or shifted: the backgrounds stay as its last line left
 	// them. (ares goes on fetching to line 240.)
@@ -2287,11 +2441,17 @@ static void renderSpan(u32 start, u32 end) {
 	for (int i = 0; tiled && i < 4; ++i) {
 		u32 n = order[i];
 		if (whole && ppu.bg[n].io.mode <= BG_BPP8) {
-			bgLineTiles(n, true);
+			bgLineTiles(n, true, opt);
+		} else if (whole && opt && n == 2) {
+			// BG3 isn't drawn in these modes, but the other two's offsets are fetched from it.
+			bgLineOffsets();
+			bgLineTiles(n, false, false);
+		} else if (start == 0 && end == 1080 && draws && ppu.bg[n].io.mode == BG_MODE7) {
+			bgLineMode7(n);
 		} else if (start == 0 && end == 1080 && draws && !hires && ppu.bg[n].io.mode == BG_INACTIVE &&
 		           !(n == 2 && (ppu.io.bgMode == 2 || ppu.io.bgMode == 4))) {
 			// (BG3 fetches the other two's offsets in modes 2 and 4.)
-			bgLineTiles(n, false);
+			bgLineTiles(n, false, false);
 		} else {
 			bgSpanSlots(n, start, end, hires, draws);
 		}

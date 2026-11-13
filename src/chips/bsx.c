@@ -5,6 +5,8 @@
  * Ported from ares (ISC); see LICENSES/ISC-ares.txt. */
 #include "../snes.h"
 #include <stdlib.h>
+#include <string.h>
+#include <time.h>
 
 // The BS-X Satellaview's cartridges: the base cartridge's memory controller (MCC), which maps its
 // ROM, its 512 KiB of PSRAM and a memory pack, and the memory pack itself, mask ROM or a Sharp flash
@@ -739,4 +741,83 @@ void mccPower(void) {
 	mcc.w.internallyWritable = 0;
 	mcc.w.externallyWritable = 0;
 	mccCommit();
+}
+
+// --- The Satellaview base unit under the console: its receiver's registers, as ares has them ---
+// Nothing is broadcast: the registers hold what is written, and the clock gives the frontend's time.
+
+struct Satellaview satellaview;
+s64 satellaviewNow;
+
+#define V satellaview
+
+void satellaviewPower(void) {
+	memset(&V, 0, sizeof(V));
+}
+
+u8 satellaviewRead(u32 address, u8 data) {
+	switch (address & 0xffff) {
+	case 0x2188: return V.r2188;
+	case 0x2189: return V.r2189;
+	case 0x218a: return V.r218a;
+	case 0x218c: return V.r218c;
+	case 0x218e: return V.r218e;
+	case 0x218f: return V.r218f;
+	case 0x2190: return V.r2190;
+	case 0x2192: {
+		u32 counter = V.rtcCounter++;
+		if (V.rtcCounter >= 18) {
+			V.rtcCounter = 0;
+		}
+		if (counter == 0) {
+			time_t host = (time_t) satellaviewNow;
+			struct tm* t = localtime(&host);
+			if (t) {
+				V.rtcHour = t->tm_hour;
+				V.rtcMinute = t->tm_min;
+				V.rtcSecond = t->tm_sec;
+			}
+		}
+		switch (counter) {
+		case 5:
+		case 6:
+			return 0x01;
+		case 10: return V.rtcSecond;
+		case 11: return V.rtcMinute;
+		case 12: return V.rtcHour;
+		}
+		return 0x00;
+	}
+	case 0x2193: return V.r2193 & ~0x0c;
+	case 0x2194: return V.r2194;
+	case 0x2196: return V.r2196;
+	case 0x2197: return V.r2197;
+	case 0x2199: return V.r2199;
+	}
+	return data;
+}
+
+void satellaviewWrite(u32 address, u8 data) {
+	switch (address & 0xffff) {
+	case 0x2188: V.r2188 = data; break;
+	case 0x2189: V.r2189 = data; break;
+	case 0x218a: V.r218a = data; break;
+	case 0x218b: V.r218b = data; break;
+	case 0x218c: V.r218c = data; break;
+	case 0x218e: V.r218e = data; break;
+	case 0x218f:
+		V.r218e >>= 1;
+		V.r218e = V.r218f - V.r218e;
+		V.r218f >>= 1;
+		break;
+	case 0x2191:
+		V.r2191 = data;
+		V.rtcCounter = 0;
+		break;
+	case 0x2192: V.r2190 = 0x80; break;
+	case 0x2193: V.r2193 = data; break;
+	case 0x2194: V.r2194 = data; break;
+	case 0x2197: V.r2197 = data; break;
+	case 0x2199: V.r2199 = data; break;
+	}
 }

@@ -68,8 +68,10 @@ Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips 
   BS-HIROM and BS-SA1 boards, with flash packs and their command set. A `.bs` pack loads into the BS-X
   cartridge (`BS-X.bin` from the system folder). The base cartridge matches ares; a pack's own program
   is still to be tried by hand. The pack and the 512 KiB download RAM aren't kept between runs, the
-  three mask-ROM packs are run as flash, a slotted game cartridge can't be given a pack from the
-  frontend yet, and the Satellaview receiver isn't there;
+  three mask-ROM packs are run as flash and a slotted game cartridge can't be given a pack from the
+  frontend yet. The base unit's receiver is there with the BS-X cartridge, as ares has it: its
+  registers and its clock, with nothing broadcast. The cartridge's first screens are the same with
+  it; past them it is still to be tried by hand;
 - the Sufami Turbo's two slots. A `.st` cartridge loads into slot A of the base (`STBIOS.bin` from the
   system folder), and its save RAM is the game's save. Slot B maps its own save RAM where ares maps
   the slot's ROM; with that one difference copied, two cartridges match ares. The frontend can't put

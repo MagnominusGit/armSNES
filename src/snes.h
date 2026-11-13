@@ -1278,6 +1278,18 @@ u8* mccPsram(u32* size);
 void bsLoad(const u8* data, size_t size);
 void bsPower(void);
 void bsRun(void);
+// The Satellaview base unit's receiver, there with the BS-X cartridge.
+struct Satellaview {
+	u8 r2188, r2189, r218a, r218b, r218c, r218e, r218f;
+	u8 r2190, r2191, r2193, r2194, r2196, r2197, r2199;
+	u8 rtcCounter, rtcHour, rtcMinute, rtcSecond;
+};
+extern struct Satellaview satellaview;
+// The frontend's: the time its clock gives, in seconds since 1970.
+extern s64 satellaviewNow;
+void satellaviewPower(void);
+u8 satellaviewRead(u32 address, u8 data);
+void satellaviewWrite(u32 address, u8 data);
 bool bsPresent(void);
 bool bsRunning(void);
 u8 bsRead(u32 address, u8 data);

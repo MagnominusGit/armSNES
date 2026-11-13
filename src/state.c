@@ -13,18 +13,18 @@
 // A state is taken between frames. The canvas is usually clear then, but not after a DMA that ran on
 // into the next frame.
 
-enum { STATE_MAGIC = 0x534e5341, STATE_VERSION = 11 };
+enum { STATE_MAGIC = 0x534e5341, STATE_VERSION = 12 };
 
 struct StateHeader {
 	u32 magic;
 	u32 version;
-	u32 sizes[22];
+	u32 sizes[23];
 	u32 ramSize;
 	// The BS-X cartridge's PSRAM and flash pack together.
 	u32 extraSize;
 };
 
-static void layout(u32 sizes[22]) {
+static void layout(u32 sizes[23]) {
 	sizes[0] = sizeof(sys);
 	sizes[1] = sizeof(cpu);
 	sizes[2] = sizeof(smp);
@@ -47,6 +47,7 @@ static void layout(u32 sizes[22]) {
 	sizes[19] = sizeof(msu1);
 	sizes[20] = sizeof(competition);
 	sizes[21] = sizeof(pirate);
+	sizes[22] = sizeof(satellaview);
 }
 
 // What a BS-X cartridge adds: its PSRAM, and a flash pack's contents. Then the Sufami Turbo
@@ -111,7 +112,7 @@ static const u8* getExtra(const u8* in) {
 size_t stateSize(void) {
 	return sizeof(struct StateHeader) + sizeof(sys) + sizeof(cpu) + sizeof(smp) + sizeof(dsp) + sizeof(ppu) + sizeof(input) +
 		sizeof(necdsp) + sizeof(sa1) + sizeof(gsu) + sizeof(sdd1) + sizeof(obc1) + sizeof(cx4) + sizeof(spc7110) + sizeof(epsonRtc) +
-		sizeof(sharpRtc) + sizeof(st018) + sizeof(mcc) + sizeof(bsmemory) + sizeof(icd) + sizeof(msu1) + sizeof(competition) + sizeof(pirate) + cart.ramSize + extraSize() + sizeof(ppuCanvas);
+		sizeof(sharpRtc) + sizeof(st018) + sizeof(mcc) + sizeof(bsmemory) + sizeof(icd) + sizeof(msu1) + sizeof(competition) + sizeof(pirate) + sizeof(satellaview) + cart.ramSize + extraSize() + sizeof(ppuCanvas);
 }
 
 #define PUT(object) \
@@ -156,6 +157,7 @@ bool stateSave(void* data, size_t size) {
 	PUT(msu1);
 	PUT(competition);
 	PUT(pirate);
+	PUT(satellaview);
 	memcpy(out, cart.ram, cart.ramSize);
 	out += cart.ramSize;
 	out = putExtra(out);
@@ -172,7 +174,7 @@ bool stateLoad(const void* data, size_t size) {
 	}
 	memcpy(&header, data, sizeof(header));
 
-	u32 sizes[22];
+	u32 sizes[23];
 	layout(sizes);
 	if (header.magic != STATE_MAGIC || header.version != STATE_VERSION || memcmp(header.sizes, sizes, sizeof(sizes)) ||
 	    header.ramSize != cart.ramSize || header.extraSize != extraSize() || size < stateSize()) {
@@ -205,6 +207,7 @@ bool stateLoad(const void* data, size_t size) {
 	GET(msu1);
 	GET(competition);
 	GET(pirate);
+	GET(satellaview);
 	memcpy(cart.ram, in, cart.ramSize);
 	in += cart.ramSize;
 	in = getExtra(in);

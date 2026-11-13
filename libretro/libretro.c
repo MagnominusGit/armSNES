@@ -394,6 +394,7 @@ void retro_run(void) {
 			rtcLoad(rtcMemory, (s64) time(NULL));
 		}
 	}
+	satellaviewNow = (s64) time(NULL);
 	readPads();
 	outputReady = false;
 	soundCount = 0;

@@ -915,6 +915,9 @@ void cartMap(void) {
 	if (cart.sdd1) {
 		sdd1Map();
 	}
+	if (cart.mcc) {
+		busMap(satellaviewRead, satellaviewWrite, "00-3f,80-bf:2188-219f", 0, 0, 0);
+	}
 	if (cart.msu1) {
 		busMap(msu1Read, msu1Write, "00-3f,80-bf:2000-2007", 0, 0, 0);
 	}
@@ -988,6 +991,7 @@ void cartPower(bool reset) {
 	(void) reset;
 	if (cart.mcc) {
 		mccPower();
+		satellaviewPower();
 	}
 	piratePower();
 	if (cart.competition) {

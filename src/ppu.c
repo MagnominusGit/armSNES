@@ -1761,6 +1761,191 @@ static struct BgPixel spanBelow[4][256];
 static u16 spanOptH[540];
 static u16 spanOptV[540];
 
+// One background over a span, slot by slot as the dots have it.
+static void bgSpanSlots(u32 n, u32 start, u32 end, bool hires, bool draws) {
+	const struct Fetch* modeFetches = fetches[ppu.io.bgMode];
+	struct Background* bg = &ppu.bg[n];
+	for (u32 at = start; at < end; at += 2) {
+		if (!(at & 2)) {
+			if (at <= 1054) {
+				const struct Fetch* fetch = &modeFetches[at / 4 & 7];
+				if (n == 2 && fetch->kind == FETCH_NAME) {
+					spanOptH[at >> 1] = bg->opt.hoffset;
+					spanOptV[at >> 1] = bg->opt.voffset;
+				}
+				if (fetch->kind != FETCH_NONE && fetch->bg == n) {
+					ppu.counter.hcounter = at;
+					doFetch(fetch, spanOptH[at >> 1], spanOptV[at >> 1]);
+				}
+			}
+			if (at == 56) {
+				bgBegin(bg);
+			}
+			if (at >= 56 && at <= 1078 && draws) {
+				bgRunAt(bg, 1, hires, at);
+			}
+		} else if (at >= 58 && at <= 1078) {
+			if (draws) {
+				bgRunAt(bg, 0, hires, at);
+			}
+			spanAbove[n][(at - 58) >> 2] = bg->output.above;
+			spanBelow[n][(at - 58) >> 2] = bg->output.below;
+		}
+	}
+}
+
+// A whole line of a tiled background in a mode without offset-per-tile or the double width, with
+// nothing written while it is drawn: its 33 tiles are fetched and shifted out a tile at a time. It
+// leaves the background as the slots would, tile for tile.
+static void bgLineTiles(u32 n) {
+	struct Background* bg = &ppu.bg[n];
+	u32 mode = bg->io.mode;
+	u32 planes = 1u << mode;
+
+	u32 vpixel = VCOUNTER;
+	if (bg->mosaic.enable) {
+		vpixel -= mosaicVoffset();
+	}
+	u32 hscroll = bg->io.hoffset;
+	u32 vscroll = bg->io.voffset;
+	u32 hsize = 256u << bg->io.tileSize << (bg->io.screenSize & 1);
+	u32 vsize = 256u << bg->io.tileSize << (bg->io.screenSize >> 1 & 1);
+	u32 tiles = 3 + bg->io.tileSize;
+	u32 hscreen = bg->io.screenSize & 1 ? 32 << 5 : 0;
+	u32 vscreen = bg->io.screenSize & 2 ? 32 << (5 + (bg->io.screenSize & 1)) : 0;
+	u32 characterMask = ppu.vramMask >> (3 + mode);
+	u32 characterIndex = bg->io.tiledataAddress >> (3 + mode);
+	u32 paletteOffset = ppu.io.bgMode == 0 ? bg->id << 5 : 0;
+	u32 paletteSize = 2 << mode;
+	u32 voffsetLine = (vpixel + vscroll) & (vsize - 1);
+	u32 vtile = voffsetLine >> tiles;
+	u16 rowOffset = (vtile & 31) << 5;
+	if (vtile & 0x20) {
+		rowOffset += vscreen;
+	}
+
+	// The fetches, as bgFetchNameTable and bgFetchCharacter make them.
+	for (u32 k = 0; k < 33; ++k) {
+		u32 hoffset = ((k << 3) + hscroll) & (hsize - 1);
+		u32 voffset = voffsetLine;
+		u32 htile = hoffset >> tiles;
+		u16 offset = (htile & 31) | rowOffset;
+		if (htile & 0x20) {
+			offset += hscreen;
+		}
+		u16 attributes = *vramAt((u16) (bg->io.screenAddress + offset));
+
+		struct BgTile* tile = &bg->tiles[k];
+		tile->character = attributes & 0x3ff;
+		tile->paletteGroup = attributes >> 10 & 7;
+		tile->priority = bg->io.priority[attributes >> 13 & 1];
+		tile->hmirror = attributes >> 14 & 1;
+		tile->vmirror = attributes >> 15 & 1;
+		if (tiles == 4 && (bool) (hoffset & 8) != tile->hmirror) {
+			tile->character = (tile->character + 1) & 0x3ff;
+		}
+		if (tiles == 4 && (bool) (voffset & 8) != tile->vmirror) {
+			tile->character = (tile->character + 16) & 0x3ff;
+		}
+		u16 origin = (tile->character + characterIndex) & characterMask;
+		if (tile->vmirror) {
+			voffset ^= 7;
+		}
+		tile->address = (origin << (3 + mode)) + (voffset & 7);
+		tile->palette = paletteOffset + (tile->paletteGroup << paletteSize);
+
+		for (u32 index = 0; index < planes; ++index) {
+			u16 data = *vramAt(tile->address + (index << 3));
+			if (!tile->hmirror) {
+				data = (data >> 4 & 0x0f0f) | (data << 4 & 0xf0f0);
+				data = (data >> 2 & 0x3333) | (data << 2 & 0xcccc);
+				data = (data >> 1 & 0x5555) | (data << 1 & 0xaaaa);
+			}
+			tile->data[index] = ((((u64) (u8) (data >> 0) * 0x0101010101010101ull & 0x8040201008040201ull) * 0x0102040810204081ull >> 49) & 0x5555) |
+				((((u64) (u8) (data >> 8) * 0x0101010101010101ull & 0x8040201008040201ull) * 0x0102040810204081ull >> 48) & 0xaaaa);
+		}
+	}
+
+	bgBegin(bg);
+
+	bool aboveEnable = bg->io.aboveEnable;
+	bool belowEnable = bg->io.belowEnable;
+	bool mosaic = bg->mosaic.enable;
+	u32 mosaicSize = ppu.mosaic.size;
+	u32 mosaicCounter = bg->mosaic.hcounter;
+	struct BgPixel mosaicPixel = bg->mosaic.pixel;
+	struct BgPixel above = bg->output.above;
+	struct BgPixel below = bg->output.below;
+	u32 index = bg->renderingIndex;
+	u32 counter = bg->pixelCounter;
+	struct BgTile* tile = &bg->tiles[index];
+	u32 d0 = tile->data[0], d1 = tile->data[1], d2 = tile->data[2], d3 = tile->data[3];
+
+	for (u32 x = 0; x < 256; ++x) {
+		u32 color = d0 & 3;
+		if (mode >= BG_BPP4) {
+			color |= (d1 & 3) << 2;
+		}
+		if (mode >= BG_BPP8) {
+			color |= (d2 & 3) << 4 | (d3 & 3) << 6;
+		}
+		d0 >>= 2;
+		d1 >>= 2;
+		d2 >>= 2;
+		d3 >>= 2;
+
+		struct BgPixel pixel;
+		pixel.priority = tile->priority;
+		pixel.palette = color ? tile->palette + color : 0;
+		pixel.paletteGroup = tile->paletteGroup;
+
+		counter = (counter + 1) & 7;
+		if (counter == 0) {
+			tile->data[0] = d0;
+			tile->data[1] = d1;
+			tile->data[2] = d2;
+			tile->data[3] = d3;
+			index = (index + 1) & 127;
+			tile = &bg->tiles[index];
+			d0 = tile->data[0];
+			d1 = tile->data[1];
+			d2 = tile->data[2];
+			d3 = tile->data[3];
+		}
+
+		if (x == 0 || --mosaicCounter == 0) {
+			mosaicCounter = mosaicSize;
+			mosaicPixel = pixel;
+		} else if (mosaic) {
+			pixel = mosaicPixel;
+		}
+
+		above.priority = 0;
+		below.priority = 0;
+		if (pixel.palette) {
+			if (aboveEnable) {
+				above = pixel;
+			}
+			if (belowEnable) {
+				below = pixel;
+			}
+		}
+		spanAbove[n][x] = above;
+		spanBelow[n][x] = below;
+	}
+
+	tile->data[0] = d0;
+	tile->data[1] = d1;
+	tile->data[2] = d2;
+	tile->data[3] = d3;
+	bg->renderingIndex = index;
+	bg->pixelCounter = counter;
+	bg->mosaic.hcounter = mosaicCounter;
+	bg->mosaic.pixel = mosaicPixel;
+	bg->output.above = above;
+	bg->output.below = below;
+}
+
 static void renderSpan(u32 start, u32 end) {
 	for (u32 at = start; at < end && at <= 1016; at += 2) {
 		if (at % 8 == 0) {
@@ -1769,43 +1954,21 @@ static void renderSpan(u32 start, u32 end) {
 		}
 	}
 
-	const struct Fetch* modeFetches = fetches[ppu.io.bgMode];
 	static const u8 order[4] = { 2, 0, 1, 3 };
 	__typeof__(ppu.bg[0].output) endOutput[4];
 	bool hires = hiresMode();
 	bool draws = VCOUNTER != 0;
+	// A whole line in modes 0, 1 and 3 needs no slots for its tiled backgrounds.
+	bool whole = start == 0 && end == 1080 && draws && (ppu.io.bgMode == 0 || ppu.io.bgMode == 1 || ppu.io.bgMode == 3);
 
 	for (int i = 0; i < 4; ++i) {
 		u32 n = order[i];
-		struct Background* bg = &ppu.bg[n];
-		for (u32 at = start; at < end; at += 2) {
-			if (!(at & 2)) {
-				if (at <= 1054) {
-					const struct Fetch* fetch = &modeFetches[at / 4 & 7];
-					if (n == 2 && fetch->kind == FETCH_NAME) {
-						spanOptH[at >> 1] = bg->opt.hoffset;
-						spanOptV[at >> 1] = bg->opt.voffset;
-					}
-					if (fetch->kind != FETCH_NONE && fetch->bg == n) {
-						ppu.counter.hcounter = at;
-						doFetch(fetch, spanOptH[at >> 1], spanOptV[at >> 1]);
-					}
-				}
-				if (at == 56) {
-					bgBegin(bg);
-				}
-				if (at >= 56 && at <= 1078 && draws) {
-					bgRunAt(bg, 1, hires, at);
-				}
-			} else if (at >= 58 && at <= 1078) {
-				if (draws) {
-					bgRunAt(bg, 0, hires, at);
-				}
-				spanAbove[n][(at - 58) >> 2] = bg->output.above;
-				spanBelow[n][(at - 58) >> 2] = bg->output.below;
-			}
+		if (whole && ppu.bg[n].io.mode <= BG_BPP8) {
+			bgLineTiles(n);
+		} else {
+			bgSpanSlots(n, start, end, hires, draws);
 		}
-		endOutput[n] = bg->output;
+		endOutput[n] = ppu.bg[n].output;
 	}
 
 	struct WindowEffect effects[4];

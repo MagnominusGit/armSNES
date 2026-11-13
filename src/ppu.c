@@ -1949,6 +1949,233 @@ static void bgLineTiles(u32 n) {
 	bg->output.below = below;
 }
 
+static inline u16 blendWith(u32 x, u32 y, bool subtract, bool halve) {
+	if (!subtract) {
+		if (!halve) {
+			u32 sum = x + y;
+			u32 carry = (sum - ((x ^ y) & 0x0421)) & 0x8420;
+			return ((sum - carry) | (carry - (carry >> 5))) & 0x7fff;
+		}
+		return ((x + y - ((x ^ y) & 0x0421)) >> 1) & 0x7fff;
+	}
+	u32 diff = x - y + 0x8420;
+	u32 borrow = (diff - ((x ^ y) & 0x8420)) & 0x8420;
+	if (!halve) {
+		return ((diff - borrow) & (borrow - (borrow >> 5))) & 0x7fff;
+	}
+	return ((((diff - borrow) & (borrow - (borrow >> 5))) & 0x7bde) >> 1) & 0x7fff;
+}
+
+// A whole line put together, 256 pixels wide: the sprites, the windows and the color math for each
+// pixel in the order objRun, windowRunWith, dacBelow and dacAbove have them, with what they keep
+// between pixels held here and put back at the end.
+static void composeLine(const struct WindowEffect effects[4], const u8* objPalette, const u8* objPriority) {
+	bool blank = ppu.io.displayDisable || (!ppu.io.overscan && VCOUNTER >= 225);
+	bool direct = directColorMode();
+	bool objAboveEnable = ppu.obj.io.aboveEnable;
+	bool objBelowEnable = ppu.obj.io.belowEnable;
+	u32 oneLeft = ppu.window.oneLeft, oneRight = ppu.window.oneRight;
+	u32 twoLeft = ppu.window.twoLeft, twoRight = ppu.window.twoRight;
+	bool oneActive = ppu.window.oneActive, oneStopped = ppu.window.oneStopped;
+	bool twoActive = ppu.window.twoActive, twoStopped = ppu.window.twoStopped;
+	bool windowAbove = ppu.window.aboveColorEnable, windowBelow = ppu.window.belowColorEnable;
+	u32 windowX = ppu.window.x;
+
+	struct BgPixel above[4], below[4];
+	for (int n = 0; n < 4; ++n) {
+		above[n] = ppu.bg[n].output.above;
+		below[n] = ppu.bg[n].output.below;
+	}
+	u32 objAbovePriority = ppu.obj.above.priority, objAbovePalette = ppu.obj.above.palette;
+	u32 objBelowPriority = ppu.obj.below.priority, objBelowPalette = ppu.obj.below.palette;
+
+	u32 aboveColor = ppu.dac.math.aboveColor, belowColor = ppu.dac.math.belowColor;
+	bool aboveColorEnable = ppu.dac.math.aboveColorEnable, belowColorEnable = ppu.dac.math.belowColorEnable;
+	bool transparent = ppu.dac.math.transparent, mathBlend = ppu.dac.math.blendMode, mathHalve = ppu.dac.math.colorHalve;
+	u32 cgramAddress = ppu.latch.cgramAddress;
+	bool dacBlend = ppu.dac.blendMode, dacHalve = ppu.dac.colorHalve, subtract = ppu.dac.colorMode;
+	bool objColorEnable = ppu.dac.objColorEnable, backColorEnable = ppu.dac.backColorEnable;
+	u32 fixed = fixedColor();
+	u32 brightness = ppu.io.displayBrightness << 15;
+	bool lineValid = ppu.dac.lineValid;
+	u32* line = &ppuCanvas[ppu.dac.line];
+
+	for (u32 x = 0; x < 256; ++x) {
+		for (int n = 0; n < 4; ++n) {
+			above[n] = spanAbove[n][x];
+			below[n] = spanBelow[n][x];
+		}
+
+		// The sprites.
+		objAbovePriority = 0;
+		objBelowPriority = 0;
+		if (objPriority[x]) {
+			if (objAboveEnable) {
+				objAbovePalette = objPalette[x];
+				objAbovePriority = objPriority[x];
+			}
+			if (objBelowEnable) {
+				objBelowPalette = objPalette[x];
+				objBelowPriority = objPriority[x];
+			}
+		}
+
+		// The windows.
+		if (windowX == oneLeft) {
+			oneActive = true;
+		}
+		if (windowX == twoLeft) {
+			twoActive = true;
+		}
+		bool one = oneActive && !oneStopped;
+		bool two = twoActive && !twoStopped;
+		if (windowX == oneRight) {
+			oneStopped = true;
+		}
+		if (windowX == twoRight) {
+			twoStopped = true;
+		}
+		windowX++;
+		const struct WindowEffect* effect = &effects[one | two << 1];
+		if (effect->hideAbove | effect->hideBelow) {
+			for (int n = 0; n < 4; ++n) {
+				if (effect->hideAbove >> n & 1) {
+					above[n].priority = 0;
+				}
+				if (effect->hideBelow >> n & 1) {
+					below[n].priority = 0;
+				}
+			}
+			if (effect->hideAbove >> 4 & 1) {
+				objAbovePriority = 0;
+			}
+			if (effect->hideBelow >> 4 & 1) {
+				objBelowPriority = 0;
+			}
+		}
+		windowAbove = effect->aboveColorEnable;
+		windowBelow = effect->belowColorEnable;
+
+		u32 color = 0;
+		if (!blank) {
+			// The sub screen.
+			u32 priority = 0;
+			if (below[0].priority) {
+				priority = below[0].priority;
+				if (direct) {
+					belowColor = directColor(below[0].palette, below[0].paletteGroup);
+				} else {
+					cgramAddress = below[0].palette;
+					belowColor = ppu.cgram[cgramAddress];
+				}
+			}
+			for (int n = 1; n < 4; ++n) {
+				if (below[n].priority > priority) {
+					priority = below[n].priority;
+					cgramAddress = below[n].palette;
+					belowColor = ppu.cgram[cgramAddress];
+				}
+			}
+			if (objBelowPriority > priority) {
+				priority = objBelowPriority;
+				cgramAddress = objBelowPalette;
+				belowColor = ppu.cgram[cgramAddress];
+			}
+			transparent = priority == 0;
+			if (transparent) {
+				cgramAddress = 0;
+				belowColor = ppu.cgram[0];
+			}
+
+			// The main screen.
+			priority = 0;
+			if (above[0].priority) {
+				priority = above[0].priority;
+				if (direct) {
+					aboveColor = directColor(above[0].palette, above[0].paletteGroup);
+				} else {
+					cgramAddress = above[0].palette;
+					aboveColor = ppu.cgram[cgramAddress];
+				}
+				belowColorEnable = ppu.dac.bgColorEnable[0];
+			}
+			for (int n = 1; n < 4; ++n) {
+				if (above[n].priority > priority) {
+					priority = above[n].priority;
+					cgramAddress = above[n].palette;
+					aboveColor = ppu.cgram[cgramAddress];
+					belowColorEnable = ppu.dac.bgColorEnable[n];
+				}
+			}
+			if (objAbovePriority > priority) {
+				priority = objAbovePriority;
+				cgramAddress = objAbovePalette;
+				aboveColor = ppu.cgram[cgramAddress];
+				belowColorEnable = objColorEnable && objAbovePalette >= 192;
+			}
+			if (priority == 0) {
+				cgramAddress = 0;
+				aboveColor = ppu.cgram[0];
+				belowColorEnable = backColorEnable;
+			}
+
+			if (!windowBelow) {
+				belowColorEnable = false;
+			}
+			aboveColorEnable = windowAbove;
+			if (!belowColorEnable) {
+				color = aboveColorEnable ? aboveColor : 0;
+			} else {
+				if (dacBlend && transparent) {
+					mathBlend = false;
+					mathHalve = false;
+				} else {
+					mathBlend = dacBlend;
+					mathHalve = dacHalve && aboveColorEnable;
+				}
+				color = blendWith(aboveColorEnable ? aboveColor : 0, mathBlend ? belowColor : fixed, subtract, mathHalve);
+			}
+		}
+
+		if (lineValid) {
+			line[0] = brightness | color;
+			line[1] = brightness | color;
+			line += 2;
+		}
+	}
+
+	for (int n = 0; n < 4; ++n) {
+		ppu.bg[n].output.above = above[n];
+		ppu.bg[n].output.below = below[n];
+	}
+	ppu.obj.above.priority = objAbovePriority;
+	ppu.obj.above.palette = objAbovePalette;
+	ppu.obj.below.priority = objBelowPriority;
+	ppu.obj.below.palette = objBelowPalette;
+	ppu.obj.x += 256;
+	ppu.window.oneActive = oneActive;
+	ppu.window.oneStopped = oneStopped;
+	ppu.window.twoActive = twoActive;
+	ppu.window.twoStopped = twoStopped;
+	ppu.window.aboveColorEnable = windowAbove;
+	ppu.window.belowColorEnable = windowBelow;
+	ppu.window.x = windowX;
+	ppu.dac.math.aboveColor = aboveColor;
+	ppu.dac.math.belowColor = belowColor;
+	ppu.dac.math.aboveColorEnable = aboveColorEnable;
+	ppu.dac.math.belowColorEnable = belowColorEnable;
+	ppu.dac.math.transparent = transparent;
+	ppu.dac.math.blendMode = mathBlend;
+	ppu.dac.math.colorHalve = mathHalve;
+	ppu.latch.cgramAddress = cgramAddress;
+	if (lineValid) {
+		ppu.dac.line += 512;
+		if (ppu.drawnTo < ppu.dac.line) {
+			ppu.drawnTo = ppu.dac.line;
+		}
+	}
+}
+
 static void renderSpan(u32 start, u32 end) {
 	for (u32 at = start; at < end && at <= 1016; at += 2) {
 		if (at % 8 == 0) {
@@ -2011,6 +2238,12 @@ static void renderSpan(u32 start, u32 end) {
 
 	struct WindowEffect effects[4];
 	windowEffects(effects);
+	// A whole line that draws, in a mode a pixel wide, is put together in one go.
+	if (objLine && tiled && draws && ppu.window.x == 0 && !ppu.io.pseudoHires && !hires) {
+		composeLine(effects, objPalette, objPriority);
+		ppu.counter.hcounter = start;
+		return;
+	}
 	for (u32 at = start | 2; at < end; at += 4) {
 		if (at >= 58 && at <= 1078) {
 			u32 x = (at - 58) >> 2;

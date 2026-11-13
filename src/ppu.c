@@ -1876,6 +1876,95 @@ static void bgLineTiles(u32 n, bool fetch) {
 	bool belowEnable = bg->io.belowEnable;
 	bool mosaic = bg->mosaic.enable;
 	u32 mosaicSize = ppu.mosaic.size;
+
+	if (!mosaic) {
+		// Without the mosaic a pixel is what its tile shifts out. The mosaic's counter still runs: it
+		// takes a pixel at 0 and every mosaicSize after, and the last one it took is kept.
+		u32 lastTaken = mosaicSize ? 255 - 255 % mosaicSize : 0;
+		struct BgPixel above = bg->output.above;
+		struct BgPixel below = bg->output.below;
+		u32 index = bg->renderingIndex;
+		u32 x = 0;
+		u32 pixels = 8 - bg->pixelCounter;
+		while (x < 256) {
+			struct BgTile* tile = &bg->tiles[index];
+			u32 d0 = tile->data[0], d1 = tile->data[1], d2 = tile->data[2], d3 = tile->data[3];
+			u32 count = 256 - x < pixels ? 256 - x : pixels;
+			u8 priority = tile->priority, palette = tile->palette, group = tile->paletteGroup;
+			if ((d0 | d1 | d2 | d3) == 0 || !(aboveEnable | belowEnable)) {
+				// Nothing to see: clear, or on neither screen.
+				above.priority = 0;
+				below.priority = 0;
+				for (u32 i = 0; i < count; ++i) {
+					spanAbove[n][x + i] = above;
+					spanBelow[n][x + i] = below;
+				}
+				if (lastTaken >= x && lastTaken < x + count) {
+					u32 shift = (lastTaken - x) * 2;
+					u32 color = (d0 >> shift & 3) | (mode >= BG_BPP4 ? (d1 >> shift & 3) << 2 : 0) |
+					            (mode >= BG_BPP8 ? (d2 >> shift & 3) << 4 | (d3 >> shift & 3) << 6 : 0);
+					bg->mosaic.pixel.priority = priority;
+					bg->mosaic.pixel.palette = color ? palette + color : 0;
+					bg->mosaic.pixel.paletteGroup = group;
+				}
+				d0 >>= count * 2;
+				d1 >>= count * 2;
+				d2 >>= count * 2;
+				d3 >>= count * 2;
+			} else {
+				for (u32 i = 0; i < count; ++i) {
+					u32 color = d0 & 3;
+					if (mode >= BG_BPP4) {
+						color |= (d1 & 3) << 2;
+					}
+					if (mode >= BG_BPP8) {
+						color |= (d2 & 3) << 4 | (d3 & 3) << 6;
+					}
+					d0 >>= 2;
+					d1 >>= 2;
+					d2 >>= 2;
+					d3 >>= 2;
+					above.priority = 0;
+					below.priority = 0;
+					u8 out = color ? palette + color : 0;
+					if (out) {
+						if (aboveEnable) {
+							above.priority = priority;
+							above.palette = out;
+							above.paletteGroup = group;
+						}
+						if (belowEnable) {
+							below.priority = priority;
+							below.palette = out;
+							below.paletteGroup = group;
+						}
+					}
+					if (x + i == lastTaken) {
+						bg->mosaic.pixel.priority = priority;
+						bg->mosaic.pixel.palette = out;
+						bg->mosaic.pixel.paletteGroup = group;
+					}
+					spanAbove[n][x + i] = above;
+					spanBelow[n][x + i] = below;
+				}
+			}
+			tile->data[0] = d0;
+			tile->data[1] = d1;
+			tile->data[2] = d2;
+			tile->data[3] = d3;
+			x += count;
+			if (count == pixels) {
+				index = (index + 1) & 127;
+			}
+			pixels = 8;
+		}
+		bg->renderingIndex = index;
+		bg->pixelCounter = (bg->pixelCounter + 256) & 7;
+		bg->mosaic.hcounter = mosaicSize ? mosaicSize - 255 % mosaicSize : (u16) (0 - 255);
+		bg->output.above = above;
+		bg->output.below = below;
+		return;
+	}
 	u32 mosaicCounter = bg->mosaic.hcounter;
 	struct BgPixel mosaicPixel = bg->mosaic.pixel;
 	struct BgPixel above = bg->output.above;

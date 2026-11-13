@@ -1971,6 +1971,38 @@ static void renderSpan(u32 start, u32 end) {
 		endOutput[n] = ppu.bg[n].output;
 	}
 
+	// A whole line's sprites: their tiles laid out once, a later tile over an earlier one, as each
+	// pixel would find them.
+	static u8 objPalette[256];
+	static u8 objPriority[256];
+	bool objLine = start == 0 && end == 1080 && ppu.obj.x == 0;
+	if (objLine) {
+		memset(objPriority, 0, sizeof(objPriority));
+		for (int n = 0; n < 34; ++n) {
+			const __typeof__(ppu.obj.tile[0][0])* tile = &ppu.obj.tile[!ppu.obj.active][n];
+			if (!tile->valid) {
+				break;
+			}
+			s32 left = signedBits(tile->x, 9);
+			for (s32 px = 0; px < 8; ++px) {
+				s32 x = left + px;
+				if (x < 0 || x > 255) {
+					continue;
+				}
+				u32 shift = tile->hflip ? px : 7 - px;
+				u32 color = 0;
+				color += tile->data >> (shift + 0) & 1;
+				color += tile->data >> (shift + 7) & 2;
+				color += tile->data >> (shift + 14) & 4;
+				color += tile->data >> (shift + 21) & 8;
+				if (color) {
+					objPalette[x] = tile->palette + color;
+					objPriority[x] = ppu.obj.io.priority[tile->priority];
+				}
+			}
+		}
+	}
+
 	struct WindowEffect effects[4];
 	windowEffects(effects);
 	for (u32 at = start | 2; at < end; at += 4) {
@@ -1981,7 +2013,23 @@ static void renderSpan(u32 start, u32 end) {
 				ppu.bg[n].output.above = spanAbove[n][x];
 				ppu.bg[n].output.below = spanBelow[n][x];
 			}
-			objRun();
+			if (objLine) {
+				ppu.obj.above.priority = 0;
+				ppu.obj.below.priority = 0;
+				ppu.obj.x++;
+				if (objPriority[x]) {
+					if (ppu.obj.io.aboveEnable) {
+						ppu.obj.above.palette = objPalette[x];
+						ppu.obj.above.priority = objPriority[x];
+					}
+					if (ppu.obj.io.belowEnable) {
+						ppu.obj.below.palette = objPalette[x];
+						ppu.obj.below.priority = objPriority[x];
+					}
+				}
+			} else {
+				objRun();
+			}
 			windowRunWith(effects);
 			dacRun();
 		}

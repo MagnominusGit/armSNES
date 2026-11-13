@@ -1325,7 +1325,7 @@ void sha256Hex(const u8* data, size_t size, char out[65]);
 
 // --- Pirate cartridges' protection chips and bank switches ---
 
-enum { PIRATE_LATCH = 1, PIRATE_TEKKEN2, PIRATE_20 };
+enum { PIRATE_LATCH = 1, PIRATE_TEKKEN2, PIRATE_20, PIRATE_LATCH_BANK, PIRATE_FIXED };
 
 struct Pirate {
 	u8 board;
@@ -1339,6 +1339,11 @@ void pirateLoad(int board);
 void piratePower(void);
 u8 pirateLatchRead(u32 address, u8 data);
 void pirateLatchWrite(u32 address, u8 data);
+u8 pirateBankRead(u32 address, u8 data);
+void pirateBankWrite(u32 address, u8 data);
+u8 pirateFixedRead(u32 address, u8 data);
+u8 pirateOpenRead(u32 address, u8 data);
+void pirateNoWrite(u32 address, u8 data);
 u8 pirateTekkenRead(u32 address, u8 data);
 void pirateTekkenWrite(u32 address, u8 data);
 u8 pirate20Read(u32 address, u8 data);

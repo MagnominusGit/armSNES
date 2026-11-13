@@ -14,7 +14,8 @@
 //      RAWOUT and RAWFRAME (the canvas of that frame, counted from 1), HASHLOG (a hash of the saved
 //      state after every frame), RUNAHEAD=n (after each frame, n more are run and undone by a state),
 //      RESETAT=n (the reset button is pressed after frame n), SYSDIR (where chip firmware is),
-//      CLEARRAM (RAM starts at 0), PIRATE=n (a pirate chip to try: 1 latch, 2 Tekken 2's, 3 the 20-in-1's), BSPACK (a memory pack), SUFAMIA and SUFAMIB (Sufami Turbo cartridges), GAMEBOY (a Game Boy game for
+//      CLEARRAM (RAM starts at 0), PIRATE=n (a pirate chip to try: 1 latch, 2 Tekken 2's, 3 the 20-in-1's, 4 the latch
+//      with its bank switch, 5 the four fixed bytes), BSPACK (a memory pack), SUFAMIA and SUFAMIB (Sufami Turbo cartridges), GAMEBOY (a Game Boy game for
 //      the Super Game Boy, with sgb1.boot.rom from SYSDIR),
 //      SAVEIN (the save RAM it starts with)
 

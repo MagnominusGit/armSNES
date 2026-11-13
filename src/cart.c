@@ -402,6 +402,9 @@ static const struct KnownCart {
 	{ "b31794a8573221c655852d7255da7c624db097a9dee7e5b6159d01559352e520", 0x200000, "LOROM-RAM#A", 0x2000, 0, PIRATE_LATCH },
 	{ "6524f8d287d48eca04350c9f117272498b8516aa3bbfb8aa96a8c9a30652ce6e", 0x200000, "LOROM-RAM#A", 0x2000, 0, PIRATE_TEKKEN2 },
 	{ "a58801f2a07e0886d14a8a85a787ab63bc7f2cf43248fe04f6fbc09cb3c77448", 0x100000, "LOROM", 0, 0, PIRATE_20 },
+	{ "82b80fc6181d19bc75a4fcc84d7785e4e51041c8bebbc4411616e7269316a58c", 0x200000, "LOROM-RAM#A", 0x2000, 0, PIRATE_LATCH_BANK },
+	{ "33199abf110994c5e8120ea33c8f9a55a93271bcfdc3d52dbd60cd313b0904d2", 0x200000, "LOROM-RAM#A", 0x2000, 0, PIRATE_FIXED },
+	{ "aea760007a08588bd8dca8d34feb867b17825249f168fc3b904c7bc1fae13676", 0x300000, "LOROM-RAM", 0x2000, 0, PIRATE_FIXED },
 	// Dumps of 8 MiB that hold the game twice.
 	{ "e364ab10890ff8f21111d542c5649f72f36bd2c2cdf3904fb5924307c50a78fa", 0x800000, "EXHIROM", 0, 0, PIRATE_LATCH },
 	{ "dc85b66e60c770b2ec7d81af90df4c4f4911b32c2e7f031afc2140a5bf746fa0", 0x800000, "EXHIROM", 0, 0, PIRATE_LATCH },
@@ -915,8 +918,16 @@ void cartMap(void) {
 	if (cart.msu1) {
 		busMap(msu1Read, msu1Write, "00-3f,80-bf:2000-2007", 0, 0, 0);
 	}
-	if (pirate.board == PIRATE_LATCH) {
-		busMap(pirateLatchRead, pirateLatchWrite, "40,48,50,58,60,68,80,88,90,98,a0,a8,b0,b8,c0,c8,d0,d8,e0,e8,f0,f8:8000-ffff", 0, 0, 0);
+	if (pirate.board == PIRATE_LATCH || pirate.board == PIRATE_LATCH_BANK) {
+		busMap(pirateLatchRead, pirate.board == PIRATE_LATCH ? pirateLatchWrite : pirateBankWrite,
+		       "40,48,50,58,60,68,80,88,90,98,a0,a8,b0,b8,c0,c8,d0,d8,e0,e8,f0,f8:8000-ffff", 0, 0, 0);
+	}
+	if (pirate.board == PIRATE_LATCH_BANK) {
+		busMap(pirateBankRead, pirateNoWrite, "00:8000-ffff", 0, 0, 0);
+	}
+	if (pirate.board == PIRATE_FIXED) {
+		busMap(pirateFixedRead, pirateNoWrite, "80-bf:8000-ffff", 0, 0, 0);
+		busMap(pirateOpenRead, pirateNoWrite, "c0-ff:0000-ffff", 0, 0, 0);
 	}
 	if (pirate.board == PIRATE_TEKKEN2) {
 		busMap(pirateTekkenRead, pirateTekkenWrite, "80-bf:8000-87ff", 0, 0, 0);

@@ -19,7 +19,7 @@ void piratePower(void) {
 	P.latch = 0;
 	P.prot = 0;
 	// The 20-in-1 starts at its menu.
-	P.baseBank = 4;
+	P.baseBank = P.board == PIRATE_20 ? 4 : 0;
 }
 
 // A byte written comes back with its bits moved round: banks 80, 88, 90 and on to f8.
@@ -34,6 +34,40 @@ u8 pirateLatchRead(u32 address, u8 data) {
 void pirateLatchWrite(u32 address, u8 data) {
 	(void) address;
 	P.latch = data;
+}
+
+// One latch board switches banks too: a write in banks c0 and up, with bit 7, puts the 32 KiB bank
+// in bits 0-6 at bank 00. Worked out from the one cartridge that does it, whose code in RAM writes
+// 82 to c0:8788, calls into bank 00 and writes 00.
+u8 pirateBankRead(u32 address, u8 data) {
+	(void) data;
+	u32 bank = P.baseBank & 0x80 ? P.baseBank & 0x7f : 0;
+	return cart.rom[busMirror(bank * 0x8000 + (address & 0x7fff), cart.romSize)];
+}
+
+void pirateBankWrite(u32 address, u8 data) {
+	if (address >= 0xc00000) {
+		P.baseBank = data;
+	} else {
+		P.latch = data;
+	}
+}
+
+// Banks 80-bf give the same four bytes by A0-A1 wherever they are read, and c0-ff nothing.
+u8 pirateFixedRead(u32 address, u8 data) {
+	(void) data;
+	static const u8 fixed[4] = { 0x55, 0x0f, 0xaa, 0xf0 };
+	return fixed[address & 3];
+}
+
+u8 pirateOpenRead(u32 address, u8 data) {
+	(void) address;
+	return data;
+}
+
+void pirateNoWrite(u32 address, u8 data) {
+	(void) address;
+	(void) data;
 }
 
 // Tekken 2's: reads and writes alike of 80-bf:8000-87ff build a value by their address lines A8-A10,

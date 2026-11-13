@@ -383,7 +383,12 @@ void busReset(void);
 void busMap(BusReader reader, BusWriter writer, const char* address, u32 size, u32 base, u32 mask);
 u8 busRead(u32 address, u8 data);
 void busWrite(u32 address, u8 data);
-u32 busMirror(u32 address, u32 size);
+u32 busMirrorOver(u32 address, u32 size);
+// An address in a memory of size bytes; one past its end is mirrored down as the hardware's
+// address lines would have it.
+static inline u32 busMirror(u32 address, u32 size) {
+	return address < size ? address : busMirrorOver(address, size);
+}
 u32 busReduce(u32 address, u32 mask);
 
 // --- The cartridge ---

@@ -32,7 +32,7 @@ static u32 handlers;
 static u8* lookup;
 static u32* target;
 
-u32 busMirror(u32 address, u32 size) {
+u32 busMirrorOver(u32 address, u32 size) {
 	if (size == 0) {
 		return 0;
 	}

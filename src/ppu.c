@@ -1800,7 +1800,7 @@ static void bgSpanSlots(u32 n, u32 start, u32 end, bool hires, bool draws) {
 // A whole line of a tiled background in a mode without offset-per-tile or the double width, with
 // nothing written while it is drawn: its 33 tiles are fetched and shifted out a tile at a time. It
 // leaves the background as the slots would, tile for tile.
-static void bgLineTiles(u32 n) {
+static void bgLineTiles(u32 n, bool fetch) {
 	struct Background* bg = &ppu.bg[n];
 	u32 mode = bg->io.mode;
 	u32 planes = 1u << mode;
@@ -1827,8 +1827,9 @@ static void bgLineTiles(u32 n) {
 		rowOffset += vscreen;
 	}
 
-	// The fetches, as bgFetchNameTable and bgFetchCharacter make them.
-	for (u32 k = 0; k < 33; ++k) {
+	// The fetches, as bgFetchNameTable and bgFetchCharacter make them. A background the mode doesn't
+	// use fetches nothing: it shifts out what its tiles were left with.
+	for (u32 k = 0; fetch && k < 33; ++k) {
 		u32 hoffset = ((k << 3) + hscroll) & (hsize - 1);
 		u32 voffset = voffsetLine;
 		u32 htile = hoffset >> tiles;
@@ -2197,7 +2198,11 @@ static void renderSpan(u32 start, u32 end) {
 	for (int i = 0; tiled && i < 4; ++i) {
 		u32 n = order[i];
 		if (whole && ppu.bg[n].io.mode <= BG_BPP8) {
-			bgLineTiles(n);
+			bgLineTiles(n, true);
+		} else if (start == 0 && end == 1080 && draws && !hires && ppu.bg[n].io.mode == BG_INACTIVE &&
+		           !(n == 2 && (ppu.io.bgMode == 2 || ppu.io.bgMode == 4))) {
+			// (BG3 fetches the other two's offsets in modes 2 and 4.)
+			bgLineTiles(n, false);
 		} else {
 			bgSpanSlots(n, start, end, hires, draws);
 		}

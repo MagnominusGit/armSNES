@@ -120,6 +120,27 @@ static void loadScript(const char* path) {
 	}
 }
 
+// DEVICE2=n plugs a device into the second port (the numbers of snes.h's DEVICE_ list), MOUSE1=1 a
+// mouse into the first. A mouse moves in a slow circle and clicks; a gun sweeps the picture and
+// fires every second.
+void inputPollMouse(int port, int* x, int* y, bool* left, bool* right) {
+	(void) port;
+	u32 phase = sys.frames / 30 % 4;
+	*x = phase == 0 ? 2 : phase == 2 ? -2 : 0;
+	*y = phase == 1 ? 2 : phase == 3 ? -2 : 0;
+	*left = sys.frames % 120 >= 60 && sys.frames % 120 < 66;
+	*right = false;
+}
+
+void inputPollGun(int gun, int* x, int* y, u8* buttons) {
+	*x = (sys.frames * 2 + gun * 100) % 256;
+	*y = (sys.frames + gun * 50) % 200 + 10;
+	*buttons = sys.frames % 60 < 4 ? 1 << GUN_TRIGGER : 0;
+	if (sys.frames % 240 >= 200 && sys.frames % 240 < 206) {
+		*buttons |= 1 << GUN_PAUSE;
+	}
+}
+
 u16 inputPoll(int port) {
 	if (scriptLength) {
 		u16 buttons = 0;
@@ -179,6 +200,12 @@ int main(int argc, char** argv) {
 	fclose(file);
 
 	systemClearPowerOn = getenv("CLEARRAM") != NULL;
+	if (getenv("DEVICE2")) {
+		inputSetDevice(1, atoi(getenv("DEVICE2")));
+	}
+	if (getenv("MOUSE1")) {
+		inputSetDevice(0, DEVICE_MOUSE);
+	}
 	cartTryPirate = getenv("PIRATE") ? atoi(getenv("PIRATE")) : 0;
 	bool supported = cartLoad(rom, size);
 	printf("board=%s region=%s\n", cart.board, cart.pal ? "PAL" : "NTSC");

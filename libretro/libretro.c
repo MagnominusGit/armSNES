@@ -147,16 +147,46 @@ static u8 rtcMemory[16];
 static u8 rtcStart[16];
 static bool rtcApplied;
 
-// The joypad's buttons are numbered as the pad's shift register sends them.
-static u16 held[2];
+// The joypad's buttons are numbered as the pad's shift register sends them. Pad 0 is the first
+// port's; the frontend's ports 2 to 5 are pads 1 to 4, the last three a Super Multitap's.
+static u16 held[5];
+static int mouseX[2], mouseY[2];
+static bool mouseLeft[2], mouseRight[2];
+// Where each gun points, in the picture's 256 columns and its rows, or below 0 when off it.
+static int gunX[2], gunY[2];
+static u8 gunButtons[2];
+static bool crosshair = true;
 
-u16 inputPoll(int port) {
-	return held[port];
+enum {
+	DEVICE_LR_MULTITAP = RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 0),
+	DEVICE_LR_SUPER_SCOPE = RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_LIGHTGUN, 0),
+	DEVICE_LR_JUSTIFIER = RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_LIGHTGUN, 1),
+	DEVICE_LR_JUSTIFIERS = RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_LIGHTGUN, 2),
+};
+
+u16 inputPoll(int pad) {
+	return held[pad];
+}
+
+void inputPollMouse(int port, int* x, int* y, bool* left, bool* right) {
+	*x = mouseX[port];
+	*y = mouseY[port];
+	*left = mouseLeft[port];
+	*right = mouseRight[port];
+	// A frame's movement is given once.
+	mouseX[port] = mouseY[port] = 0;
+}
+
+void inputPollGun(int gun, int* x, int* y, u8* buttons) {
+	*x = gunX[gun];
+	// NTSC's picture with overscan loses its first eight lines.
+	*y = gunY[gun] < 0 ? -1 : gunY[gun] + (!sys.pal && ppu.io.overscan ? 8 : 0);
+	*buttons = gunButtons[gun];
 }
 
 static void readPads(void) {
 	inputPollFrontend();
-	for (unsigned port = 0; port < 2; ++port) {
+	for (unsigned port = 0; port < 5; ++port) {
 		u16 buttons = 0;
 		if (bitmasks) {
 			buttons = inputState(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK);
@@ -166,6 +196,66 @@ static void readPads(void) {
 			}
 		}
 		held[port] = buttons & 0xfff;
+	}
+	for (unsigned port = 0; port < 2; ++port) {
+		if (inputDevice[port] != DEVICE_MOUSE) {
+			continue;
+		}
+		mouseX[port] += inputState(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_X);
+		mouseY[port] += inputState(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_Y);
+		mouseLeft[port] = inputState(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_LEFT);
+		mouseRight[port] = inputState(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_RIGHT);
+	}
+	if (!inputGuns) {
+		return;
+	}
+	// The first gun is the second port's; a second Justifier is the frontend's third port.
+	int rows = sys.pal ? 239 : 224;
+	for (unsigned gun = 0; gun < 2; ++gun) {
+		unsigned port = gun + 1;
+		gunX[gun] = gunY[gun] = -1;
+		gunButtons[gun] = 0;
+		if (gun && inputDevice[1] != DEVICE_JUSTIFIERS) {
+			continue;
+		}
+		int x = inputState(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X);
+		int y = inputState(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y);
+		if (!inputState(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_IS_OFFSCREEN)) {
+			gunX[gun] = (x + 0x8000) * 256 / 0x10000;
+			gunY[gun] = (y + 0x8000) * rows / 0x10000;
+		}
+		u8 buttons = 0;
+		buttons |= (inputState(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_TRIGGER) ? 1 : 0) << GUN_TRIGGER;
+		buttons |= (inputState(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_AUX_A) ? 1 : 0) << GUN_CURSOR;
+		buttons |= (inputState(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_AUX_B) ? 1 : 0) << GUN_TURBO;
+		buttons |= (inputState(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_START) ? 1 : 0) << GUN_PAUSE;
+		gunButtons[gun] = buttons;
+	}
+}
+
+// A cross where each gun points: white, with a dark edge to show on any picture.
+static void drawCrosshairs(void) {
+	u32 yScale = outputHeight > 240 ? 2 : 1;
+	for (int gun = 0; gun < 2; ++gun) {
+		if (gunX[gun] < 0 || gunY[gun] < 0) {
+			continue;
+		}
+		int cx = gunX[gun] * 2;
+		int cy = gunY[gun] * yScale;
+		for (int d = -7 * 2; d <= 7 * 2; ++d) {
+			for (int w = -1; w <= 1; ++w) {
+				u16 color = w ? 0x0000 : (gun ? 0xf800 : 0xffff);
+				int x = cx + d, y = cy + w * (int) yScale;
+				if (x >= 0 && x < OUTPUT_WIDTH && y >= 0 && y < (int) outputHeight && (d < -3 || d > 3)) {
+					output[y * OUTPUT_WIDTH + x] = color;
+				}
+				x = cx + w * 2;
+				y = cy + d / 2 * (int) yScale;
+				if (x >= 0 && x < OUTPUT_WIDTH && y >= 0 && y < (int) outputHeight && (d < -3 || d > 3)) {
+					output[y * OUTPUT_WIDTH + x] = color;
+				}
+			}
+		}
 	}
 }
 
@@ -181,16 +271,36 @@ void retro_set_environment(retro_environment_t callback) {
 	// The first value is the default.
 	static const struct retro_variable variables[] = {
 		{ "armsnes_power_on_ram", "Power-On RAM; Cleared|Patterned" },
+		{ "armsnes_crosshair", "Light Gun Crosshair; On|Off" },
 		{ NULL, NULL },
 	};
 	callback(RETRO_ENVIRONMENT_SET_VARIABLES, (void*) variables);
 
-	static const struct retro_controller_description pads[] = {
+	static const struct retro_controller_description first[] = {
 		{ "SNES Controller", RETRO_DEVICE_JOYPAD },
+		{ "SNES Mouse", RETRO_DEVICE_MOUSE },
+		{ "None", RETRO_DEVICE_NONE },
+	};
+	static const struct retro_controller_description second[] = {
+		{ "SNES Controller", RETRO_DEVICE_JOYPAD },
+		{ "SNES Mouse", RETRO_DEVICE_MOUSE },
+		{ "Super Multitap", DEVICE_LR_MULTITAP },
+		{ "Super Scope", DEVICE_LR_SUPER_SCOPE },
+		{ "Justifier", DEVICE_LR_JUSTIFIER },
+		{ "Two Justifiers", DEVICE_LR_JUSTIFIERS },
+		{ "None", RETRO_DEVICE_NONE },
+	};
+	// A Super Multitap's other pads, or the second Justifier.
+	static const struct retro_controller_description more[] = {
+		{ "SNES Controller", RETRO_DEVICE_JOYPAD },
+		{ "Justifier", RETRO_DEVICE_LIGHTGUN },
 	};
 	static const struct retro_controller_info ports[] = {
-		{ pads, 1 },
-		{ pads, 1 },
+		{ first, 3 },
+		{ second, 7 },
+		{ more, 2 },
+		{ more, 1 },
+		{ more, 1 },
 		{ NULL, 0 },
 	};
 	callback(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void*) ports);
@@ -251,8 +361,18 @@ void retro_get_system_av_info(struct retro_system_av_info* info) {
 }
 
 void retro_set_controller_port_device(unsigned port, unsigned device) {
-	(void) port;
-	(void) device;
+	if (port > 1) {
+		return;
+	}
+	switch (device) {
+	case RETRO_DEVICE_NONE: inputSetDevice(port, DEVICE_NONE); break;
+	case RETRO_DEVICE_MOUSE: inputSetDevice(port, DEVICE_MOUSE); break;
+	case DEVICE_LR_MULTITAP: inputSetDevice(port, DEVICE_MULTITAP); break;
+	case DEVICE_LR_SUPER_SCOPE: inputSetDevice(port, DEVICE_SUPER_SCOPE); break;
+	case DEVICE_LR_JUSTIFIER: inputSetDevice(port, DEVICE_JUSTIFIER); break;
+	case DEVICE_LR_JUSTIFIERS: inputSetDevice(port, DEVICE_JUSTIFIERS); break;
+	default: inputSetDevice(port, DEVICE_PAD); break;
+	}
 }
 
 void retro_reset(void) {
@@ -261,7 +381,13 @@ void retro_reset(void) {
 	}
 }
 
+static void readOptions(void);
+
 void retro_run(void) {
+	bool updated = false;
+	if (environment(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
+		readOptions();
+	}
 	if (!rtcApplied) {
 		rtcApplied = true;
 		if (rtcPresent() && memcmp(rtcMemory, rtcStart, sizeof(rtcMemory))) {
@@ -275,6 +401,9 @@ void retro_run(void) {
 	systemRunFrame();
 
 	if (outputReady) {
+		if (inputGuns && crosshair) {
+			drawCrosshairs();
+		}
 		videoRefresh(output, OUTPUT_WIDTH, outputHeight, OUTPUT_WIDTH * sizeof(u16));
 	} else {
 		videoRefresh(NULL, OUTPUT_WIDTH, outputHeight, OUTPUT_WIDTH * sizeof(u16));
@@ -314,6 +443,8 @@ static void readOptions(void) {
 	struct retro_variable variable = { "armsnes_power_on_ram", NULL };
 	systemClearPowerOn = !environment(RETRO_ENVIRONMENT_GET_VARIABLE, &variable) || !variable.value ||
 	                     strcmp(variable.value, "Patterned");
+	struct retro_variable cross = { "armsnes_crosshair", NULL };
+	crosshair = !environment(RETRO_ENVIRONMENT_GET_VARIABLE, &cross) || !cross.value || strcmp(cross.value, "Off");
 }
 
 bool retro_load_game(const struct retro_game_info* info) {
@@ -394,6 +525,9 @@ bool retro_load_game(const struct retro_game_info* info) {
 	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Start" }
 		PAD(0),
 		PAD(1),
+		PAD(2),
+		PAD(3),
+		PAD(4),
 #undef PAD
 		{ 0, 0, 0, 0, NULL },
 	};

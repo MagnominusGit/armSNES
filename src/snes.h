@@ -446,16 +446,57 @@ struct Pad {
 	bool yHold, upLatch, downLatch;
 	bool xHold, leftLatch, rightLatch;
 };
+struct Mouse {
+	bool latched;
+	u8 counter;
+	// 0 slow, 1 normal, 2 fast.
+	u8 speed;
+	bool left, right;
+	// How far it moved, and which way: 1 is left, or up.
+	u8 cx, cy;
+	bool dx, dy;
+};
+// The Super Scope, or one or two Justifiers.
+struct Gun {
+	bool latched;
+	u8 counter;
+	// Where each gun points, by the CPU's counters; below 0 is off the screen.
+	s32 cx[2], cy[2];
+	u8 buttons[2];
+	bool triggerValue, turboEdge, pauseEdge, cursor;
+	bool offscreen, turboOld, triggerLock, pauseLock;
+	// The Justifier whose turn it is.
+	bool active;
+};
 struct Input {
-	struct Pad pad[2];
+	// The first port's pad, then the second's, or its Super Multitap's four.
+	struct Pad pad[5];
+	struct Mouse mouse[2];
+	struct Gun gun;
+	bool tapLatched;
 };
 extern struct Input input;
 
+enum { DEVICE_NONE, DEVICE_PAD, DEVICE_MOUSE, DEVICE_MULTITAP, DEVICE_SUPER_SCOPE, DEVICE_JUSTIFIER, DEVICE_JUSTIFIERS };
+// A gun's buttons; the Justifier's Start is its pause.
+enum { GUN_TRIGGER, GUN_CURSOR, GUN_TURBO, GUN_PAUSE };
+extern u8 inputDevice[2];
+// A gun is in the second port.
+extern bool inputGuns;
+
 void inputPower(void);
+// What is plugged into a port. The first takes a pad or a mouse.
+void inputSetDevice(int port, int device);
 u8 controllerData(int port);
 void controllerLatch(int port, bool data);
-// The frontend's: the buttons held on this port now, one bit each by the numbers above.
-u16 inputPoll(int port);
+void inputBeam(u32 vcounter, u32 hcounter);
+// The frontend's: the buttons held on a pad now, one bit each by the numbers above. Pad 0 is the
+// first port's and 1 the second's; a Super Multitap's are 1 to 4.
+u16 inputPoll(int pad);
+// How far a port's mouse moved since it was last asked, and its buttons.
+void inputPollMouse(int port, int* x, int* y, bool* left, bool* right);
+// Where a gun points in the picture, 256 wide, or below 0 when off it, and its buttons.
+void inputPollGun(int gun, int* x, int* y, u8* buttons);
 
 void busFinish(void);
 void cartMap(void);

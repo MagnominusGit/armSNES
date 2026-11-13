@@ -307,6 +307,9 @@ static void step(u32 clocks) {
 			counterTickScanline(&cpu.counter);
 			scanline();
 		}
+		if (inputGuns) {
+			inputBeam(cpu.counter.vcounter, cpu.counter.hcounter);
+		}
 		if (cpu.counter.hcounter & 2) {
 			nmiPoll();
 			irqPoll();

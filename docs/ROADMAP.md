@@ -92,6 +92,11 @@ Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips 
   four bytes anywhere in banks 80-bf. One latch board also switches the bank seen at 00 by a write in
   banks c0 and up, which MAME doesn't have: it was worked out from the cartridge's own code. Their
   headers say nothing true, so the cartridges are known by their SHA-256;
+- the other controllers: the mouse in either port, and in the second the Super Multitap with four
+  pads, the Super Scope and one or two Justifiers. A gun's light is taken from where the beam is, as
+  ares takes it, but the frontend gives where it points in the picture, where ares moves a cursor;
+  the core draws a cross there (Light Gun Crosshair). They were tried with a script, not by hand:
+  each is seen by a game that asks for it, and states with them hold;
 - the Epson RTC-4513 and the Sharp S-RTC. They keep time by the machine's clock; the frontend keeps
   them as RTC memory, and loading one moves it on by the time the game was off.
 

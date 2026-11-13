@@ -359,8 +359,18 @@ static void exec(void) {
 
 void necdspRun(void) {
 	do {
+		u16 pc = necdsp.pc;
 		exec();
 		threadStep(&necdsp.th, 1);
+		// A jump to itself, as the program waits for the S-CPU, changes nothing until the S-CPU
+		// does: all but the last of its turns up to the CPU are taken in one.
+		if (necdsp.pc == pc && necdsp.th.clock <= cpu.th.clock) {
+			u32 opcode = necdspFirmware.programROM[pc] & 0xffffff;
+			u32 brch = opcode >> 13 & 0x1ff;
+			if (opcode >> 22 == 2 && brch != 0x000 && brch != 0x140 && brch != 0x141) {
+				necdsp.th.clock += (cpu.th.clock - necdsp.th.clock) / necdsp.th.scalar * necdsp.th.scalar;
+			}
+		}
 	} while (!(cpu.th.clock < necdsp.th.clock));
 }
 

@@ -1800,6 +1800,24 @@ static void bgSpanSlots(u32 n, u32 start, u32 end, bool hires, bool draws) {
 // A whole line of a tiled background in a mode without offset-per-tile or the double width, with
 // nothing written while it is drawn: its 33 tiles are fetched and shifted out a tile at a time. It
 // leaves the background as the slots would, tile for tile.
+// A bitplane's eight bits as a tile's shift register has them: two bits to a pixel, the leftmost
+// pixel lowest. [0] is a tile as it is, [1] one mirrored.
+static u16 planeSpread[2][256];
+
+static void planeSpreadInit(void) {
+	for (u32 byte = 0; byte < 256; ++byte) {
+		u16 plain = 0, mirrored = 0;
+		for (u32 bit = 0; bit < 8; ++bit) {
+			if (byte >> bit & 1) {
+				plain |= 1 << ((7 - bit) * 2);
+				mirrored |= 1 << (bit * 2);
+			}
+		}
+		planeSpread[0][byte] = plain;
+		planeSpread[1][byte] = mirrored;
+	}
+}
+
 // BG3's offset-per-tile values as each of a line's 33 tiles is fetched: a tile gets the ones read
 // while the tile before it was fetched, and the first what the line started with.
 static u16 lineOptH[34];
@@ -1916,15 +1934,10 @@ static void bgLineTiles(u32 n, bool fetch, bool opt) {
 		tile->address = (origin << (3 + mode)) + (voffset & 7);
 		tile->palette = paletteOffset + (tile->paletteGroup << paletteSize);
 
+		const u16* spread = planeSpread[tile->hmirror];
 		for (u32 index = 0; index < planes; ++index) {
 			u16 data = *vramAt(tile->address + (index << 3));
-			if (!tile->hmirror) {
-				data = (data >> 4 & 0x0f0f) | (data << 4 & 0xf0f0);
-				data = (data >> 2 & 0x3333) | (data << 2 & 0xcccc);
-				data = (data >> 1 & 0x5555) | (data << 1 & 0xaaaa);
-			}
-			tile->data[index] = ((((u64) (u8) (data >> 0) * 0x0101010101010101ull & 0x8040201008040201ull) * 0x0102040810204081ull >> 49) & 0x5555) |
-				((((u64) (u8) (data >> 8) * 0x0101010101010101ull & 0x8040201008040201ull) * 0x0102040810204081ull >> 48) & 0xaaaa);
+			tile->data[index] = spread[data & 0xff] | spread[data >> 8] << 1;
 		}
 	}
 
@@ -2243,10 +2256,29 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 	bool lineValid = ppu.dac.lineValid;
 	u32* line = &ppuCanvas[ppu.dac.line];
 
+	// A background that isn't on a screen never has a pixel there: its priority is 0 all along.
+	bool aboveOn[4], belowOn[4];
+	bool anyBelow = objBelowEnable;
+	for (int n = 0; n < 4; ++n) {
+		aboveOn[n] = ppu.bg[n].io.aboveEnable;
+		belowOn[n] = ppu.bg[n].io.belowEnable;
+		anyBelow |= belowOn[n];
+		if (!aboveOn[n]) {
+			above[n].priority = 0;
+		}
+		if (!belowOn[n]) {
+			below[n].priority = 0;
+		}
+	}
+
 	for (u32 x = 0; x < 256; ++x) {
 		for (int n = 0; n < 4; ++n) {
-			above[n] = spanAbove[n][x];
-			below[n] = spanBelow[n][x];
+			if (aboveOn[n]) {
+				above[n] = spanAbove[n][x];
+			}
+			if (belowOn[n]) {
+				below[n] = spanBelow[n][x];
+			}
 		}
 
 		// The sprites.
@@ -2303,7 +2335,9 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 		if (!blank) {
 			// The sub screen.
 			u32 priority = 0;
-			if (below[0].priority) {
+			if (!anyBelow) {
+				// Nothing is on it.
+			} else if (below[0].priority) {
 				priority = below[0].priority;
 				if (direct) {
 					belowColor = directColor(below[0].palette, below[0].paletteGroup);
@@ -2707,6 +2741,9 @@ void ppuRun(void) {
 }
 
 void ppuPower(bool reset) {
+#if !defined(ARMSNES_DOT)
+	planeSpreadInit();
+#endif
 	threadFrequency(&ppu.th, sys.cpuFrequency);
 	counterReset(&ppu.counter);
 	ppu.resume = 0;

@@ -180,7 +180,7 @@ void retro_set_environment(retro_environment_t callback) {
 
 	// The first value is the default.
 	static const struct retro_variable variables[] = {
-		{ "armsnes_power_on_ram", "Power-On RAM; Patterned|Cleared" },
+		{ "armsnes_power_on_ram", "Power-On RAM; Cleared|Patterned" },
 		{ NULL, NULL },
 	};
 	callback(RETRO_ENVIRONMENT_SET_VARIABLES, (void*) variables);
@@ -312,8 +312,8 @@ void retro_cheat_set(unsigned index, bool enabled, const char* code) {
 // betas need.
 static void readOptions(void) {
 	struct retro_variable variable = { "armsnes_power_on_ram", NULL };
-	systemClearPowerOn = environment(RETRO_ENVIRONMENT_GET_VARIABLE, &variable) && variable.value &&
-	                     !strcmp(variable.value, "Cleared");
+	systemClearPowerOn = !environment(RETRO_ENVIRONMENT_GET_VARIABLE, &variable) || !variable.value ||
+	                     strcmp(variable.value, "Patterned");
 }
 
 bool retro_load_game(const struct retro_game_info* info) {

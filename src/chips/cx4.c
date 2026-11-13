@@ -495,6 +495,14 @@ static int instruction(u32 op) {
 
 // --- The thread ---
 
+// While it is locked, suspended without a count or halted, with no bus access under way, each clock
+// only moves its clock on: all but the last of them, up to the CPU, are taken in one.
+static inline void idle(void) {
+	if (!cx4.io.bus.enable && cx4.th.clock <= cpu.th.clock) {
+		cx4.th.clock += (cpu.th.clock - cx4.th.clock) / cx4.th.scalar * cx4.th.scalar;
+	}
+}
+
 void cx4Run(void) {
 	int tail;
 	active = true;
@@ -503,11 +511,13 @@ dispatch:
 	switch (cx4.state) {
 	case MAIN:
 		if (cx4.io.lock) {
+			idle();
 			STEP(1);
 			goto done;
 		}
 		if (cx4.io.suspendEnable) {
 			if (!cx4.io.suspendDuration) {
+				idle();
 				STEP(1);
 				goto done;
 			}
@@ -525,6 +535,7 @@ dispatch:
 			goto done;
 		}
 		if (cx4.io.halt) {
+			idle();
 			STEP(1);
 			goto done;
 		}

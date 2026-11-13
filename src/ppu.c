@@ -1649,6 +1649,7 @@ void ppuMap(void) {
 
 // What a line starts with, at H = 0.
 static void lineStart(void) {
+	ppu.blankFrom = BLANK_NONE;
 	if (VCOUNTER == 0) {
 		ppu.state.interlace = ppu.io.interlace;
 		ppu.state.overscan = ppu.io.overscan;
@@ -1720,6 +1721,27 @@ static void doFetch(const struct Fetch* fetch, u16 optH, u16 optV) {
 // A slot at H = 56 + 4x shifts out the sub screen's pixel x, the one at 58 + 4x the main screen's,
 // and puts pixel x together.
 #if defined(ARMSNES_DOT)
+// What the backgrounds do in the two-clock slot at H = at: a fetch, the first tile's start, a pixel
+// shifted out for one screen or the other.
+static void bgSlot(u32 at) {
+	if (at <= 1054 && at % 4 == 0) {
+		const struct Fetch* fetch = &fetches[ppu.io.bgMode][at / 4 & 7];
+		if (fetch->kind != FETCH_NONE) {
+			doFetch(fetch, ppu.bg[2].opt.hoffset, ppu.bg[2].opt.voffset);
+		}
+	}
+	if (at == 56) {
+		for (int n = 0; n < 4; ++n) {
+			bgBegin(&ppu.bg[n]);
+		}
+	}
+	if (at >= 56 && at <= 1078) {
+		for (int n = 0; n < 4; ++n) {
+			bgRun(&ppu.bg[n], (at - 56) % 4 == 0);
+		}
+	}
+}
+
 // The dots one at a time, as the hardware does them: the reference the spans are checked against.
 static void renderSpan(u32 start, u32 end) {
 	for (u32 at = start; at < end; at += 2) {
@@ -1728,28 +1750,27 @@ static void renderSpan(u32 start, u32 end) {
 			objEvaluate(at >> 3);
 		}
 		// Below the picture nothing is fetched or shifted: the backgrounds stay as its last line
-		// left them. (ares goes on fetching to line 240.)
+		// left them. (ares goes on fetching to line 240.) Nor while the display is off; if it comes
+		// back on before the line ends, they are brought up to here first, from VRAM as it is now.
 		bool tiled = VCOUNTER < ppu.state.vdisp;
-		if (tiled && at <= 1054 && at % 4 == 0) {
-			const struct Fetch* fetch = &fetches[ppu.io.bgMode][at / 4 & 7];
-			if (fetch->kind != FETCH_NONE) {
-				doFetch(fetch, ppu.bg[2].opt.hoffset, ppu.bg[2].opt.voffset);
+		if (tiled && ppu.io.displayDisable) {
+			if (ppu.blankFrom == BLANK_NONE) {
+				ppu.blankFrom = at;
 			}
+			tiled = false;
+		} else if (tiled && ppu.blankFrom != BLANK_NONE) {
+			for (u32 missed = ppu.blankFrom; missed < at; missed += 2) {
+				ppu.counter.hcounter = missed;
+				bgSlot(missed);
+			}
+			ppu.counter.hcounter = at;
+			ppu.blankFrom = BLANK_NONE;
 		}
-		if (tiled && at == 56) {
-			for (int n = 0; n < 4; ++n) {
-				bgBegin(&ppu.bg[n]);
-			}
+		if (tiled) {
+			bgSlot(at);
 		}
 		if (at >= 56 && at <= 1078) {
-			if ((at - 56) % 4 == 0) {
-				for (int n = 0; tiled && n < 4; ++n) {
-					bgRun(&ppu.bg[n], 1);
-				}
-			} else {
-				for (int n = 0; tiled && n < 4; ++n) {
-					bgRun(&ppu.bg[n], 0);
-				}
+			if ((at - 56) % 4 != 0) {
 				objRun();
 				windowRun();
 				dacRun();
@@ -2293,7 +2314,7 @@ static inline u16 blendWith(u32 x, u32 y, bool subtract, bool halve) {
 // pixel by pixel. The windows cut the line into stretches; in each, only the layers that are on a
 // screen and not hidden by a window are looked at. What those keep between pixels is held here and
 // put back at the end.
-static void composeLine(const struct WindowEffect effects[4], const u8* objPalette, const u8* objPriority) {
+static void composeLine(const struct WindowEffect effects[4], const u8* objPalette, const u8* objPriority, bool refreshed) {
 	bool blank = ppu.io.displayDisable || (!ppu.io.overscan && VCOUNTER >= 225);
 	bool direct = directColorMode();
 	bool objAboveEnable = ppu.obj.io.aboveEnable;
@@ -2339,8 +2360,11 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 	bool lineValid = ppu.dac.lineValid;
 	u32* line = &ppuCanvas[ppu.dac.line];
 
+	u32 hiddenAbove = 0, hiddenBelow = 0;
 	for (u32 x = 0; x < 256;) {
 		const struct WindowEffect* effect = &effects[select[x]];
+		hiddenAbove |= effect->hideAbove;
+		hiddenBelow |= effect->hideBelow;
 		u32 end = x + 1;
 		while (end < 256 && select[end] == select[x]) {
 			++end;
@@ -2458,12 +2482,17 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 
 	// What the last pixel leaves: the backgrounds as their line left them, less what the windows
 	// hide there, and the sprites' last pixel.
+	// (Backgrounds that weren't fetched on this line keep whatever any window on it hid.)
 	const struct WindowEffect* last = &effects[select[255]];
+	if (refreshed) {
+		hiddenAbove = last->hideAbove;
+		hiddenBelow = last->hideBelow;
+	}
 	for (u32 n = 0; n < 4; ++n) {
-		if (last->hideAbove >> n & 1) {
+		if (hiddenAbove >> n & 1) {
 			ppu.bg[n].output.above.priority = 0;
 		}
-		if (last->hideBelow >> n & 1) {
+		if (hiddenBelow >> n & 1) {
 			ppu.bg[n].output.below.priority = 0;
 		}
 	}
@@ -2523,6 +2552,19 @@ static void renderSpan(u32 start, u32 end) {
 	// Below the picture nothing is fetched or shifted: the backgrounds stay as its last line left
 	// them. (ares goes on fetching to line 240.)
 	bool tiled = VCOUNTER < ppu.state.vdisp;
+	// Nor while the display is off; if it comes back on before the line ends, they are brought up
+	// to here first, from VRAM as it is now.
+	if (tiled && ppu.io.displayDisable) {
+		if (ppu.blankFrom == BLANK_NONE) {
+			ppu.blankFrom = start;
+		}
+		tiled = false;
+	} else if (tiled && ppu.blankFrom != BLANK_NONE) {
+		for (int i = 0; i < 4; ++i) {
+			bgSpanSlots(order[i], ppu.blankFrom, start, hires, draws);
+		}
+		ppu.blankFrom = BLANK_NONE;
+	}
 	// The backgrounds that had their whole line at once.
 	bool lined[4] = { false, false, false, false };
 	for (int i = 0; tiled && i < 4; ++i) {
@@ -2583,8 +2625,10 @@ static void renderSpan(u32 start, u32 end) {
 	struct WindowEffect effects[4];
 	windowEffects(effects);
 	// A whole line that draws, in a mode a pixel wide, is put together in one go.
-	if (objLine && allLined && draws && ppu.window.x == 0 && !ppu.io.pseudoHires && !hires) {
-		composeLine(effects, objPalette, objPriority);
+	// So is one that shows nothing: its backgrounds weren't fetched, and aren't looked at.
+	bool dark = ppu.io.displayDisable || (!ppu.io.overscan && VCOUNTER >= 225);
+	if (objLine && (allLined || (!tiled && dark)) && draws && ppu.window.x == 0 && !ppu.io.pseudoHires && !hires) {
+		composeLine(effects, objPalette, objPriority, tiled);
 		ppu.counter.hcounter = start;
 		return;
 	}
@@ -2809,6 +2853,7 @@ void ppuPower(bool reset) {
 	counterReset(&ppu.counter);
 	ppu.resume = 0;
 	ppu.drawnTo = 0;
+	ppu.blankFrom = BLANK_NONE;
 
 	memset(ppuCanvas, 0, sizeof(ppuCanvas));
 

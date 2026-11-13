@@ -13,7 +13,7 @@
 // A state is taken between frames. The canvas is usually clear then, but not after a DMA that ran on
 // into the next frame.
 
-enum { STATE_MAGIC = 0x534e5341, STATE_VERSION = 12 };
+enum { STATE_MAGIC = 0x534e5341, STATE_VERSION = 13 };
 
 struct StateHeader {
 	u32 magic;

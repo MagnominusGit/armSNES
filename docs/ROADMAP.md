@@ -12,11 +12,14 @@ hardware tests disagree, the hardware tests win.
 - **One renderer to come.** ares has an exact dot renderer and a faster scanline renderer that needs
   per-game timing. The dot renderer is ported as the reference. The renderer for play will draw a
   line in spans, cut wherever a write lands in the middle of it, with SIMD inside the spans.
-- **Nothing is fetched below the picture.** ares goes on fetching and shifting the backgrounds'
-  tiles to line 240. Here that stops with the picture's last line, as the hardware leaves VRAM alone
-  in the vertical blank. What could differ is what a background the mode doesn't use, left switched
-  on, shows at the right edge of the first line; no frame of the test ROMs, the 240p Test Suite or
-  the games it was tried on does.
+- **Nothing is fetched below the picture, or while the display is off.** ares goes on fetching and
+  shifting the backgrounds' tiles to line 240, and through a forced blank. Here that stops with the
+  picture's last line, and while the display is off, as the hardware leaves VRAM alone then. If the
+  display comes back on before a line ends, the backgrounds are brought up to that point first, from
+  VRAM as it is at that moment. What could differ: what a background the mode doesn't use, left
+  switched on, shows at the right edge of the first line; and a tile or two where the display comes
+  back on, if VRAM or the scroll was written just before. No frame of the test ROMs (those that
+  switch the display mid-frame among them), the 240p Test Suite or the games it was tried on does.
 - **No game-specific code.** A table may say what hardware a cartridge has. Nothing may behave
   differently because of which game is running.
 

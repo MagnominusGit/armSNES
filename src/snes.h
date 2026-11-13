@@ -510,6 +510,7 @@ void systemFrameEvent(void);
 // --- S-PPU, drawn dot by dot ---
 
 enum { BG_BPP2, BG_BPP4, BG_BPP8, BG_MODE7, BG_INACTIVE };
+enum { BLANK_NONE = 0xffff };
 enum { CANVAS_WIDTH = 564, CANVAS_HEIGHT = 576 };
 
 struct BgPixel {
@@ -726,6 +727,9 @@ struct Ppu {
 	// How much of the canvas this frame has drawn: a DMA can take the PPU into the next frame before
 	// the CPU's instruction ends, so a state can be taken with some of it drawn.
 	u32 drawnTo;
+	// Where on this line the backgrounds stopped being fetched because the display was off, or
+	// BLANK_NONE: if it comes back on before the line ends, they are brought up to it from there.
+	u16 blankFrom;
 
 	// Where the PPU stopped, and what it was in the middle of.
 	u32 resume;

@@ -1333,6 +1333,8 @@ struct Pirate {
 };
 extern struct Pirate pirate;
 
+// For tests: the chip a cartridge that isn't known gets.
+extern int cartTryPirate;
 void pirateLoad(int board);
 void piratePower(void);
 u8 pirateLatchRead(u32 address, u8 data);

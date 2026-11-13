@@ -402,6 +402,10 @@ static const struct KnownCart {
 	{ "b31794a8573221c655852d7255da7c624db097a9dee7e5b6159d01559352e520", 0x200000, "LOROM-RAM#A", 0x2000, 0, PIRATE_LATCH },
 	{ "6524f8d287d48eca04350c9f117272498b8516aa3bbfb8aa96a8c9a30652ce6e", 0x200000, "LOROM-RAM#A", 0x2000, 0, PIRATE_TEKKEN2 },
 	{ "a58801f2a07e0886d14a8a85a787ab63bc7f2cf43248fe04f6fbc09cb3c77448", 0x100000, "LOROM", 0, 0, PIRATE_20 },
+	// Dumps of 8 MiB that hold the game twice.
+	{ "e364ab10890ff8f21111d542c5649f72f36bd2c2cdf3904fb5924307c50a78fa", 0x800000, "EXHIROM", 0, 0, PIRATE_LATCH },
+	{ "dc85b66e60c770b2ec7d81af90df4c4f4911b32c2e7f031afc2140a5bf746fa0", 0x800000, "EXHIROM", 0, 0, PIRATE_LATCH },
+	{ "2707c4b19134af5d8723fadf29f812b573ed83d5669d4bffbf4496c8ef42dd5a", 0x800000, "EXHIROM", 0, 0, PIRATE_TEKKEN2 },
 };
 
 static const struct BoardEntry* findBoard(const char* name) {
@@ -413,6 +417,8 @@ static const struct BoardEntry* findBoard(const char* name) {
 	return NULL;
 }
 
+
+int cartTryPirate;
 
 static const struct KnownCart* knownCart(void) {
 	char hash[65] = "";
@@ -731,7 +737,7 @@ bool cartLoad(const u8* data, u32 size) {
 	if (cart.st018 && !loadSt018Firmware()) {
 		return false;
 	}
-	pirateLoad(known ? known->pirate : 0);
+	pirateLoad(known ? known->pirate : cartTryPirate);
 	if (cart.competition) {
 		// The program ROM, then the three levels'.
 		u32 sizes[4] = { 0x40000, 0x80000, 0x80000, event == COMPETITION_CC92 ? 0x80000 : 0x100000 };

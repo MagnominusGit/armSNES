@@ -1761,6 +1761,58 @@ static void renderSpan(u32 start, u32 end) {
 #else
 static struct BgPixel spanAbove[4][256];
 static struct BgPixel spanBelow[4][256];
+// A whole line of a background, a value to a pixel: the palette entry, the palette group above it and
+// the priority above that, or 0 where the background is clear.
+static u32 linePixels[4][256];
+
+// What a background's main and sub screen pixels are left as after such a line: the priority of the
+// last pixel, and the palette of the last one that wasn't clear.
+static void lineOutput(struct Background* bg, u32 n) {
+	const u32* pixels = linePixels[n];
+	s32 x = 255;
+	while (x >= 0 && !pixels[x]) {
+		--x;
+	}
+	bg->output.above.priority = 0;
+	bg->output.below.priority = 0;
+	if (x < 0) {
+		return;
+	}
+	if (bg->io.aboveEnable) {
+		bg->output.above.palette = pixels[x];
+		bg->output.above.paletteGroup = pixels[x] >> 8;
+		bg->output.above.priority = pixels[255] >> 16;
+	}
+	if (bg->io.belowEnable) {
+		bg->output.below.palette = pixels[x];
+		bg->output.below.paletteGroup = pixels[x] >> 8;
+		bg->output.below.priority = pixels[255] >> 16;
+	}
+}
+
+// The same line as the slots leave it, a main and a sub screen pixel at a time, for a line that is
+// put together slot by slot.
+static void lineToSlots(u32 n) {
+	struct Background* bg = &ppu.bg[n];
+	struct BgPixel above = bg->output.above;
+	struct BgPixel below = bg->output.below;
+	for (u32 x = 0; x < 256; ++x) {
+		u32 value = linePixels[n][x];
+		above.priority = 0;
+		below.priority = 0;
+		if (value) {
+			struct BgPixel pixel = { value >> 16, value, value >> 8 };
+			if (bg->io.aboveEnable) {
+				above = pixel;
+			}
+			if (bg->io.belowEnable) {
+				below = pixel;
+			}
+		}
+		spanAbove[n][x] = above;
+		spanBelow[n][x] = below;
+	}
+}
 static u16 spanOptH[540];
 static u16 spanOptV[540];
 
@@ -1952,8 +2004,6 @@ static void bgLineTiles(u32 n, bool fetch, bool opt) {
 		// Without the mosaic a pixel is what its tile shifts out. The mosaic's counter still runs: it
 		// takes a pixel at 0 and every mosaicSize after, and the last one it took is kept.
 		u32 lastTaken = mosaicSize ? 255 - 255 % mosaicSize : 0;
-		struct BgPixel above = bg->output.above;
-		struct BgPixel below = bg->output.below;
 		u32 index = bg->renderingIndex;
 		u32 x = 0;
 		u32 pixels = 8 - bg->pixelCounter;
@@ -1964,11 +2014,8 @@ static void bgLineTiles(u32 n, bool fetch, bool opt) {
 			u8 priority = tile->priority, palette = tile->palette, group = tile->paletteGroup;
 			if ((d0 | d1 | d2 | d3) == 0 || !(aboveEnable | belowEnable)) {
 				// Nothing to see: clear, or on neither screen.
-				above.priority = 0;
-				below.priority = 0;
 				for (u32 i = 0; i < count; ++i) {
-					spanAbove[n][x + i] = above;
-					spanBelow[n][x + i] = below;
+					linePixels[n][x + i] = 0;
 				}
 				if (lastTaken >= x && lastTaken < x + count) {
 					u32 shift = (lastTaken - x) * 2;
@@ -1995,28 +2042,13 @@ static void bgLineTiles(u32 n, bool fetch, bool opt) {
 					d1 >>= 2;
 					d2 >>= 2;
 					d3 >>= 2;
-					above.priority = 0;
-					below.priority = 0;
 					u8 out = color ? palette + color : 0;
-					if (out) {
-						if (aboveEnable) {
-							above.priority = priority;
-							above.palette = out;
-							above.paletteGroup = group;
-						}
-						if (belowEnable) {
-							below.priority = priority;
-							below.palette = out;
-							below.paletteGroup = group;
-						}
-					}
 					if (x + i == lastTaken) {
 						bg->mosaic.pixel.priority = priority;
 						bg->mosaic.pixel.palette = out;
 						bg->mosaic.pixel.paletteGroup = group;
 					}
-					spanAbove[n][x + i] = above;
-					spanBelow[n][x + i] = below;
+					linePixels[n][x + i] = out ? out | group << 8 | priority << 16 : 0;
 				}
 			}
 			tile->data[0] = d0;
@@ -2032,14 +2064,11 @@ static void bgLineTiles(u32 n, bool fetch, bool opt) {
 		bg->renderingIndex = index;
 		bg->pixelCounter = (bg->pixelCounter + 256) & 7;
 		bg->mosaic.hcounter = mosaicSize ? mosaicSize - 255 % mosaicSize : (u16) (0 - 255);
-		bg->output.above = above;
-		bg->output.below = below;
+		lineOutput(bg, n);
 		return;
 	}
 	u32 mosaicCounter = bg->mosaic.hcounter;
 	struct BgPixel mosaicPixel = bg->mosaic.pixel;
-	struct BgPixel above = bg->output.above;
-	struct BgPixel below = bg->output.below;
 	u32 index = bg->renderingIndex;
 	u32 counter = bg->pixelCounter;
 	struct BgTile* tile = &bg->tiles[index];
@@ -2084,18 +2113,7 @@ static void bgLineTiles(u32 n, bool fetch, bool opt) {
 			pixel = mosaicPixel;
 		}
 
-		above.priority = 0;
-		below.priority = 0;
-		if (pixel.palette) {
-			if (aboveEnable) {
-				above = pixel;
-			}
-			if (belowEnable) {
-				below = pixel;
-			}
-		}
-		spanAbove[n][x] = above;
-		spanBelow[n][x] = below;
+		linePixels[n][x] = pixel.palette && (aboveEnable | belowEnable) ? pixel.palette | pixel.paletteGroup << 8 | pixel.priority << 16 : 0;
 	}
 
 	tile->data[0] = d0;
@@ -2106,8 +2124,7 @@ static void bgLineTiles(u32 n, bool fetch, bool opt) {
 	bg->pixelCounter = counter;
 	bg->mosaic.hcounter = mosaicCounter;
 	bg->mosaic.pixel = mosaicPixel;
-	bg->output.above = above;
-	bg->output.below = below;
+	lineOutput(bg, n);
 }
 
 // A whole line of a mode 7 background, as bgRunMode7 makes each pixel of it: what doesn't change
@@ -2143,12 +2160,9 @@ static void bgLineMode7(u32 n) {
 	bool hflip = ppu.io.hflipMode7;
 	u32 repeat = ppu.io.repeatMode7;
 	bool second = bg->id == 1;
-	bool aboveEnable = bg->io.aboveEnable, belowEnable = bg->io.belowEnable;
 	u32 mosaicOffset = bg->mosaic.hoffset;
 	u32 mosaicCounter = bg->mosaic.hcounter;
 	u32 mosaicSize = ppu.mosaic.size;
-	struct BgPixel above = bg->output.above;
-	struct BgPixel below = bg->output.below;
 
 	for (u32 at = 0; at < 256; ++at) {
 		u32 x = mosaicOffset;
@@ -2181,28 +2195,12 @@ static void bgLineMode7(u32 n) {
 			palette &= 0x7f;
 		}
 
-		above.priority = 0;
-		below.priority = 0;
-		if (palette) {
-			if (aboveEnable) {
-				above.priority = priority;
-				above.palette = palette;
-				above.paletteGroup = 0;
-			}
-			if (belowEnable) {
-				below.priority = priority;
-				below.palette = palette;
-				below.paletteGroup = 0;
-			}
-		}
-		spanAbove[n][at] = above;
-		spanBelow[n][at] = below;
+		linePixels[n][at] = palette ? palette | priority << 16 : 0;
 	}
 
 	bg->mosaic.hoffset = mosaicOffset;
 	bg->mosaic.hcounter = mosaicCounter;
-	bg->output.above = above;
-	bg->output.below = below;
+	lineOutput(bg, n);
 }
 
 static inline u16 blendWith(u32 x, u32 y, bool subtract, bool halve) {
@@ -2222,28 +2220,44 @@ static inline u16 blendWith(u32 x, u32 y, bool subtract, bool halve) {
 	return ((((diff - borrow) & (borrow - (borrow >> 5))) & 0x7bde) >> 1) & 0x7fff;
 }
 
-// A whole line put together, 256 pixels wide: the sprites, the windows and the color math for each
-// pixel in the order objRun, windowRunWith, dacBelow and dacAbove have them, with what they keep
-// between pixels held here and put back at the end.
+// A whole line put together, 256 pixels wide, as objRun, windowRunWith, dacBelow and dacAbove would
+// pixel by pixel. The windows cut the line into stretches; in each, only the layers that are on a
+// screen and not hidden by a window are looked at. What those keep between pixels is held here and
+// put back at the end.
 static void composeLine(const struct WindowEffect effects[4], const u8* objPalette, const u8* objPriority) {
 	bool blank = ppu.io.displayDisable || (!ppu.io.overscan && VCOUNTER >= 225);
 	bool direct = directColorMode();
 	bool objAboveEnable = ppu.obj.io.aboveEnable;
 	bool objBelowEnable = ppu.obj.io.belowEnable;
-	u32 oneLeft = ppu.window.oneLeft, oneRight = ppu.window.oneRight;
-	u32 twoLeft = ppu.window.twoLeft, twoRight = ppu.window.twoRight;
-	bool oneActive = ppu.window.oneActive, oneStopped = ppu.window.oneStopped;
-	bool twoActive = ppu.window.twoActive, twoStopped = ppu.window.twoStopped;
-	bool windowAbove = ppu.window.aboveColorEnable, windowBelow = ppu.window.belowColorEnable;
-	u32 windowX = ppu.window.x;
 
-	struct BgPixel above[4], below[4];
-	for (int n = 0; n < 4; ++n) {
-		above[n] = ppu.bg[n].output.above;
-		below[n] = ppu.bg[n].output.below;
+	// Which of the four window effects each pixel has.
+	u8 select[256];
+	{
+		u32 oneLeft = ppu.window.oneLeft, oneRight = ppu.window.oneRight;
+		u32 twoLeft = ppu.window.twoLeft, twoRight = ppu.window.twoRight;
+		bool oneActive = ppu.window.oneActive, oneStopped = ppu.window.oneStopped;
+		bool twoActive = ppu.window.twoActive, twoStopped = ppu.window.twoStopped;
+		for (u32 x = 0; x < 256; ++x) {
+			if (x == oneLeft) {
+				oneActive = true;
+			}
+			if (x == twoLeft) {
+				twoActive = true;
+			}
+			select[x] = (oneActive && !oneStopped) | (twoActive && !twoStopped) << 1;
+			if (x == oneRight) {
+				oneStopped = true;
+			}
+			if (x == twoRight) {
+				twoStopped = true;
+			}
+		}
+		ppu.window.oneActive = oneActive;
+		ppu.window.oneStopped = oneStopped;
+		ppu.window.twoActive = twoActive;
+		ppu.window.twoStopped = twoStopped;
+		ppu.window.x = 256;
 	}
-	u32 objAbovePriority = ppu.obj.above.priority, objAbovePalette = ppu.obj.above.palette;
-	u32 objBelowPriority = ppu.obj.below.priority, objBelowPalette = ppu.obj.below.palette;
 
 	u32 aboveColor = ppu.dac.math.aboveColor, belowColor = ppu.dac.math.belowColor;
 	bool aboveColorEnable = ppu.dac.math.aboveColorEnable, belowColorEnable = ppu.dac.math.belowColorEnable;
@@ -2256,106 +2270,62 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 	bool lineValid = ppu.dac.lineValid;
 	u32* line = &ppuCanvas[ppu.dac.line];
 
-	// A background that isn't on a screen never has a pixel there: its priority is 0 all along.
-	bool aboveOn[4], belowOn[4];
-	bool anyBelow = objBelowEnable;
-	for (int n = 0; n < 4; ++n) {
-		aboveOn[n] = ppu.bg[n].io.aboveEnable;
-		belowOn[n] = ppu.bg[n].io.belowEnable;
-		anyBelow |= belowOn[n];
-		if (!aboveOn[n]) {
-			above[n].priority = 0;
-		}
-		if (!belowOn[n]) {
-			below[n].priority = 0;
-		}
-	}
-
-	for (u32 x = 0; x < 256; ++x) {
-		for (int n = 0; n < 4; ++n) {
-			if (aboveOn[n]) {
-				above[n] = spanAbove[n][x];
-			}
-			if (belowOn[n]) {
-				below[n] = spanBelow[n][x];
-			}
+	for (u32 x = 0; x < 256;) {
+		const struct WindowEffect* effect = &effects[select[x]];
+		u32 end = x + 1;
+		while (end < 256 && select[end] == select[x]) {
+			++end;
 		}
 
-		// The sprites.
-		objAbovePriority = 0;
-		objBelowPriority = 0;
-		if (objPriority[x]) {
-			if (objAboveEnable) {
-				objAbovePalette = objPalette[x];
-				objAbovePriority = objPriority[x];
+		// The layers to look at on each screen, lowest background first as the pixels are.
+		const u32* abovePixels[4];
+		const u32* belowPixels[4];
+		u8 aboveIndex[4], belowIndex[4];
+		u32 aboveCount = 0, belowCount = 0;
+		for (u32 n = 0; n < 4; ++n) {
+			if (ppu.bg[n].io.aboveEnable && !(effect->hideAbove >> n & 1)) {
+				abovePixels[aboveCount] = linePixels[n];
+				aboveIndex[aboveCount++] = n;
 			}
-			if (objBelowEnable) {
-				objBelowPalette = objPalette[x];
-				objBelowPriority = objPriority[x];
+			if (ppu.bg[n].io.belowEnable && !(effect->hideBelow >> n & 1)) {
+				belowPixels[belowCount] = linePixels[n];
+				belowIndex[belowCount++] = n;
 			}
 		}
+		bool objAbove = objAboveEnable && !(effect->hideAbove >> 4 & 1);
+		bool objBelow = objBelowEnable && !(effect->hideBelow >> 4 & 1);
+		bool windowAbove = effect->aboveColorEnable, windowBelow = effect->belowColorEnable;
 
-		// The windows.
-		if (windowX == oneLeft) {
-			oneActive = true;
-		}
-		if (windowX == twoLeft) {
-			twoActive = true;
-		}
-		bool one = oneActive && !oneStopped;
-		bool two = twoActive && !twoStopped;
-		if (windowX == oneRight) {
-			oneStopped = true;
-		}
-		if (windowX == twoRight) {
-			twoStopped = true;
-		}
-		windowX++;
-		const struct WindowEffect* effect = &effects[one | two << 1];
-		if (effect->hideAbove | effect->hideBelow) {
-			for (int n = 0; n < 4; ++n) {
-				if (effect->hideAbove >> n & 1) {
-					above[n].priority = 0;
-				}
-				if (effect->hideBelow >> n & 1) {
-					below[n].priority = 0;
+		if (blank) {
+			if (lineValid) {
+				for (u32 at = x; at < end; ++at) {
+					line[0] = brightness;
+					line[1] = brightness;
+					line += 2;
 				}
 			}
-			if (effect->hideAbove >> 4 & 1) {
-				objAbovePriority = 0;
-			}
-			if (effect->hideBelow >> 4 & 1) {
-				objBelowPriority = 0;
-			}
+			x = end;
+			continue;
 		}
-		windowAbove = effect->aboveColorEnable;
-		windowBelow = effect->belowColorEnable;
 
-		u32 color = 0;
-		if (!blank) {
+		for (; x < end; ++x) {
 			// The sub screen.
 			u32 priority = 0;
-			if (!anyBelow) {
-				// Nothing is on it.
-			} else if (below[0].priority) {
-				priority = below[0].priority;
-				if (direct) {
-					belowColor = directColor(below[0].palette, below[0].paletteGroup);
-				} else {
-					cgramAddress = below[0].palette;
-					belowColor = ppu.cgram[cgramAddress];
+			for (u32 i = 0; i < belowCount; ++i) {
+				u32 value = belowPixels[i][x];
+				if (value >> 16 > priority) {
+					priority = value >> 16;
+					if (direct && belowIndex[i] == 0) {
+						belowColor = directColor(value, value >> 8);
+					} else {
+						cgramAddress = value & 0xff;
+						belowColor = ppu.cgram[cgramAddress];
+					}
 				}
 			}
-			for (int n = 1; n < 4; ++n) {
-				if (below[n].priority > priority) {
-					priority = below[n].priority;
-					cgramAddress = below[n].palette;
-					belowColor = ppu.cgram[cgramAddress];
-				}
-			}
-			if (objBelowPriority > priority) {
-				priority = objBelowPriority;
-				cgramAddress = objBelowPalette;
+			if (objBelow && objPriority[x] > priority) {
+				priority = objPriority[x];
+				cgramAddress = objPalette[x];
 				belowColor = ppu.cgram[cgramAddress];
 			}
 			transparent = priority == 0;
@@ -2366,29 +2336,24 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 
 			// The main screen.
 			priority = 0;
-			if (above[0].priority) {
-				priority = above[0].priority;
-				if (direct) {
-					aboveColor = directColor(above[0].palette, above[0].paletteGroup);
-				} else {
-					cgramAddress = above[0].palette;
-					aboveColor = ppu.cgram[cgramAddress];
-				}
-				belowColorEnable = ppu.dac.bgColorEnable[0];
-			}
-			for (int n = 1; n < 4; ++n) {
-				if (above[n].priority > priority) {
-					priority = above[n].priority;
-					cgramAddress = above[n].palette;
-					aboveColor = ppu.cgram[cgramAddress];
-					belowColorEnable = ppu.dac.bgColorEnable[n];
+			for (u32 i = 0; i < aboveCount; ++i) {
+				u32 value = abovePixels[i][x];
+				if (value >> 16 > priority) {
+					priority = value >> 16;
+					if (direct && aboveIndex[i] == 0) {
+						aboveColor = directColor(value, value >> 8);
+					} else {
+						cgramAddress = value & 0xff;
+						aboveColor = ppu.cgram[cgramAddress];
+					}
+					belowColorEnable = ppu.dac.bgColorEnable[aboveIndex[i]];
 				}
 			}
-			if (objAbovePriority > priority) {
-				priority = objAbovePriority;
-				cgramAddress = objAbovePalette;
+			if (objAbove && objPriority[x] > priority) {
+				priority = objPriority[x];
+				cgramAddress = objPalette[x];
 				aboveColor = ppu.cgram[cgramAddress];
-				belowColorEnable = objColorEnable && objAbovePalette >= 192;
+				belowColorEnable = objColorEnable && objPalette[x] >= 192;
 			}
 			if (priority == 0) {
 				cgramAddress = 0;
@@ -2400,6 +2365,7 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 				belowColorEnable = false;
 			}
 			aboveColorEnable = windowAbove;
+			u32 color;
 			if (!belowColorEnable) {
 				color = aboveColorEnable ? aboveColor : 0;
 			} else {
@@ -2412,31 +2378,47 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 				}
 				color = blendWith(aboveColorEnable ? aboveColor : 0, mathBlend ? belowColor : fixed, subtract, mathHalve);
 			}
-		}
 
-		if (lineValid) {
-			line[0] = brightness | color;
-			line[1] = brightness | color;
-			line += 2;
+			if (lineValid) {
+				line[0] = brightness | color;
+				line[1] = brightness | color;
+				line += 2;
+			}
 		}
 	}
 
-	for (int n = 0; n < 4; ++n) {
-		ppu.bg[n].output.above = above[n];
-		ppu.bg[n].output.below = below[n];
+	// What the last pixel leaves: the backgrounds as their line left them, less what the windows
+	// hide there, and the sprites' last pixel.
+	const struct WindowEffect* last = &effects[select[255]];
+	for (u32 n = 0; n < 4; ++n) {
+		if (last->hideAbove >> n & 1) {
+			ppu.bg[n].output.above.priority = 0;
+		}
+		if (last->hideBelow >> n & 1) {
+			ppu.bg[n].output.below.priority = 0;
+		}
 	}
-	ppu.obj.above.priority = objAbovePriority;
-	ppu.obj.above.palette = objAbovePalette;
-	ppu.obj.below.priority = objBelowPriority;
-	ppu.obj.below.palette = objBelowPalette;
+	s32 lastObj = 255;
+	while (lastObj >= 0 && !objPriority[lastObj]) {
+		--lastObj;
+	}
+	ppu.obj.above.priority = 0;
+	ppu.obj.below.priority = 0;
+	if (lastObj >= 0 && objAboveEnable) {
+		ppu.obj.above.palette = objPalette[lastObj];
+		if (!(last->hideAbove >> 4 & 1)) {
+			ppu.obj.above.priority = objPriority[255];
+		}
+	}
+	if (lastObj >= 0 && objBelowEnable) {
+		ppu.obj.below.palette = objPalette[lastObj];
+		if (!(last->hideBelow >> 4 & 1)) {
+			ppu.obj.below.priority = objPriority[255];
+		}
+	}
 	ppu.obj.x += 256;
-	ppu.window.oneActive = oneActive;
-	ppu.window.oneStopped = oneStopped;
-	ppu.window.twoActive = twoActive;
-	ppu.window.twoStopped = twoStopped;
-	ppu.window.aboveColorEnable = windowAbove;
-	ppu.window.belowColorEnable = windowBelow;
-	ppu.window.x = windowX;
+	ppu.window.aboveColorEnable = last->aboveColorEnable;
+	ppu.window.belowColorEnable = last->belowColorEnable;
 	ppu.dac.math.aboveColor = aboveColor;
 	ppu.dac.math.belowColor = belowColor;
 	ppu.dac.math.aboveColorEnable = aboveColorEnable;
@@ -2472,8 +2454,11 @@ static void renderSpan(u32 start, u32 end) {
 	// Below the picture nothing is fetched or shifted: the backgrounds stay as its last line left
 	// them. (ares goes on fetching to line 240.)
 	bool tiled = VCOUNTER < ppu.state.vdisp;
+	// The backgrounds that had their whole line at once.
+	bool lined[4] = { false, false, false, false };
 	for (int i = 0; tiled && i < 4; ++i) {
 		u32 n = order[i];
+		lined[n] = true;
 		if (whole && ppu.bg[n].io.mode <= BG_BPP8) {
 			bgLineTiles(n, true, opt);
 		} else if (whole && opt && n == 2) {
@@ -2487,10 +2472,12 @@ static void renderSpan(u32 start, u32 end) {
 			// (BG3 fetches the other two's offsets in modes 2 and 4.)
 			bgLineTiles(n, false, false);
 		} else {
+			lined[n] = false;
 			bgSpanSlots(n, start, end, hires, draws);
 		}
 		endOutput[n] = ppu.bg[n].output;
 	}
+	bool allLined = lined[0] && lined[1] && lined[2] && lined[3];
 
 	// A whole line's sprites: their tiles laid out once, a later tile over an earlier one, as each
 	// pixel would find them.
@@ -2527,10 +2514,15 @@ static void renderSpan(u32 start, u32 end) {
 	struct WindowEffect effects[4];
 	windowEffects(effects);
 	// A whole line that draws, in a mode a pixel wide, is put together in one go.
-	if (objLine && tiled && draws && ppu.window.x == 0 && !ppu.io.pseudoHires && !hires) {
+	if (objLine && allLined && draws && ppu.window.x == 0 && !ppu.io.pseudoHires && !hires) {
 		composeLine(effects, objPalette, objPriority);
 		ppu.counter.hcounter = start;
 		return;
+	}
+	for (u32 n = 0; n < 4; ++n) {
+		if (lined[n]) {
+			lineToSlots(n);
+		}
 	}
 	for (u32 at = start | 2; at < end; at += 4) {
 		if (at >= 58 && at <= 1078) {

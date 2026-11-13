@@ -87,6 +87,9 @@ Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips 
   the program ROM and the three levels', six minutes a round. These cartridges have no header, so they
   are known by their SHA-256, as ares's database knows them; their DSP-1 needs `dsp1.rom`. Both match
   ares through a round's end;
+- pirate cartridges' chips, from MAME: the latch that gives a written byte back with its bits moved
+  round, Tekken 2's chip and the Korean 20-in-1's bank switch. Their headers say nothing true, so the
+  cartridges are known by their SHA-256;
 - the Epson RTC-4513 and the Sharp S-RTC. They keep time by the machine's clock; the frontend keeps
   them as RTC memory, and loading one moves it on by the time the game was off.
 

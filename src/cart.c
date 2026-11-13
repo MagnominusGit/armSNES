@@ -382,14 +382,26 @@ static const struct KnownCart {
 	u32 ramSize;
 	// The event cartridges' uPD78214 board, or 0.
 	int competition;
+	// A pirate cartridge's chip, or 0.
+	int pirate;
 } knownCarts[] = {
-	{ "67c1a4917f4cd0fd704b83330a7e91763736c2d2a10a7e12318fdac54cd9c6c6", 0x1c0000, "EVENT-CC92", 0x2000, COMPETITION_CC92 },
-	{ "6c83ee132db777b306caeb2da6f2cd971735fb06805af55979d99028b33bf659", 0x1c0000, "EVENT-CC92", 0x2000, COMPETITION_CC92 },
-	{ "8727da57fefe7fe91655a1c693892a1272a3cda6f1f57b529e06a6617de6ce39", 0x1c0000, "EVENT-CC92", 0x2000, COMPETITION_CC92 },
-	{ "5443a97e9c40e25821a8fb8c91b63c7bd8c3060d9ff888ee6c573b87b53935f4", 0x240000, "EVENT-PF94", 0x2000, COMPETITION_PF94 },
-	{ "7fa4550886acb4d56b86a848ee1fb92e1cd12b87f1e7c0c510227959c041666f", 0x240000, "EVENT-PF94", 0x2000, COMPETITION_PF94 },
+	{ "67c1a4917f4cd0fd704b83330a7e91763736c2d2a10a7e12318fdac54cd9c6c6", 0x1c0000, "EVENT-CC92", 0x2000, COMPETITION_CC92, 0 },
+	{ "6c83ee132db777b306caeb2da6f2cd971735fb06805af55979d99028b33bf659", 0x1c0000, "EVENT-CC92", 0x2000, COMPETITION_CC92, 0 },
+	{ "8727da57fefe7fe91655a1c693892a1272a3cda6f1f57b529e06a6617de6ce39", 0x1c0000, "EVENT-CC92", 0x2000, COMPETITION_CC92, 0 },
+	{ "5443a97e9c40e25821a8fb8c91b63c7bd8c3060d9ff888ee6c573b87b53935f4", 0x240000, "EVENT-PF94", 0x2000, COMPETITION_PF94, 0 },
+	{ "7fa4550886acb4d56b86a848ee1fb92e1cd12b87f1e7c0c510227959c041666f", 0x240000, "EVENT-PF94", 0x2000, COMPETITION_PF94, 0 },
 	// Its first code sets the SA-1's ROM banks.
-	{ "88b6f7d6a9d36128572418ccdf5ff03491295d3f4f6073a7aa81cea66e3f6f77", 0x100000, "SA1-RAM", 0x2000, 0 },
+	{ "88b6f7d6a9d36128572418ccdf5ff03491295d3f4f6073a7aa81cea66e3f6f77", 0x100000, "SA1-RAM", 0x2000, 0, 0 },
+	// Pirate cartridges, whose headers are whatever was there: a plain board with their chip.
+	{ "b01fd9264003cf0a56e31617a3d831f8f72ff1f5af28402170650d4d614dbd41", 0x200000, "LOROM-RAM#A", 0x2000, 0, PIRATE_LATCH },
+	{ "f8f186e2ddc97a48e06359bca09b2b25da5d498e07098c33b4ac53c25a1a4d31", 0x200000, "LOROM-RAM#A", 0x2000, 0, PIRATE_LATCH },
+	{ "e8b74960a80453cf052519a43895fa54b635448db6a95aabe4986bb152c6e170", 0x300000, "LOROM-RAM", 0x2000, 0, PIRATE_LATCH },
+	{ "a30fdf2fe9ea86b80dd211b08c0442b681f5fc5cfc62b2babc058d5d9a512f6a", 0x200000, "LOROM-RAM#A", 0x2000, 0, PIRATE_LATCH },
+	{ "1b0d48a664e1ab97f030e337a808f4926fa5afee6efb74229d8d1cb1029df6cf", 0x200000, "LOROM-RAM#A", 0x2000, 0, PIRATE_LATCH },
+	{ "39f7dfb078a22eeb9863abe77dd872728b8132cbbf05dc0fcea731567882755f", 0x200000, "LOROM-RAM#A", 0x2000, 0, PIRATE_LATCH },
+	{ "b31794a8573221c655852d7255da7c624db097a9dee7e5b6159d01559352e520", 0x200000, "LOROM-RAM#A", 0x2000, 0, PIRATE_LATCH },
+	{ "6524f8d287d48eca04350c9f117272498b8516aa3bbfb8aa96a8c9a30652ce6e", 0x200000, "LOROM-RAM#A", 0x2000, 0, PIRATE_TEKKEN2 },
+	{ "a58801f2a07e0886d14a8a85a787ab63bc7f2cf43248fe04f6fbc09cb3c77448", 0x100000, "LOROM", 0, 0, PIRATE_20 },
 };
 
 static const struct BoardEntry* findBoard(const char* name) {
@@ -400,6 +412,7 @@ static const struct BoardEntry* findBoard(const char* name) {
 	}
 	return NULL;
 }
+
 
 static const struct KnownCart* knownCart(void) {
 	char hash[65] = "";
@@ -718,6 +731,7 @@ bool cartLoad(const u8* data, u32 size) {
 	if (cart.st018 && !loadSt018Firmware()) {
 		return false;
 	}
+	pirateLoad(known ? known->pirate : 0);
 	if (cart.competition) {
 		// The program ROM, then the three levels'.
 		u32 sizes[4] = { 0x40000, 0x80000, 0x80000, event == COMPETITION_CC92 ? 0x80000 : 0x100000 };
@@ -895,6 +909,15 @@ void cartMap(void) {
 	if (cart.msu1) {
 		busMap(msu1Read, msu1Write, "00-3f,80-bf:2000-2007", 0, 0, 0);
 	}
+	if (pirate.board == PIRATE_LATCH) {
+		busMap(pirateLatchRead, pirateLatchWrite, "40,48,50,58,60,68,80,88,90,98,a0,a8,b0,b8,c0,c8,d0,d8,e0,e8,f0,f8:8000-ffff", 0, 0, 0);
+	}
+	if (pirate.board == PIRATE_TEKKEN2) {
+		busMap(pirateTekkenRead, pirateTekkenWrite, "80-bf:8000-87ff", 0, 0, 0);
+	}
+	if (pirate.board == PIRATE_20) {
+		busMap(pirate20Read, pirate20Write, "00-7d,80-ff:8000-ffff", 0, 0, 0);
+	}
 	// A header RAM size no licensed board has is an unlicensed board's, which some have where a
 	// HiROM board has it.
 	if (badRamSize && cart.ramSize && !strncmp(cart.board, "LOROM", 5)) {
@@ -949,6 +972,7 @@ void cartPower(bool reset) {
 	if (cart.mcc) {
 		mccPower();
 	}
+	piratePower();
 	if (cart.competition) {
 		competitionPower();
 	}

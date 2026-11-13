@@ -1323,6 +1323,25 @@ void competitionWriteMCU(u32 address, u8 data);
 // The hash of data as 64 lowercase hex digits.
 void sha256Hex(const u8* data, size_t size, char out[65]);
 
+// --- Pirate cartridges' protection chips and bank switches ---
+
+enum { PIRATE_LATCH = 1, PIRATE_TEKKEN2, PIRATE_20 };
+
+struct Pirate {
+	u8 board;
+	u8 latch, prot, baseBank;
+};
+extern struct Pirate pirate;
+
+void pirateLoad(int board);
+void piratePower(void);
+u8 pirateLatchRead(u32 address, u8 data);
+void pirateLatchWrite(u32 address, u8 data);
+u8 pirateTekkenRead(u32 address, u8 data);
+void pirateTekkenWrite(u32 address, u8 data);
+u8 pirate20Read(u32 address, u8 data);
+void pirate20Write(u32 address, u8 data);
+
 // --- The MSU-1 ---
 
 struct Msu1 {

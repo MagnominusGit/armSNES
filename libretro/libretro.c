@@ -112,13 +112,7 @@ bool cartFirmware(const char* name, u8* data, size_t size) {
 }
 
 // A whole file from the frontend's system folder, or NULL.
-static u8* systemFile(const char* name, size_t* size) {
-	const char* folder = NULL;
-	if (!environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &folder) || !folder) {
-		return NULL;
-	}
-	char path[4096];
-	snprintf(path, sizeof(path), "%s/%s", folder, name);
+static u8* readFile(const char* path, size_t* size) {
 	FILE* file = fopen(path, "rb");
 	if (!file) {
 		return NULL;
@@ -134,6 +128,31 @@ static u8* systemFile(const char* name, size_t* size) {
 	fclose(file);
 	*size = length;
 	return data;
+}
+
+static u8* systemFile(const char* name, size_t* size) {
+	const char* folder = NULL;
+	if (!environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &folder) || !folder) {
+		return NULL;
+	}
+	char path[4096];
+	snprintf(path, sizeof(path), "%s/%s", folder, name);
+	return readFile(path, size);
+}
+
+// The file beside the game with its name and another extension.
+static u8* siblingFile(const char* game, const char* extension, size_t* size) {
+	if (!game) {
+		return NULL;
+	}
+	char path[4096];
+	snprintf(path, sizeof(path) - 8, "%s", game);
+	char* dot = strrchr(path, '.');
+	if (!dot) {
+		return NULL;
+	}
+	strcpy(dot + 1, extension);
+	return readFile(path, size);
 }
 
 static bool hasExtension(const char* path, const char* extension) {
@@ -475,7 +494,12 @@ bool retro_load_game(const struct retro_game_info* info) {
 	}
 	if (pack || sufami || gameBoy) {
 		const char* base = pack ? "BS-X.bin" : sufami ? "STBIOS.bin" : "SGB1.sfc";
-		game = systemFile(base, &size);
+		// A Game Boy game with a Super Game Boy cartridge of its name beside it goes in that one:
+		// an MSU-1 pack's.
+		game = gameBoy ? siblingFile(info->path, "sfc", &size) : NULL;
+		if (!game) {
+			game = systemFile(base, &size);
+		}
 		if (!game) {
 			free(boot);
 			if (logPrintf) {
@@ -499,6 +523,20 @@ bool retro_load_game(const struct retro_game_info* info) {
 		return false;
 	}
 	free(boot);
+	// A Super Game Boy cartridge takes the Game Boy game of its name beside it.
+	if (!gameBoy && cart.icd) {
+		size_t gbSize = 0;
+		u8* gb = siblingFile(info->path, "gb", &gbSize);
+		if (!gb) {
+			gb = siblingFile(info->path, "gbc", &gbSize);
+		}
+		boot = gb ? systemFile("sgb1.boot.rom", &bootSize) : NULL;
+		if (boot && bootSize == 256) {
+			cartInsertGameBoy(gb, gbSize, boot, bootSize);
+		}
+		free(boot);
+		free(gb);
+	}
 	// The MSU-1's files sit beside the game: game.msu, game-1.pcm and on.
 	if (info->path) {
 		char path[4096];

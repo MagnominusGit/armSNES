@@ -84,7 +84,9 @@ Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips 
   oscillator; a cartridge's clock (MBC3, HuC3) isn't given to the frontend yet;
 - the MSU-1, for a game with `game.msu` beside it (its tracks `game-1.pcm` and on). Its 44.1 kHz
   tracks are averaged down to the DSP's rate and added to it, muted while the DSP is, as on ares. Only
-  a small test cartridge has been run so far: its picture matches ares and its track plays;
+  a small test cartridge was compared with ares: its picture matches and its track plays. A Super
+  Game Boy cartridge and a Game Boy game of the same name, side by side, load together from either
+  one, as the MSU-1 packs for Game Boy games come;
 - the event cartridges' uPD78214, as ares has it without its firmware: a timer and the switch between
   the program ROM and the three levels', six minutes a round. These cartridges have no header, so they
   are known by their SHA-256, as ares's database knows them; their DSP-1 needs `dsp1.rom`. Both match

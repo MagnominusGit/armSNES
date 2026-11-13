@@ -201,6 +201,11 @@ dispatch:
 	switch (gsu.state) {
 	case MAIN:
 		if (FLAG(SFR_G) == 0) {
+			// Stopped, with no ROM read or RAM write under way, each step only moves the clock on:
+			// all but the last of them, up to the CPU, are taken in one.
+			if (!gsu.romcl && !gsu.ramcl && gsu.th.clock <= cpu.th.clock) {
+				gsu.th.clock += (cpu.th.clock - gsu.th.clock) / (gsu.th.scalar * 6) * (gsu.th.scalar * 6);
+			}
 			STEP(6);
 			goto done;
 		}

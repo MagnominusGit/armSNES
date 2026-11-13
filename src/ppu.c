@@ -1727,24 +1727,27 @@ static void renderSpan(u32 start, u32 end) {
 		if (at <= 1016 && at % 8 == 0) {
 			objEvaluate(at >> 3);
 		}
-		if (at <= 1054 && at % 4 == 0) {
+		// Below the picture nothing is fetched or shifted: the backgrounds stay as its last line
+		// left them. (ares goes on fetching to line 240.)
+		bool tiled = VCOUNTER < ppu.state.vdisp;
+		if (tiled && at <= 1054 && at % 4 == 0) {
 			const struct Fetch* fetch = &fetches[ppu.io.bgMode][at / 4 & 7];
 			if (fetch->kind != FETCH_NONE) {
 				doFetch(fetch, ppu.bg[2].opt.hoffset, ppu.bg[2].opt.voffset);
 			}
 		}
-		if (at == 56) {
+		if (tiled && at == 56) {
 			for (int n = 0; n < 4; ++n) {
 				bgBegin(&ppu.bg[n]);
 			}
 		}
 		if (at >= 56 && at <= 1078) {
 			if ((at - 56) % 4 == 0) {
-				for (int n = 0; n < 4; ++n) {
+				for (int n = 0; tiled && n < 4; ++n) {
 					bgRun(&ppu.bg[n], 1);
 				}
 			} else {
-				for (int n = 0; n < 4; ++n) {
+				for (int n = 0; tiled && n < 4; ++n) {
 					bgRun(&ppu.bg[n], 0);
 				}
 				objRun();
@@ -1961,7 +1964,10 @@ static void renderSpan(u32 start, u32 end) {
 	// A whole line in modes 0, 1 and 3 needs no slots for its tiled backgrounds.
 	bool whole = start == 0 && end == 1080 && draws && (ppu.io.bgMode == 0 || ppu.io.bgMode == 1 || ppu.io.bgMode == 3);
 
-	for (int i = 0; i < 4; ++i) {
+	// Below the picture nothing is fetched or shifted: the backgrounds stay as its last line left
+	// them. (ares goes on fetching to line 240.)
+	bool tiled = VCOUNTER < ppu.state.vdisp;
+	for (int i = 0; tiled && i < 4; ++i) {
 		u32 n = order[i];
 		if (whole && ppu.bg[n].io.mode <= BG_BPP8) {
 			bgLineTiles(n);
@@ -2009,7 +2015,7 @@ static void renderSpan(u32 start, u32 end) {
 		if (at >= 58 && at <= 1078) {
 			u32 x = (at - 58) >> 2;
 			ppu.counter.hcounter = at;
-			for (int n = 0; n < 4; ++n) {
+			for (int n = 0; tiled && n < 4; ++n) {
 				ppu.bg[n].output.above = spanAbove[n][x];
 				ppu.bg[n].output.below = spanBelow[n][x];
 			}
@@ -2037,7 +2043,7 @@ static void renderSpan(u32 start, u32 end) {
 
 	// A span ending on a sub screen slot leaves the backgrounds as that slot did.
 	u32 last = end - 2;
-	if (last >= 56 && last <= 1078 && (last - 56) % 4 == 0) {
+	if (tiled && last >= 56 && last <= 1078 && (last - 56) % 4 == 0) {
 		for (int n = 0; n < 4; ++n) {
 			ppu.bg[n].output = endOutput[n];
 		}

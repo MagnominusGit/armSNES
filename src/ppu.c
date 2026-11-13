@@ -1856,6 +1856,11 @@ static void bgSpanSlots(u32 n, u32 start, u32 end, bool hires, bool draws) {
 // pixel lowest. [0] is a tile as it is, [1] one mirrored.
 static u16 planeSpread[2][256];
 
+// A bitplane's eight bits a byte each, the leftmost pixel lowest, for a tile's eight colors at once.
+static u64 planeBytes[2][256];
+// A line's 33 tiles' colors, a byte to a pixel, the leftmost lowest.
+static u64 tileColors[33];
+
 static void planeSpreadInit(void) {
 	for (u32 byte = 0; byte < 256; ++byte) {
 		u16 plain = 0, mirrored = 0;
@@ -1867,6 +1872,15 @@ static void planeSpreadInit(void) {
 		}
 		planeSpread[0][byte] = plain;
 		planeSpread[1][byte] = mirrored;
+		u64 plainBytes = 0, mirroredBytes = 0;
+		for (u32 bit = 0; bit < 8; ++bit) {
+			if (byte >> bit & 1) {
+				plainBytes |= 1ull << ((7 - bit) * 8);
+				mirroredBytes |= 1ull << (bit * 8);
+			}
+		}
+		planeBytes[0][byte] = plainBytes;
+		planeBytes[1][byte] = mirroredBytes;
 	}
 }
 
@@ -1987,10 +2001,14 @@ static void bgLineTiles(u32 n, bool fetch, bool opt) {
 		tile->palette = paletteOffset + (tile->paletteGroup << paletteSize);
 
 		const u16* spread = planeSpread[tile->hmirror];
+		const u64* bytes = planeBytes[tile->hmirror];
+		u64 colors = 0;
 		for (u32 index = 0; index < planes; ++index) {
 			u16 data = *vramAt(tile->address + (index << 3));
 			tile->data[index] = spread[data & 0xff] | spread[data >> 8] << 1;
+			colors |= (bytes[data & 0xff] | bytes[data >> 8] << 1) << (index * 2);
 		}
+		tileColors[k] = colors;
 	}
 
 	bgBegin(bg);
@@ -2000,8 +2018,59 @@ static void bgLineTiles(u32 n, bool fetch, bool opt) {
 	bool mosaic = bg->mosaic.enable;
 	u32 mosaicSize = ppu.mosaic.size;
 
+	if (!mosaic && fetch) {
+		// Without the mosaic a pixel is its tile's color at that place: the first tile's after what
+		// is scrolled off, then eight to a tile. The mosaic's counter still runs: it takes a pixel
+		// at 0 and every mosaicSize after, and the last one it took is kept.
+		u32 lastTaken = mosaicSize ? 255 - 255 % mosaicSize : 0;
+		u32 scrolled = bg->pixelCounter;
+		bool shown = aboveEnable | belowEnable;
+		u32* out = linePixels[n];
+		for (u32 x = 0, k = 0; x < 256; ++k) {
+			const struct BgTile* tile = &bg->tiles[k];
+			u32 first = k ? 0 : scrolled;
+			u32 count = 8 - first;
+			if (count > 256 - x) {
+				count = 256 - x;
+			}
+			u64 colors = tileColors[k] >> (first * 8);
+			u32 base = tile->paletteGroup << 8 | tile->priority << 16;
+			u8 palette = tile->palette;
+			if (lastTaken >= x && lastTaken < x + count) {
+				u8 color = colors >> ((lastTaken - x) * 8);
+				bg->mosaic.pixel.priority = tile->priority;
+				bg->mosaic.pixel.palette = color ? palette + color : 0;
+				bg->mosaic.pixel.paletteGroup = tile->paletteGroup;
+			}
+			if (!colors || !shown) {
+				for (u32 i = 0; i < count; ++i) {
+					out[x + i] = 0;
+				}
+			} else {
+				for (u32 i = 0; i < count; ++i) {
+					u8 color = colors >> (i * 8);
+					u8 entry = palette + color;
+					out[x + i] = color && entry ? base | entry : 0;
+				}
+			}
+			x += count;
+		}
+		// The tiles as shifting them out leaves them: empty, but for the last one's pixels past the
+		// screen's edge.
+		for (u32 k = 0; k < 32; ++k) {
+			memset(bg->tiles[k].data, 0, sizeof(bg->tiles[k].data));
+		}
+		for (u32 i = 0; i < 4; ++i) {
+			bg->tiles[32].data[i] >>= scrolled * 2;
+		}
+		bg->renderingIndex = (bg->renderingIndex + ((scrolled + 256) >> 3)) & 127;
+		bg->mosaic.hcounter = mosaicSize ? mosaicSize - 255 % mosaicSize : (u16) (0 - 255);
+		lineOutput(bg, n);
+		return;
+	}
+
 	if (!mosaic) {
-		// Without the mosaic a pixel is what its tile shifts out. The mosaic's counter still runs: it
+		// A background the mode doesn't use: a pixel is what its tile shifts out. The mosaic's counter still runs: it
 		// takes a pixel at 0 and every mosaicSize after, and the last one it took is kept.
 		u32 lastTaken = mosaicSize ? 255 - 255 % mosaicSize : 0;
 		u32 index = bg->renderingIndex;

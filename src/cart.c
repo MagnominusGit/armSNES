@@ -814,6 +814,7 @@ void cartMap(void) {
 	if (!board) {
 		return;
 	}
+	busDirect(readRom, cart.rom);
 	int sufamiRoms = 0, sufamiRams = 0;
 	for (u8 n = 0; n < board->mapCount; ++n) {
 		const struct BoardMap* map = &board->maps[n];

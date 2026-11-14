@@ -1109,6 +1109,7 @@ void cpuWriteDMA(u32 address, u8 data) {
 }
 
 void cpuMap(void) {
+	busDirect(readRAM, cpu.wram);
 	busMap(readRAM, writeRAM, "00-3f,80-bf:0000-1fff", 0x2000, 0, 0);
 	busMap(readRAM, writeRAM, "7e-7f:0000-ffff", 0x20000, 0, 0);
 	busMap(readAPU, writeAPU, "00-3f,80-bf:2140-217f", 0, 0, 0);

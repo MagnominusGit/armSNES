@@ -523,6 +523,8 @@ void inputPollMouse(int port, int* x, int* y, bool* left, bool* right);
 void inputPollGun(int gun, int* x, int* y, u8* buttons);
 
 void busFinish(void);
+// A reader that reads memory[offset] and nothing else: its pages are read without calling it.
+void busDirect(BusReader reader, const u8* memory);
 void cartMap(void);
 void systemFrameEvent(void);
 

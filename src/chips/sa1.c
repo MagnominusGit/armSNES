@@ -68,23 +68,57 @@ enum {
 #define STEP_X(n) STEP_(n)
 #define STEP() STEP_X(LABEL_X(__COUNTER__))
 
+// A loop the program waits in: where an instruction last began after a jump back, with the
+// registers and the clock as they were. Coming back there with the same registers, having written
+// nothing and read no register of the chip's, it will go round the same way until the S-CPU runs
+// again. This is only kept within one run, so it is no part of a state.
+static struct {
+	bool valid;
+	u32 last;
+	u32 pc;
+	u64 clock;
+	struct W65816 r;
+} loop;
+
+// Whether reading a register gives the same again and changes nothing: all but the one that latches
+// the counters and the one that moves the variable-length data on.
+static inline bool ioReadRepeats(u32 address) {
+	u32 port = 0x2200 | (address & 0x1ff);
+	return port != 0x2302 && port != 0x230d;
+}
+
+// An access whose clock steps all end with the SA-1 still behind the S-CPU can't stop part way: it
+// is done on the spot, with the same steps. Otherwise it goes the way that can stop.
+static bool fastRead(void);
+static bool fastWrite(void);
+static bool fastSteps(u32 steps);
+static bool pcInRom(void);
+static bool romConflict(void);
+
 #define READ(target, address) \
 	do { \
 		R.ad = (address) & 0xffffff; \
-		CALL(SUB_READ); \
+		if (!fastRead()) { \
+			CALL(SUB_READ); \
+		} \
 		target = R.dr; \
 	} while (0)
 #define WRITE(address, data) \
 	do { \
+		loop.valid = false; \
 		R.ad = (address) & 0xffffff; \
 		R.dw = (data); \
-		CALL(SUB_WRITE); \
+		if (!fastWrite()) { \
+			CALL(SUB_WRITE); \
+		} \
 	} while (0)
 #define FETCH(target) \
 	do { \
 		R.ad = PC.b << 16 | PC.w; \
 		PC.w++; \
-		CALL(SUB_READ); \
+		if (!fastRead()) { \
+			CALL(SUB_READ); \
+		} \
 		target = R.dr; \
 	} while (0)
 #define PULL(target) \
@@ -115,7 +149,12 @@ enum {
 		WRITE(S.w, data); \
 		S.w--; \
 	} while (0)
-#define IDLE() CALL(SUB_IDLE)
+#define IDLE() \
+	do { \
+		if (!fastSteps(1)) { \
+			CALL(SUB_IDLE); \
+		} \
+	} while (0)
 #define IDLE_IRQ() \
 	do { \
 		if (interruptPending()) { \
@@ -124,7 +163,12 @@ enum {
 			IDLE(); \
 		} \
 	} while (0)
-#define IDLE_JUMP() CALL(SUB_IDLE_JUMP)
+#define IDLE_JUMP() \
+	do { \
+		if (pcInRom() && !fastSteps(1 + romConflict())) { \
+			CALL(SUB_IDLE_JUMP); \
+		} \
+	} while (0)
 #define IDLE_BRANCH() \
 	do { \
 		if (PC.d & 1) { \
@@ -208,7 +252,7 @@ static void lastCycle(void) {
 
 // Memory: ROM
 
-static inline bool romConflict(void) {
+static bool romConflict(void) {
 	if ((cpu.r.mar & 0x408000) == 0x008000) {
 		return true;
 	}
@@ -1075,10 +1119,146 @@ static void dmaNormalAtOnce(void) {
 
 // The state machine
 
+// --- Accesses that can't stop ---
+
+static bool fastSteps(u32 steps) {
+	if (cpu.th.clock < sa1.th.clock + sa1.th.scalar * 2 * steps) {
+		return false;
+	}
+	while (steps--) {
+		sa1.th.clock += sa1.th.scalar * 2;
+		counters();
+	}
+	return true;
+}
+
+static bool pcInRom(void) {
+	return (PC.d & 0x408000) == 0x008000 || (PC.d & 0xc00000) == 0xc00000;
+}
+
+// As SUB_READ.
+static bool fastRead(void) {
+	R.mar = R.ad;
+	R.dr = R.mdr;
+	if ((R.ad & 0x40fe00) == 0x002200) {
+		if (!ioReadRepeats(R.ad)) {
+			loop.valid = false;
+		}
+		if (!fastSteps(1)) {
+			return false;
+		}
+		R.dr = R.mdr = readIOSA1(R.ad, R.dr);
+		return true;
+	}
+	if ((R.ad & 0x408000) == 0x008000 || (R.ad & 0xc00000) == 0xc00000) {
+		if (!fastSteps(1 + romConflict())) {
+			return false;
+		}
+		R.dr = R.mdr = romReadSA1(R.ad, R.dr);
+		return true;
+	}
+	if ((R.ad & 0x40e000) == 0x006000 || (R.ad & 0xe00000) == 0x400000 || (R.ad & 0xf00000) == 0x600000) {
+		if (!fastSteps(2 + 2 * bwramConflict())) {
+			return false;
+		}
+		if ((R.ad >> 22 & 1) && (R.ad >> 21 & 1)) {
+			R.dr = R.mdr = bwramReadBitmap(R.ad, R.dr);
+		} else if (R.ad >> 22 & 1) {
+			R.dr = R.mdr = bwramReadLinear(R.ad, R.dr);
+		} else {
+			R.dr = R.mdr = bwramReadSA1(R.ad, R.dr);
+		}
+		return true;
+	}
+	if ((R.ad & 0x40f800) == 0x000000 || (R.ad & 0x40f800) == 0x003000) {
+		if (!fastSteps(1 + 2 * iramConflict())) {
+			return false;
+		}
+		R.dr = R.mdr = iramRead(R.ad);
+		return true;
+	}
+	return fastSteps(1);
+}
+
+// As SUB_WRITE. A write to a register can start a DMA, which can stop.
+static bool fastWrite(void) {
+	if ((R.ad & 0x40fe00) == 0x002200) {
+		return false;
+	}
+	if ((R.ad & 0x408000) == 0x008000 || (R.ad & 0xc00000) == 0xc00000) {
+		if (!fastSteps(1 + romConflict())) {
+			return false;
+		}
+		R.mar = R.ad;
+		R.mdr = R.dw;
+		return true;
+	}
+	if ((R.ad & 0x40e000) == 0x006000 || (R.ad & 0xe00000) == 0x400000 || (R.ad & 0xf00000) == 0x600000) {
+		if (!fastSteps(2 + 2 * bwramConflict())) {
+			return false;
+		}
+		R.mar = R.ad;
+		R.mdr = R.dw;
+		if ((R.ad >> 22 & 1) && (R.ad >> 21 & 1)) {
+			bwramWriteBitmap(R.ad, R.dw);
+		} else if (R.ad >> 22 & 1) {
+			bwramWriteLinear(R.ad, R.dw);
+		} else {
+			bwramWriteSA1(R.ad, R.dw);
+		}
+		return true;
+	}
+	if ((R.ad & 0x40f800) == 0x000000 || (R.ad & 0x40f800) == 0x003000) {
+		if (!fastSteps(1 + 2 * iramConflict())) {
+			return false;
+		}
+		R.mar = R.ad;
+		R.mdr = R.dw;
+		iramWriteSA1(R.ad, R.dw);
+		return true;
+	}
+	if (!fastSteps(1)) {
+		return false;
+	}
+	R.mar = R.ad;
+	R.mdr = R.dw;
+	return true;
+}
+
+// The counters moved on by steps clock steps at once, when the timer raises nothing. False if they
+// can't be.
+static bool countersSkip(u64 steps) {
+	if (sa1.io.hen || sa1.io.ven) {
+		return false;
+	}
+	if (sa1.io.hvselb == 0) {
+		if ((sa1.status.hcounter & 1) || sa1.status.hcounter >= 1364 || !sa1.status.scanlines ||
+		    sa1.status.vcounter >= sa1.status.scanlines) {
+			return false;
+		}
+		u64 clocks = sa1.status.hcounter + steps * 2;
+		sa1.status.vcounter = (sa1.status.vcounter + clocks / 1364) % sa1.status.scanlines;
+		sa1.status.hcounter = clocks % 1364;
+	} else {
+		if (sa1.status.hcounter >= 0x800 || sa1.status.vcounter >= 0x200) {
+			return false;
+		}
+		u64 count = ((u64) sa1.status.vcounter << 11 | sa1.status.hcounter) + steps * 2;
+		sa1.status.hcounter = count & 0x07ff;
+		sa1.status.vcounter = count >> 11 & 0x01ff;
+	}
+	return true;
+}
+
 void sa1Run(void) {
+	// The S-CPU has run since: whatever was known of a loop is gone.
+	loop.valid = false;
 dispatch:
 	switch (sa1.state) {
 	case MAIN:
+		if (R.wai || R.stp || sa1.io.sa1_rdyb || sa1.io.sa1_resb || sa1.status.interruptPending) {
+			loop.valid = false;
+		}
 		if (R.wai) {
 			while (R.wai) {
 				lastCycle();
@@ -1113,6 +1293,24 @@ dispatch:
 			PC.d = R.vector;
 			goto done;
 		}
+		if (PC.d <= loop.last) {
+			// A jump back.
+			if (loop.valid && PC.d == loop.pc && !memcmp(&R, &loop.r, sizeof(R)) && sa1.th.clock > loop.clock &&
+			    sa1.th.clock <= cpu.th.clock) {
+				// The same again: as many whole turns of the loop as end before the S-CPU's clock
+				// are taken in one.
+				u64 turn = sa1.th.clock - loop.clock;
+				u64 turns = (cpu.th.clock - sa1.th.clock) / turn;
+				if (turns && countersSkip(turns * (turn / (sa1.th.scalar * 2)))) {
+					sa1.th.clock += turns * turn;
+				}
+			}
+			loop.valid = true;
+			loop.pc = PC.d;
+			loop.clock = sa1.th.clock;
+			loop.r = R;
+		}
+		loop.last = PC.d;
 		FETCH(R.op);
 		sa1.state = R.op;
 		goto dispatch;
@@ -1123,6 +1321,9 @@ dispatch:
 		R.mar = R.ad;
 		R.dr = R.mdr;
 		if ((R.ad & 0x40fe00) == 0x002200) {
+			if (!ioReadRepeats(R.ad)) {
+				loop.valid = false;
+			}
 			STEP();
 			R.dr = R.mdr = readIOSA1(R.ad, R.dr);
 			RETURN();

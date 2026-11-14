@@ -227,6 +227,7 @@ void systemFrameEvent(void) {
 }
 
 void systemRunFrame(void) {
+	cheatFrame();
 	sys.frameEvent = false;
 	while (!sys.frameEvent) {
 		cpuMain();

@@ -21,10 +21,23 @@ struct MixedPage {
 	u32 target[256];
 };
 
+// The last handler is the cheats' (busCheat).
+enum { CHEAT_HANDLER = 255 };
+
 static struct Page pages[0x10000];
 static struct MixedPage* mixedPages;
 static u32 mixedCount;
 static BusReader readers[256];
+
+// Pages with a cheat code read through the last handler, which goes to the page's own and then the
+// cheats; other pages read as they are.
+enum { CHEAT_PAGES = 512 };
+static struct {
+	u32 page;
+	struct Page was;
+} hooked[CHEAT_PAGES];
+static u32 hookedCount;
+
 static BusWriter writers[256];
 static u32 handlers;
 
@@ -84,6 +97,7 @@ void busReset(void) {
 	readers[0] = readOpen;
 	writers[0] = writeOpen;
 	handlers = 1;
+	hookedCount = 0;
 }
 
 static u32 hexAt(const char** text) {
@@ -117,7 +131,7 @@ static bool rangeAt(const char** text, char end, u32* lo, u32* hi) {
 }
 
 void busMap(BusReader reader, BusWriter writer, const char* address, u32 size, u32 base, u32 mask) {
-	if (handlers >= 256 || !lookup) {
+	if (handlers >= CHEAT_HANDLER || !lookup) {
 		return;
 	}
 	u32 id = handlers++;
@@ -180,6 +194,7 @@ void busFinish(void) {
 	free(target);
 	lookup = NULL;
 	target = NULL;
+	cheatHook();
 }
 
 u8 busRead(u32 address, u8 data) {
@@ -193,6 +208,44 @@ u8 busRead(u32 address, u8 data) {
 	}
 	const struct MixedPage* mixed = &mixedPages[page->base];
 	return readers[mixed->id[address & 0xff]](mixed->target[address & 0xff], data);
+}
+
+static u8 readCheat(u32 address, u8 data) {
+	for (u32 i = 0; i < hookedCount; ++i) {
+		if (hooked[i].page == address >> 8) {
+			const struct Page* page = &hooked[i].was;
+			if (!page->mixed) {
+				data = readers[page->id](page->base + (address & 0xff), data);
+			} else {
+				const struct MixedPage* mixed = &mixedPages[page->base];
+				data = readers[mixed->id[address & 0xff]](mixed->target[address & 0xff], data);
+			}
+			break;
+		}
+	}
+	return cheatRead(address, data);
+}
+
+void busCheat(u32 page) {
+	page &= 0xffff;
+	if (pages[page].id == CHEAT_HANDLER && !pages[page].mixed) {
+		return;
+	}
+	if (hookedCount == CHEAT_PAGES) {
+		return;
+	}
+	hooked[hookedCount].page = page;
+	hooked[hookedCount].was = pages[page];
+	++hookedCount;
+	readers[CHEAT_HANDLER] = readCheat;
+	pages[page] = (struct Page) { .id = CHEAT_HANDLER, .mixed = false, .base = page << 8 };
+}
+
+void busCheatsOff(void) {
+	while (hookedCount) {
+		--hookedCount;
+		pages[hooked[hookedCount].page] = hooked[hookedCount].was;
+	}
 }
 
 void busWrite(u32 address, u8 data) {

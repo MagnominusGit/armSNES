@@ -116,3 +116,8 @@ Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips 
 A new SPC7110 cartridge held "SPC7110 CHECK OK" at the end of its save RAM. Without it the game runs
 its factory check program and asks for the power to be cut, as it does on ares, so a new save here
 starts with it.
+
+Phase 4: cheat codes come from the frontend. A Game Genie code gives its value for reads of its
+address, in either half of the banks; a Pro Action Replay code (or "address:value") writes its value
+to the work RAM as each frame begins, and gives it for reads anywhere else. Only the pages with a code
+read through them, so a game without cheats runs as before.

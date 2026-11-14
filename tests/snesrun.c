@@ -315,6 +315,11 @@ int main(int argc, char** argv) {
 	lastFrame = frames;
 	clock_t start = clock();
 	int resetAt = getenv("RESETAT") ? atoi(getenv("RESETAT")) : -1;
+	// CHEAT=codes: cheat codes from the start.
+	if (getenv("CHEAT") && !cheatAdd(getenv("CHEAT"))) {
+		fprintf(stderr, "no cheat code in %s\n", getenv("CHEAT"));
+		return 1;
+	}
 	while (sys.frames < frames) {
 		systemRunFrame();
 		if ((int) sys.frames == resetAt) {

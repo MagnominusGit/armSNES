@@ -382,6 +382,18 @@ void busReset(void);
 // ares's map() works out from size, base and mask.
 void busMap(BusReader reader, BusWriter writer, const char* address, u32 size, u32 base, u32 mask);
 u8 busRead(u32 address, u8 data);
+
+// Cheat codes (Game Genie, Pro Action Replay, "address:value"), joined by '+'; false if none was one.
+bool cheatAdd(const char* text);
+void cheatReset(void);
+// A read of a page with a code that gives a value for reads, the pages hooked to it on the bus again
+// once it is rebuilt, and the work RAM codes written as a frame begins.
+u8 cheatRead(u32 address, u8 data);
+void cheatHook(void);
+void cheatFrame(void);
+// A page read through the cheats, and all pages back as they were.
+void busCheat(u32 page);
+void busCheatsOff(void);
 void busWrite(u32 address, u8 data);
 u32 busMirrorOver(u32 address, u32 size);
 // An address in a memory of size bytes; one past its end is mirrored down as the hardware's

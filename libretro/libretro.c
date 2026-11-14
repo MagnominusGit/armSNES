@@ -449,12 +449,14 @@ bool retro_unserialize(const void* data, size_t size) {
 }
 
 void retro_cheat_reset(void) {
+	cheatReset();
 }
 
 void retro_cheat_set(unsigned index, bool enabled, const char* code) {
 	(void) index;
-	(void) enabled;
-	(void) code;
+	if (enabled && code) {
+		cheatAdd(code);
+	}
 }
 
 // Patterned is ares's: stripes of two values. Cleared is all 0, which some unlicensed games and
@@ -593,6 +595,7 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info* info, 
 
 void retro_unload_game(void) {
 	loaded = false;
+	cheatReset();
 	free(game);
 	game = NULL;
 }

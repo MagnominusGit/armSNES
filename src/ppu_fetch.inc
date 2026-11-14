@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  * Ported from ares (ISC); see LICENSES/ISC-ares.txt. */
-// Included where STEP(clocks) says how the PPU waits: step by step in ppuRun, not at all in Fast mode.
+// Included where STEP(clocks) says how the PPU waits: step by step in ppuRun, not at all in Balanced mode.
 			// H = 1080: the tiles of the sprites found on this line are fetched for the next one, two
 			// words in eight clocks each.
 			for (F.i = 31; F.i >= 0; --F.i) {

@@ -9,7 +9,7 @@
 
 struct System sys;
 bool systemClearPowerOn;
-bool systemFast;
+bool systemBalanced;
 
 // ares's generator (PCG), on its low-entropy setting, or ares's no-entropy setting: everything
 // starts at 0.

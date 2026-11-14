@@ -1024,7 +1024,7 @@ static void syncFromCpu(void) {
 }
 
 void ppuLatchCounters(void) {
-	if (systemFast) {
+	if (systemBalanced) {
 		syncFromCpu();
 		ppu.io.hcounter = counterHdot(&cpu.counter);
 		ppu.io.vcounter = cpu.counter.vcounter;
@@ -1326,8 +1326,8 @@ static u8 readIO(u32 address, u8 data) {
 // Whether the PPU, brought past the CPU now, would still be on the line it is on: then nothing
 // that happens at a line's start (a frame's end among them) is waiting on it.
 static bool sameLinePending(void) {
-	// Fast mode's PPU catches up for nothing: no reason to put it off.
-	if (systemFast) {
+	// Balanced mode's PPU catches up for nothing: no reason to put it off.
+	if (systemBalanced) {
 		return false;
 	}
 	if (!(ppu.th.clock < cpu.th.clock)) {
@@ -2872,9 +2872,9 @@ static void renderSpan(u32 start, u32 end) {
 	bool opt = ppu.io.bgMode == 2 || ppu.io.bgMode == 4;
 
 	// While the display is off nothing is fetched or shifted; if it comes back on before the line
-	// ends, the backgrounds are brought up to here first, from VRAM as it is now. Nor, in Fast mode,
+	// ends, the backgrounds are brought up to here first, from VRAM as it is now. Nor, in Balanced mode,
 	// below the picture.
-	bool tiled = !(systemFast && VCOUNTER >= ppu.state.vdisp);
+	bool tiled = !(systemBalanced && VCOUNTER >= ppu.state.vdisp);
 	if (tiled && ppu.io.displayDisable) {
 		if (ppu.blankFrom == BLANK_NONE) {
 			ppu.blankFrom = start;
@@ -3046,11 +3046,11 @@ static inline u32 stepsBeforeCpu(u32 wait) {
 
 #define F ppu.fetch
 
-// --- Fast mode: the PPU does a line in two goes, with nothing between them: its start (H = 0), and
+// --- Balanced mode: the PPU does a line in two goes, with nothing between them: its start (H = 0), and
 // the whole line drawn where the picture's part of it ends (H = 1096). A write before that shows on
 // the whole line, one after it from the next line on. ppu.resume says the PPU is between two such
 // goes, and its H counter which comes next. ---
-enum { FAST_FORM = 0xfa57, FAST_DRAW = 1096 };
+enum { BALANCED_FORM = 0xfa57, BALANCED_DRAW = 1096 };
 static bool toLineTop;
 
 static void fastAdvance(u32 clocks) {
@@ -3071,13 +3071,13 @@ static void fastLine(void) {
 #pragma pop_macro("STEP")
 	ppu.obj.io.rangeOver |= ppu.obj.itemCount > 32;
 	ppu.obj.io.timeOver |= ppu.obj.tileCount > 34;
-	ppu.counter.hcounter = FAST_DRAW;
+	ppu.counter.hcounter = BALANCED_DRAW;
 }
 
 static void ppuRunExact(void);
 
-static void ppuRunFast(void) {
-	if (ppu.resume != FAST_FORM) {
+static void ppuRunBalanced(void) {
+	if (ppu.resume != BALANCED_FORM) {
 		// From Exact: the line it is in is finished as Exact does it.
 		u64 const now = cpu.th.clock;
 		cpu.th.clock = ~0ull >> 1;
@@ -3085,33 +3085,33 @@ static void ppuRunFast(void) {
 		ppuRunExact();
 		toLineTop = false;
 		cpu.th.clock = now;
-		ppu.resume = FAST_FORM;
+		ppu.resume = BALANCED_FORM;
 	}
 	do {
 		if (ppu.counter.hcounter == 0) {
 			lineStart();
-			fastAdvance(FAST_DRAW);
+			fastAdvance(BALANCED_DRAW);
 		} else {
 			if (VCOUNTER <= 240) {
 				fastLine();
 			}
-			fastAdvance(ppu.counter.hperiod - FAST_DRAW);
+			fastAdvance(ppu.counter.hperiod - BALANCED_DRAW);
 		}
 	} while (!(cpu.th.clock < ppu.th.clock));
 }
 
 void ppuRun(void) {
-	if (systemFast) {
-		ppuRunFast();
+	if (systemBalanced) {
+		ppuRunBalanced();
 		return;
 	}
-	if (ppu.resume == FAST_FORM) {
-		// From Fast: a line begun there is drawn as Fast does it.
+	if (ppu.resume == BALANCED_FORM) {
+		// From Balanced: a line begun there is drawn as Balanced does it.
 		if (ppu.counter.hcounter) {
 			if (VCOUNTER <= 240) {
 				fastLine();
 			}
-			fastAdvance(ppu.counter.hperiod - FAST_DRAW);
+			fastAdvance(ppu.counter.hperiod - BALANCED_DRAW);
 		}
 		ppu.resume = 0;
 	}

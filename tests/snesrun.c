@@ -38,7 +38,7 @@ static u64 fnv(u64 hash, const void* data, size_t size) {
 	return hash;
 }
 
-// LOCK=1: every frame is run in Exact, then again in Fast from the same state; the picture, the
+// LOCK=1: every frame is run in Exact, then again in Balanced from the same state; the picture, the
 // sound and the memories are compared, and the run goes on from Exact's state.
 static bool locking, lockKeep;
 static s16 lockSound[2][8192];
@@ -338,8 +338,8 @@ int main(int argc, char** argv) {
 	lastFrame = frames;
 	clock_t start = clock();
 	int resetAt = getenv("RESETAT") ? atoi(getenv("RESETAT")) : -1;
-	// FAST=1: Fast mode.
-	systemFast = getenv("FAST") != NULL;
+	// BALANCED=1: Balanced mode.
+	systemBalanced = getenv("BALANCED") != NULL;
 	// CHEAT=codes: cheat codes from the start.
 	if (getenv("CHEAT") && !cheatAdd(getenv("CHEAT"))) {
 		fprintf(stderr, "no cheat code in %s\n", getenv("CHEAT"));
@@ -354,7 +354,7 @@ int main(int argc, char** argv) {
 	u64 lockFrames = 0, pictureFrames = 0, pixelsOff = 0, soundFrames = 0, countFrames = 0, memoryFrames[5] = { 0 };
 	while (locking && sys.frames < frames) {
 		stateSave(before, stateBytes);
-		systemFast = false;
+		systemBalanced = false;
 		lockKeep = false;
 		lockSamples[0] = lockSamples[1] = 0;
 		systemRunFrame();
@@ -370,7 +370,7 @@ int main(int argc, char** argv) {
 		}
 		u32 frame = sys.frames;
 		stateLoad(before, stateBytes);
-		systemFast = true;
+		systemBalanced = true;
 		cpuFastReplan();
 		lockKeep = true;
 		systemRunFrame();
@@ -417,7 +417,7 @@ int main(int argc, char** argv) {
 			        lockSamples[0], lockSamples[1], bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]);
 		}
 		stateLoad(state, stateBytes);
-		systemFast = false;
+		systemBalanced = false;
 	}
 	if (locking) {
 		printf("lock frames=%llu picture=%llu (pixels %.0f a frame) sound=%llu count=%llu wram=%llu vram=%llu oam=%llu cgram=%llu apuram=%llu\n",

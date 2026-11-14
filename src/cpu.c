@@ -301,7 +301,7 @@ static void hdmaReset(void);
 static bool hdmaEnable(void);
 static bool hdmaActive(void);
 
-// --- Fast mode: the clock moves a bus access at a time, and what the counters bring about (the line's
+// --- Balanced mode: the clock moves a bus access at a time, and what the counters bring about (the line's
 // end, the interrupts, HDMA, the DRAM refresh, the automatic joypad polling) is looked at only when
 // the access passed the place on the line where the next of them happens. ---
 
@@ -420,7 +420,7 @@ void cpuFastReplan(void) {
 
 static void step(u32 clocks) {
 	cpu.status.irqLock = 0;
-	if (systemFast && !inputGuns) {
+	if (systemBalanced && !inputGuns) {
 		cpu.counterCpu += clocks;
 		cpu.counter.hcounter += clocks;
 		threadStep(&cpu.th, clocks);

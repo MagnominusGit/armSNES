@@ -78,10 +78,10 @@ extern struct System sys;
 // RAM and registers start at 0 at power on, as on ares's no-entropy setting, not ares's usual
 // stripes; some unlicensed games and betas read memory they never wrote.
 extern bool systemClearPowerOn;
-// Fast mode: the same machine with coarser timing (docs/ROADMAP.md). Not part of a saved state: a
-// state from either mode loads in the other at a frame's end.
-extern bool systemFast;
-// Fast mode works out again what comes next on the line (after a state is loaded or the mode set).
+// Balanced mode: the same machine with coarser timing (docs/ROADMAP.md). Not part of a saved state:
+// a state from either mode loads in the other at a frame's end.
+extern bool systemBalanced;
+// Balanced mode works out again what comes next on the line (after a state is loaded or the mode set).
 void cpuFastReplan(void);
 
 void systemLoad(bool pal);

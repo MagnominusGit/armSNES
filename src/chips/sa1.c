@@ -1122,7 +1122,8 @@ static void dmaNormalAtOnce(void) {
 // --- Accesses that can't stop ---
 
 static bool fastSteps(u32 steps) {
-	if (cpu.th.clock < sa1.th.clock + sa1.th.scalar * 2 * steps) {
+	// Balanced mode stops only between instructions: every access is done on the spot.
+	if (!systemBalanced && cpu.th.clock < sa1.th.clock + sa1.th.scalar * 2 * steps) {
 		return false;
 	}
 	while (steps--) {
@@ -1256,6 +1257,9 @@ void sa1Run(void) {
 dispatch:
 	switch (sa1.state) {
 	case MAIN:
+		if (systemBalanced && cpu.th.clock < sa1.th.clock) {
+			return;
+		}
 		if (R.wai || R.stp || sa1.io.sa1_rdyb || sa1.io.sa1_resb || sa1.status.interruptPending) {
 			loop.valid = false;
 		}

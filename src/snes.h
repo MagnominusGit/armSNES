@@ -212,6 +212,8 @@ extern struct Dsp dsp;
 void dspPower(bool reset);
 // Runs the DSP until its clock is past the SMP's.
 void dspRun(void);
+// Whether the DSP may soon read this address of its RAM (Balanced mode brings it up first).
+bool dspWillRead(u16 address);
 u8 dspRead(u8 address);
 void dspWrite(u8 address, u8 data);
 

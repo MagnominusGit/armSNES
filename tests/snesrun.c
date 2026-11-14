@@ -391,10 +391,15 @@ int main(int argc, char** argv) {
 				x0 = x < x0 ? x : x0, x1 = x > x1 ? x : x1, y0 = y < y0 ? y : y0, y1 = y > y1 ? y : y1;
 			}
 		}
-		u32 common = lockSamples[0] < lockSamples[1] ? lockSamples[0] : lockSamples[1], soundOff = 0;
+		u32 common = lockSamples[0] < lockSamples[1] ? lockSamples[0] : lockSamples[1], soundOff = 0, soundMax = 0, soundFirst = 0;
 		common = common > 4096 ? 4096 : common;
 		for (u32 i = 0; i < common * 2; ++i) {
+			if (lockSound[0][i] != lockSound[1][i] && !soundOff) {
+				soundFirst = i;
+			}
 			soundOff += lockSound[0][i] != lockSound[1][i];
+			u32 d = abs(lockSound[0][i] - lockSound[1][i]);
+			soundMax = d > soundMax ? d : soundMax;
 		}
 		u32 bytes[5];
 		at = 0;
@@ -417,7 +422,7 @@ int main(int argc, char** argv) {
 			if (pixels) {
 				fprintf(lockLog, "%u box %u,%u-%u,%u\n", frame, x0, y0, x1, y1);
 			}
-			fprintf(lockLog, "%u pixels %u sound %u of %u (%u/%u) wram %u vram %u oam %u cgram %u apuram %u\n", frame, pixels, soundOff, common * 2,
+			fprintf(lockLog, "%u pixels %u sound %u of %u max %u from %u (%u/%u) wram %u vram %u oam %u cgram %u apuram %u\n", frame, pixels, soundOff, common * 2, soundMax, soundFirst,
 			        lockSamples[0], lockSamples[1], bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]);
 		}
 		stateLoad(state, stateBytes);

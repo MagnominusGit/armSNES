@@ -704,6 +704,27 @@ static void step(int phase) {
 	}
 }
 
+// Whether the DSP may soon read this address of its RAM: the sample directory, each voice's sample
+// block and the next, and the blocks its directory entry starts and loops at.
+bool dspWillRead(u16 address) {
+	if ((u16) (address - (dsp.brr._bank << 8)) < 0x400 || (u16) (address - (dsp.brr.bank << 8)) < 0x400) {
+		return true;
+	}
+	for (int n = 0; n < 8; ++n) {
+		const struct DspVoice* v = &dsp.voice[n];
+		if ((u16) (address - v->brrAddress) < 18) {
+			return true;
+		}
+		u16 entry = (dsp.brr._bank << 8) + (v->source << 2);
+		u16 start = dsp.apuram[entry] | dsp.apuram[(u16) (entry + 1)] << 8;
+		u16 loop = dsp.apuram[(u16) (entry + 2)] | dsp.apuram[(u16) (entry + 3)] << 8;
+		if ((u16) (address - start) < 9 || (u16) (address - loop) < 9) {
+			return true;
+		}
+	}
+	return false;
+}
+
 void dspRun(void) {
 	do {
 		step(dsp.phase);

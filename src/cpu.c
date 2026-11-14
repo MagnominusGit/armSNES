@@ -18,8 +18,8 @@ static u8 read(u32 address);
 static void write(u32 address, u8 data);
 static void idle(void);
 static void lastCycle(void);
-static void step(u32 clocks);
-static void dmaEdge(void);
+static inline void step(u32 clocks);
+static inline void dmaEdge(void);
 
 #include "w65816.inc"
 
@@ -418,7 +418,9 @@ void cpuFastReplan(void) {
 	fastNext = 0;
 }
 
-static void step(u32 clocks) {
+static void stepExact(u32 clocks);
+
+static inline __attribute__((always_inline)) void step(u32 clocks) {
 	cpu.status.irqLock = 0;
 	if (systemBalanced && !inputGuns) {
 		cpu.counterCpu += clocks;
@@ -429,6 +431,10 @@ static void step(u32 clocks) {
 		}
 		return;
 	}
+	stepExact(clocks);
+}
+
+static void stepExact(u32 clocks) {
 	u32 ticks = clocks >> 1;
 	while (ticks--) {
 		cpu.counterCpu += 2;
@@ -781,7 +787,15 @@ static void hdmaRun(void) {
 // With DMA or HDMA pending and none under way, one whole CPU cycle runs first. Then, after waiting for
 // the DMA clock: HDMA if pending and enabled, DMA if pending and enabled (HDMA may cut in), and the
 // CPU's clock is rejoined.
-static void dmaEdge(void) {
+static void dmaEdgeRun(void);
+
+static inline __attribute__((always_inline)) void dmaEdge(void) {
+	if (cpu.status.dmaActive || cpu.status.dmaPending || cpu.status.hdmaPending) {
+		dmaEdgeRun();
+	}
+}
+
+static void dmaEdgeRun(void) {
 	if (cpu.status.dmaActive) {
 		if (cpu.status.hdmaPending) {
 			cpu.status.hdmaPending = 0;

@@ -381,7 +381,11 @@ int main(int argc, char** argv) {
 		u32 scale = ppu.state.interlace ? 2 : 1, top = ((ppu.state.overscan ? 1 : 9) + (sys.pal ? 20 : 0)) * scale;
 		u32 bottom = top + (ppu.state.vdisp - 1) * scale;
 		for (u32 i = top * CANVAS_WIDTH; i < bottom * CANVAS_WIDTH && i < CANVAS_WIDTH * rows; ++i) {
-			if (lockPicture[0][i] != lockPicture[1][i]) {
+			// As shown: black at any brightness is black.
+			u32 ea = lockPicture[0][i], eb = lockPicture[1][i];
+			ea = (ea & 0x7fff) && (ea >> 15 & 15) ? ea : 0;
+			eb = (eb & 0x7fff) && (eb >> 15 & 15) ? eb : 0;
+			if (ea != eb) {
 				u32 x = i % CANVAS_WIDTH, y = i / CANVAS_WIDTH;
 				pixels++;
 				x0 = x < x0 ? x : x0, x1 = x > x1 ? x : x1, y0 = y < y0 ? y : y0, y1 = y > y1 ? y : y1;

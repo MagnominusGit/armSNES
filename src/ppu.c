@@ -1341,9 +1341,12 @@ static bool vramWriteNow(void) {
 	return ppu.io.displayDisable && sameLinePending();
 }
 
+static void balancedWrite(void);
+
 static void writeIO(u32 address, u8 data) {
 	if (((address & 0xffff) != 0x2118 && (address & 0xffff) != 0x2119) || !vramWriteNow()) {
 		syncFromCpu();
+		balancedWrite();
 	}
 
 	switch (address & 0xffff) {
@@ -3327,12 +3330,16 @@ static void fastAdvance(u32 clocks) {
 	ppu.th.clock += ppu.th.scalar * clocks;
 }
 
+// Where the line waiting to be drawn was drawn up to before a write in its picture (0: nowhere).
+static u32 balancedSplit;
+
 static void fastLine(void) {
 	const struct OamObject* sprite;
 	__typeof__(ppu.obj.tile[0][0])* tile;
 	u32 sx, mx, pos;
-	ppu.counter.hcounter = 0;
-	renderSpan(0, 1080);
+	ppu.counter.hcounter = balancedSplit;
+	renderSpan(balancedSplit, 1080);
+	balancedSplit = 0;
 #pragma push_macro("STEP")
 #undef STEP
 #define STEP(clocks) ((void) 0)
@@ -3340,6 +3347,27 @@ static void fastLine(void) {
 #pragma pop_macro("STEP")
 	ppu.obj.io.rangeOver |= ppu.obj.itemCount > 32;
 	ppu.obj.io.timeOver |= ppu.obj.tileCount > 34;
+	ppu.counter.hcounter = BALANCED_DRAW;
+}
+
+// A write while the line waits to be drawn: the part of it before the write is drawn first, as
+// Exact draws it, up to where Exact's PPU would be (the first step past the CPU's clock).
+static void balancedWrite(void) {
+	if (!systemBalanced || ppu.resume != BALANCED_FORM || ppu.counter.hcounter != BALANCED_DRAW || VCOUNTER > 240) {
+		return;
+	}
+	u64 const step = ppu.th.scalar * 2, lineStart = ppu.th.clock - ppu.th.scalar * BALANCED_DRAW;
+	if (cpu.th.clock < lineStart) {
+		return;
+	}
+	u64 steps = (cpu.th.clock - lineStart) / step + 1;
+	u32 h = steps * 2 < 1080 ? (u32) steps * 2 : 1080;
+	if (h <= balancedSplit) {
+		return;
+	}
+	ppu.counter.hcounter = balancedSplit;
+	renderSpan(balancedSplit, h);
+	balancedSplit = h;
 	ppu.counter.hcounter = BALANCED_DRAW;
 }
 

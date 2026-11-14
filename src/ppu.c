@@ -1327,7 +1327,7 @@ static bool sameLinePending(void) {
 }
 
 static bool vramWriteNow(void) {
-	return (ppu.io.displayDisable || VCOUNTER >= ppu.state.vdisp) && sameLinePending();
+	return ppu.io.displayDisable && sameLinePending();
 }
 
 static void writeIO(u32 address, u8 data) {
@@ -1786,10 +1786,9 @@ static void renderSpan(u32 start, u32 end) {
 		if (at <= 1016 && at % 8 == 0) {
 			objEvaluate(at >> 3);
 		}
-		// Below the picture nothing is fetched or shifted: the backgrounds stay as its last line
-		// left them. (ares goes on fetching to line 240.) Nor while the display is off; if it comes
-		// back on before the line ends, they are brought up to here first, from VRAM as it is now.
-		bool tiled = VCOUNTER < ppu.state.vdisp;
+		// While the display is off nothing is fetched or shifted; if it comes back on before the
+		// line ends, the backgrounds are brought up to here first, from VRAM as it is now.
+		bool tiled = true;
 		if (tiled && ppu.io.displayDisable) {
 			if (ppu.blankFrom == BLANK_NONE) {
 				ppu.blankFrom = at;
@@ -2861,11 +2860,9 @@ static void renderSpan(u32 start, u32 end) {
 	bool whole = start == 0 && end == 1080 && draws && ppu.io.bgMode <= 4;
 	bool opt = ppu.io.bgMode == 2 || ppu.io.bgMode == 4;
 
-	// Below the picture nothing is fetched or shifted: the backgrounds stay as its last line left
-	// them. (ares goes on fetching to line 240.)
-	bool tiled = VCOUNTER < ppu.state.vdisp;
-	// Nor while the display is off; if it comes back on before the line ends, they are brought up
-	// to here first, from VRAM as it is now.
+	// While the display is off nothing is fetched or shifted; if it comes back on before the line
+	// ends, the backgrounds are brought up to here first, from VRAM as it is now.
+	bool tiled = true;
 	if (tiled && ppu.io.displayDisable) {
 		if (ppu.blankFrom == BLANK_NONE) {
 			ppu.blankFrom = start;

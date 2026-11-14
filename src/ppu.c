@@ -2349,10 +2349,11 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 		ppu.window.x = 256;
 	}
 
-	u32 aboveColor = ppu.dac.math.aboveColor, belowColor = ppu.dac.math.belowColor;
-	bool aboveColorEnable = ppu.dac.math.aboveColorEnable, belowColorEnable = ppu.dac.math.belowColorEnable;
-	bool transparent = ppu.dac.math.transparent, mathBlend = ppu.dac.math.blendMode, mathHalve = ppu.dac.math.colorHalve;
-	u32 cgramAddress = ppu.latch.cgramAddress;
+	// Each pixel's winner on the main and the sub screen: its value, and which layer it is (the
+	// backgrounds 0 to 3, the sprites 4, none 5); and whether the pixel had color math.
+	static u32 aboveBest[256], belowBest[256];
+	static u8 aboveId[256], belowId[256];
+	static bool mathOn[256];
 	bool dacBlend = ppu.dac.blendMode, dacHalve = ppu.dac.colorHalve, subtract = ppu.dac.colorMode;
 	bool objColorEnable = ppu.dac.objColorEnable, backColorEnable = ppu.dac.backColorEnable;
 	u32 fixed = fixedColor();
@@ -2401,81 +2402,110 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 			continue;
 		}
 
+		// The winner on each screen: the highest priority, the first of equals. A pass to a layer,
+		// each over the whole stretch.
+		for (u32 at = x; at < end; ++at) {
+			aboveBest[at] = 0;
+			aboveId[at] = 5;
+			belowBest[at] = 0;
+			belowId[at] = 5;
+		}
+		for (u32 i = 0; i < aboveCount; ++i) {
+			const u32* pixels = abovePixels[i];
+			u8 id = aboveIndex[i];
+			for (u32 at = x; at < end; ++at) {
+				u32 value = pixels[at];
+				bool wins = value >> 16 > aboveBest[at] >> 16;
+				aboveBest[at] = wins ? value : aboveBest[at];
+				aboveId[at] = wins ? id : aboveId[at];
+			}
+		}
+		if (objAbove) {
+			for (u32 at = x; at < end; ++at) {
+				u32 value = objPriority[at] << 16 | objPalette[at];
+				bool wins = objPriority[at] > aboveBest[at] >> 16;
+				aboveBest[at] = wins ? value : aboveBest[at];
+				aboveId[at] = wins ? 4 : aboveId[at];
+			}
+		}
+		for (u32 i = 0; i < belowCount; ++i) {
+			const u32* pixels = belowPixels[i];
+			u8 id = belowIndex[i];
+			for (u32 at = x; at < end; ++at) {
+				u32 value = pixels[at];
+				bool wins = value >> 16 > belowBest[at] >> 16;
+				belowBest[at] = wins ? value : belowBest[at];
+				belowId[at] = wins ? id : belowId[at];
+			}
+		}
+		if (objBelow) {
+			for (u32 at = x; at < end; ++at) {
+				u32 value = objPriority[at] << 16 | objPalette[at];
+				bool wins = objPriority[at] > belowBest[at] >> 16;
+				belowBest[at] = wins ? value : belowBest[at];
+				belowId[at] = wins ? 4 : belowId[at];
+			}
+		}
+
+		// Whether color math is on for each layer that can win, with the windows' say.
+		bool mathFor[6];
+		for (u32 n = 0; n < 4; ++n) {
+			mathFor[n] = ppu.dac.bgColorEnable[n] && windowBelow;
+		}
+		mathFor[4] = objColorEnable && windowBelow;
+		mathFor[5] = backColorEnable && windowBelow;
+		u32 backColor = ppu.cgram[0];
+
 		for (; x < end; ++x) {
-			// The sub screen.
-			u32 priority = 0;
-			for (u32 i = 0; i < belowCount; ++i) {
-				u32 value = belowPixels[i][x];
-				if (value >> 16 > priority) {
-					priority = value >> 16;
-					if (direct && belowIndex[i] == 0) {
-						belowColor = directColor(value, value >> 8);
-					} else {
-						cgramAddress = value & 0xff;
-						belowColor = ppu.cgram[cgramAddress];
-					}
-				}
-			}
-			if (objBelow && objPriority[x] > priority) {
-				priority = objPriority[x];
-				cgramAddress = objPalette[x];
-				belowColor = ppu.cgram[cgramAddress];
-			}
-			transparent = priority == 0;
-			if (transparent) {
-				cgramAddress = 0;
-				belowColor = ppu.cgram[0];
-			}
-
-			// The main screen.
-			priority = 0;
-			for (u32 i = 0; i < aboveCount; ++i) {
-				u32 value = abovePixels[i][x];
-				if (value >> 16 > priority) {
-					priority = value >> 16;
-					if (direct && aboveIndex[i] == 0) {
-						aboveColor = directColor(value, value >> 8);
-					} else {
-						cgramAddress = value & 0xff;
-						aboveColor = ppu.cgram[cgramAddress];
-					}
-					belowColorEnable = ppu.dac.bgColorEnable[aboveIndex[i]];
-				}
-			}
-			if (objAbove && objPriority[x] > priority) {
-				priority = objPriority[x];
-				cgramAddress = objPalette[x];
-				aboveColor = ppu.cgram[cgramAddress];
-				belowColorEnable = objColorEnable && objPalette[x] >= 192;
-			}
-			if (priority == 0) {
-				cgramAddress = 0;
-				aboveColor = ppu.cgram[0];
-				belowColorEnable = backColorEnable;
-			}
-
-			if (!windowBelow) {
-				belowColorEnable = false;
-			}
-			aboveColorEnable = windowAbove;
+			u32 below = belowBest[x];
+			u32 above = aboveBest[x];
+			u32 belowWinner = belowId[x], aboveWinner = aboveId[x];
+			u32 belowPixel = belowWinner == 5 ? backColor : direct && belowWinner == 0 ? directColor(below, below >> 8) : ppu.cgram[below & 0xff];
+			u32 abovePixel = aboveWinner == 5 ? backColor : direct && aboveWinner == 0 ? directColor(above, above >> 8) : ppu.cgram[above & 0xff];
+			bool math = mathFor[aboveWinner] && (aboveWinner != 4 || (above & 0xff) >= 192);
+			bool clear = belowWinner == 5;
 			u32 color;
-			if (!belowColorEnable) {
-				color = aboveColorEnable ? aboveColor : 0;
+			if (!math) {
+				color = windowAbove ? abovePixel : 0;
 			} else {
-				if (dacBlend && transparent) {
-					mathBlend = false;
-					mathHalve = false;
-				} else {
-					mathBlend = dacBlend;
-					mathHalve = dacHalve && aboveColorEnable;
-				}
-				color = blendWith(aboveColorEnable ? aboveColor : 0, mathBlend ? belowColor : fixed, subtract, mathHalve);
+				bool blend = dacBlend && !clear;
+				bool halve = blend || !dacBlend ? dacHalve && windowAbove : false;
+				color = blendWith(windowAbove ? abovePixel : 0, blend ? belowPixel : fixed, subtract, halve);
 			}
-
+			mathOn[x] = math;
 			if (lineValid) {
 				line[0] = brightness | color;
 				line[1] = brightness | color;
 				line += 2;
+			}
+		}
+	}
+
+	if (!blank) {
+		// What the pixels left behind them: the last one's colors, the palette entry last looked up
+		// (a direct color looks none up), and the blend of the last pixel that had color math.
+		u32 below = belowBest[255], above = aboveBest[255];
+		ppu.dac.math.belowColor = belowId[255] == 5 ? ppu.cgram[0] : direct && belowId[255] == 0 ? directColor(below, below >> 8) : ppu.cgram[below & 0xff];
+		ppu.dac.math.aboveColor = aboveId[255] == 5 ? ppu.cgram[0] : direct && aboveId[255] == 0 ? directColor(above, above >> 8) : ppu.cgram[above & 0xff];
+		ppu.dac.math.transparent = belowId[255] == 5;
+		ppu.dac.math.aboveColorEnable = effects[select[255]].aboveColorEnable;
+		ppu.dac.math.belowColorEnable = mathOn[255];
+		for (s32 x = 255; x >= 0; --x) {
+			if (!(direct && aboveId[x] == 0)) {
+				ppu.latch.cgramAddress = aboveId[x] == 5 ? 0 : aboveBest[x] & 0xff;
+				break;
+			}
+			if (!(direct && belowId[x] == 0)) {
+				ppu.latch.cgramAddress = belowId[x] == 5 ? 0 : belowBest[x] & 0xff;
+				break;
+			}
+		}
+		for (s32 x = 255; x >= 0; --x) {
+			if (mathOn[x]) {
+				bool blend = ppu.dac.blendMode && belowId[x] != 5;
+				ppu.dac.math.blendMode = blend;
+				ppu.dac.math.colorHalve = blend || !ppu.dac.blendMode ? ppu.dac.colorHalve && effects[select[x]].aboveColorEnable : false;
+				break;
 			}
 		}
 	}
@@ -2517,14 +2547,6 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 	ppu.obj.x += 256;
 	ppu.window.aboveColorEnable = last->aboveColorEnable;
 	ppu.window.belowColorEnable = last->belowColorEnable;
-	ppu.dac.math.aboveColor = aboveColor;
-	ppu.dac.math.belowColor = belowColor;
-	ppu.dac.math.aboveColorEnable = aboveColorEnable;
-	ppu.dac.math.belowColorEnable = belowColorEnable;
-	ppu.dac.math.transparent = transparent;
-	ppu.dac.math.blendMode = mathBlend;
-	ppu.dac.math.colorHalve = mathHalve;
-	ppu.latch.cgramAddress = cgramAddress;
 	if (lineValid) {
 		ppu.dac.line += 512;
 		if (ppu.drawnTo < ppu.dac.line) {

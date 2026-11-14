@@ -1024,6 +1024,19 @@ static void syncFromCpu(void) {
 }
 
 void ppuLatchCounters(void) {
+	// The counters as they will be once the PPU is past the CPU. While that is still on this line
+	// they can be told without drawing up to there, which leaves the line whole.
+	if (ppu.th.clock < cpu.th.clock) {
+		u64 steps = (cpu.th.clock - ppu.th.clock) / (ppu.th.scalar * 2) + 1;
+		if (ppu.counter.hcounter + steps * 2 < ppu.counter.hperiod) {
+			struct Counter then = ppu.counter;
+			then.hcounter += steps * 2;
+			ppu.io.hcounter = counterHdot(&then);
+			ppu.io.vcounter = VCOUNTER;
+			ppu.latch.counters = 1;
+			return;
+		}
+	}
 	syncFromCpu();
 	ppu.io.hcounter = counterHdot(&ppu.counter);
 	ppu.io.vcounter = VCOUNTER;
@@ -1183,8 +1196,13 @@ static void updateVideoMode(void) {
 #undef OBJ
 }
 
+static bool sameLinePending(void);
+
 static u8 readIO(u32 address, u8 data) {
-	syncFromCpu();
+	// The latch and the counters it latched are the same wherever the PPU has drawn to on its line.
+	if (((address & 0xffff) != 0x2137 && (address & 0xffff) != 0x213c && (address & 0xffff) != 0x213d) || !sameLinePending()) {
+		syncFromCpu();
+	}
 
 	switch (address & 0xffff) {
 	case 0x2104: case 0x2105: case 0x2106: case 0x2108:
@@ -1295,8 +1313,27 @@ static u8 readIO(u32 address, u8 data) {
 	return data;
 }
 
+// Whether a write to VRAM can go in without the PPU drawing up to it first: while the display is
+// off, or the PPU is below the picture and will still be on the same line when it is past the CPU,
+// it reads nothing from VRAM, and the write isn't held back.
+// Whether the PPU, brought past the CPU now, would still be on the line it is on: then nothing
+// that happens at a line's start (a frame's end among them) is waiting on it.
+static bool sameLinePending(void) {
+	if (!(ppu.th.clock < cpu.th.clock)) {
+		return true;
+	}
+	u64 steps = (cpu.th.clock - ppu.th.clock) / (ppu.th.scalar * 2) + 1;
+	return ppu.counter.hcounter + steps * 2 < ppu.counter.hperiod;
+}
+
+static bool vramWriteNow(void) {
+	return (ppu.io.displayDisable || VCOUNTER >= ppu.state.vdisp) && sameLinePending();
+}
+
 static void writeIO(u32 address, u8 data) {
-	syncFromCpu();
+	if (((address & 0xffff) != 0x2118 && (address & 0xffff) != 0x2119) || !vramWriteNow()) {
+		syncFromCpu();
+	}
 
 	switch (address & 0xffff) {
 	// INIDISP

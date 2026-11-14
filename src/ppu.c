@@ -1341,12 +1341,12 @@ static bool vramWriteNow(void) {
 	return ppu.io.displayDisable && sameLinePending();
 }
 
-static void balancedWrite(void);
+static void balancedWrite(u32 address);
 
 static void writeIO(u32 address, u8 data) {
 	if (((address & 0xffff) != 0x2118 && (address & 0xffff) != 0x2119) || !vramWriteNow()) {
 		syncFromCpu();
-		balancedWrite();
+		balancedWrite(address);
 	}
 
 	switch (address & 0xffff) {
@@ -3350,10 +3350,13 @@ static void fastLine(void) {
 	ppu.counter.hcounter = BALANCED_DRAW;
 }
 
-// A write while the line waits to be drawn: the part of it before the write is drawn first, as
-// Exact draws it, up to where Exact's PPU would be (the first step past the CPU's clock).
-static void balancedWrite(void) {
-	if (!systemBalanced || ppu.resume != BALANCED_FORM || ppu.counter.hcounter != BALANCED_DRAW || VCOUNTER > 240) {
+// A write while a line of the picture waits to be drawn: the part of it before the write is drawn
+// first, as Exact draws it, up to where Exact's PPU would be (the first step past the CPU's clock).
+// Lines that show nothing (below the picture, or with the display off unless it is switched on)
+// look the same whatever is written.
+static void balancedWrite(u32 address) {
+	if (!systemBalanced || ppu.resume != BALANCED_FORM || ppu.counter.hcounter != BALANCED_DRAW || VCOUNTER >= ppu.state.vdisp ||
+	    (ppu.io.displayDisable && (address & 0xffff) != 0x2100)) {
 		return;
 	}
 	u64 const step = ppu.th.scalar * 2, lineStart = ppu.th.clock - ppu.th.scalar * BALANCED_DRAW;

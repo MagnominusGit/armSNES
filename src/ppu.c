@@ -1997,6 +1997,137 @@ static void bgLineOffsets(void) {
 	}
 }
 
+// Balanced mode: a whole line of a tiled background without the mosaic, its pixels only (what the
+// tiles' shift registers and the mosaic are left with isn't kept: no line is drawn in parts).
+static void bgLineBalanced(u32 n, bool opt) {
+	struct Background* bg = &ppu.bg[n];
+	lineWide[n] = false;
+	u32 mode = bg->io.mode;
+	u32 planes = 1u << mode;
+	u32 vpixel = VCOUNTER;
+	u32 hscroll = bg->io.hoffset;
+	u32 vscroll = bg->io.voffset;
+	u32 hsize = 256u << bg->io.tileSize << (bg->io.screenSize & 1);
+	u32 vsize = 256u << bg->io.tileSize << (bg->io.screenSize >> 1 & 1);
+	u32 tiles = 3 + bg->io.tileSize;
+	u32 hscreen = bg->io.screenSize & 1 ? 32 << 5 : 0;
+	u32 vscreen = bg->io.screenSize & 2 ? 32 << (5 + (bg->io.screenSize & 1)) : 0;
+	u32 characterMask = ppu.vramMask >> (3 + mode);
+	u32 characterIndex = bg->io.tiledataAddress >> (3 + mode);
+	u32 paletteOffset = ppu.io.bgMode == 0 ? bg->id << 5 : 0;
+	u32 paletteSize = 2 << mode;
+	u32 scrolled = bg->pixelCounter;
+	u32* out = linePixels[n];
+
+	for (u32 k = 0, x = 0; k < 33; ++k) {
+		u32 hpixel = k << 3;
+		u32 hoffset = hpixel + hscroll;
+		u32 voffset = vpixel + vscroll;
+		if (opt) {
+			u32 hlookup = lineOptH[k];
+			u32 vlookup = lineOptV[k];
+			u32 valid = 13 + bg->id;
+			if (ppu.io.bgMode == 4) {
+				if (hlookup >> valid & 1) {
+					if (!(hlookup & 0x8000)) {
+						hoffset = hpixel + (hlookup & ~7) + (hscroll & 7);
+					} else {
+						voffset = vpixel + vlookup;
+					}
+				}
+			} else {
+				if (hlookup >> valid & 1) {
+					hoffset = hpixel + (hlookup & ~7) + (hscroll & 7);
+				}
+				if (vlookup >> valid & 1) {
+					voffset = vpixel + vlookup;
+				}
+			}
+		}
+		hoffset &= hsize - 1;
+		voffset &= vsize - 1;
+		u32 htile = hoffset >> tiles;
+		u32 vtile = voffset >> tiles;
+		u16 offset = (htile & 31) | (vtile & 31) << 5;
+		if (htile & 0x20) {
+			offset += hscreen;
+		}
+		if (vtile & 0x20) {
+			offset += vscreen;
+		}
+		u16 attributes = *vramAt((u16) (bg->io.screenAddress + offset));
+		u32 character = attributes & 0x3ff;
+		u32 group = attributes >> 10 & 7;
+		u32 priority = bg->io.priority[attributes >> 13 & 1];
+		bool hmirror = attributes >> 14 & 1, vmirror = attributes >> 15 & 1;
+		if (tiles == 4 && (bool) (hoffset & 8) != hmirror) {
+			character = (character + 1) & 0x3ff;
+		}
+		if (tiles == 4 && (bool) (voffset & 8) != vmirror) {
+			character = (character + 16) & 0x3ff;
+		}
+		u16 origin = (character + characterIndex) & characterMask;
+		if (vmirror) {
+			voffset ^= 7;
+		}
+		u32 address = (origin << (3 + mode)) + (voffset & 7);
+		const u64* bytes = planeBytes[hmirror];
+		u64 colors = 0;
+		for (u32 index = 0; index < planes; ++index) {
+			u16 data = *vramAt(address + (index << 3));
+			colors |= (bytes[data & 0xff] | bytes[data >> 8] << 1) << (index * 2);
+		}
+		if (k == 32) {
+			// The last tile's pixels past the screen's edge stay in its shift registers, as Exact
+			// leaves them (a background the next line's mode doesn't use shows them).
+			struct BgTile* tile = &bg->tiles[32];
+			tile->character = character;
+			tile->paletteGroup = group;
+			tile->priority = priority;
+			tile->hmirror = hmirror;
+			tile->vmirror = vmirror;
+			tile->address = address;
+			tile->palette = paletteOffset + (group << paletteSize);
+			const u16* spread = planeSpread[hmirror];
+			memset(tile->data, 0, sizeof(tile->data));
+			for (u32 index = 0; index < planes; ++index) {
+				u16 data = *vramAt(address + (index << 3));
+				tile->data[index] = (spread[data & 0xff] | spread[data >> 8] << 1) >> (scrolled * 2);
+			}
+		}
+
+		u32 first = k ? 0 : scrolled;
+		u32 count = 8 - first;
+		if (count > 256 - x) {
+			count = 256 - x;
+		}
+		if (!count) {
+			break;
+		}
+		colors >>= first * 8;
+		if (!colors) {
+			for (u32 i = 0; i < count; ++i) {
+				out[x + i] = 0;
+			}
+		} else {
+			u32 base = group << 8 | priority << 16;
+			u8 palette = paletteOffset + (group << paletteSize);
+			for (u32 i = 0; i < count; ++i) {
+				u8 color = colors >> (i * 8);
+				u8 entry = palette + color;
+				out[x + i] = color && entry ? base | entry : 0;
+			}
+		}
+		x += count;
+	}
+	for (u32 k = 0; k < 32; ++k) {
+		memset(bg->tiles[k].data, 0, sizeof(bg->tiles[k].data));
+	}
+	bg->renderingIndex = (bg->renderingIndex + ((scrolled + 256) >> 3)) & 127;
+	u32 mosaicSize = ppu.mosaic.size;
+	bg->mosaic.hcounter = mosaicSize ? mosaicSize - 255 % mosaicSize : (u16) (0 - 255);
+}
+
 static void bgLineTiles(u32 n, bool fetch, bool opt) {
 	struct Background* bg = &ppu.bg[n];
 	lineWide[n] = false;
@@ -2509,6 +2640,130 @@ static inline u16 blendWith(u32 x, u32 y, bool subtract, bool halve) {
 	return ((((diff - borrow) & (borrow - (borrow >> 5))) & 0x7bde) >> 1) & 0x7fff;
 }
 
+// Balanced mode: a whole line, 256 pixels wide, put together without what the line leaves for a
+// line drawn in parts. A pixel's priority (bits 16 and up) is a layer's alone in each mode, so the
+// winner on a screen is the largest value; false if two layers that are shown share one.
+static bool composeBalanced(const struct WindowEffect effects[4], const u8* objPalette, const u8* objPriority) {
+	// Which layer each priority is: 0-3 the backgrounds, 4 the sprites, 5 none.
+	u8 layerOf[32];
+	memset(layerOf, 5, sizeof(layerOf));
+	for (u32 n = 0; n < 4; ++n) {
+		if (!ppu.bg[n].io.aboveEnable && !ppu.bg[n].io.belowEnable) {
+			continue;
+		}
+		for (u32 k = 0; k < 2; ++k) {
+			u32 p = ppu.bg[n].io.priority[k];
+			if (p >= 32 || (layerOf[p] != 5 && layerOf[p] != n)) {
+				return false;
+			}
+			layerOf[p] = n;
+		}
+	}
+	for (u32 k = 0; k < 4; ++k) {
+		u32 p = ppu.obj.io.priority[k];
+		if (p >= 32 || (layerOf[p] != 5 && layerOf[p] != 4)) {
+			return false;
+		}
+		layerOf[p] = 4;
+	}
+	layerOf[0] = 5;
+
+	bool blank = ppu.io.displayDisable || (!ppu.io.overscan && VCOUNTER >= 225);
+	bool lineValid = ppu.dac.lineValid;
+	u32* line = &ppuCanvas[ppu.dac.line];
+	u32 brightness = ppu.io.displayBrightness << 15;
+	if (blank) {
+		if (lineValid) {
+			for (u32 x = 0; x < 512; ++x) {
+				line[x] = brightness;
+			}
+		}
+	} else {
+		u8 select[256];
+		u32 oneLeft = ppu.window.oneLeft, oneRight = ppu.window.oneRight;
+		u32 twoLeft = ppu.window.twoLeft, twoRight = ppu.window.twoRight;
+		for (u32 x = 0; x < 256; ++x) {
+			select[x] = (x >= oneLeft && x <= oneRight) | (x >= twoLeft && x <= twoRight) << 1;
+		}
+		static u32 objValue[256];
+		for (u32 x = 0; x < 256; ++x) {
+			objValue[x] = (u32) objPriority[x] << 16 | objPalette[x];
+		}
+		static u32 above[256], below[256];
+		bool direct = directColorMode();
+		bool dacBlend = ppu.dac.blendMode, dacHalve = ppu.dac.colorHalve, subtract = ppu.dac.colorMode;
+		u32 fixed = fixedColor();
+		u32 backColor = ppu.cgram[0];
+		for (u32 x = 0; x < 256;) {
+			const struct WindowEffect* effect = &effects[select[x]];
+			u32 end = x + 1;
+			while (end < 256 && select[end] == select[x]) {
+				++end;
+			}
+			for (u32 at = x; at < end; ++at) {
+				above[at] = 0;
+				below[at] = 0;
+			}
+			for (u32 n = 0; n < 4; ++n) {
+				if (ppu.bg[n].io.aboveEnable && !(effect->hideAbove >> n & 1)) {
+					const u32* pixels = linePixels[n];
+					for (u32 at = x; at < end; ++at) {
+						above[at] = pixels[at] > above[at] ? pixels[at] : above[at];
+					}
+				}
+				if (ppu.bg[n].io.belowEnable && !(effect->hideBelow >> n & 1)) {
+					const u32* pixels = lineSub(n);
+					for (u32 at = x; at < end; ++at) {
+						below[at] = pixels[at] > below[at] ? pixels[at] : below[at];
+					}
+				}
+			}
+			if (ppu.obj.io.aboveEnable && !(effect->hideAbove >> 4 & 1)) {
+				for (u32 at = x; at < end; ++at) {
+					above[at] = objValue[at] > above[at] ? objValue[at] : above[at];
+				}
+			}
+			if (ppu.obj.io.belowEnable && !(effect->hideBelow >> 4 & 1)) {
+				for (u32 at = x; at < end; ++at) {
+					below[at] = objValue[at] > below[at] ? objValue[at] : below[at];
+				}
+			}
+			bool windowAbove = effect->aboveColorEnable, windowBelow = effect->belowColorEnable;
+			bool mathFor[6];
+			for (u32 n = 0; n < 4; ++n) {
+				mathFor[n] = ppu.dac.bgColorEnable[n] && windowBelow;
+			}
+			mathFor[4] = ppu.dac.objColorEnable && windowBelow;
+			mathFor[5] = ppu.dac.backColorEnable && windowBelow;
+			for (; x < end; ++x) {
+				u32 b = below[x], a = above[x];
+				u32 belowWinner = layerOf[b >> 16], aboveWinner = layerOf[a >> 16];
+				u32 belowPixel = belowWinner == 5 ? backColor : direct && belowWinner == 0 ? directColor(b, b >> 8) : ppu.cgram[b & 0xff];
+				u32 abovePixel = aboveWinner == 5 ? backColor : direct && aboveWinner == 0 ? directColor(a, a >> 8) : ppu.cgram[a & 0xff];
+				bool math = mathFor[aboveWinner] && (aboveWinner != 4 || (a & 0xff) >= 192);
+				u32 color;
+				if (!math) {
+					color = windowAbove ? abovePixel : 0;
+				} else {
+					bool blend = dacBlend && belowWinner != 5;
+					bool halve = blend || !dacBlend ? dacHalve && windowAbove : false;
+					color = blendWith(windowAbove ? abovePixel : 0, blend ? belowPixel : fixed, subtract, halve);
+				}
+				line[x * 2] = brightness | color;
+				line[x * 2 + 1] = brightness | color;
+			}
+		}
+	}
+	ppu.obj.x += 256;
+	if (lineValid) {
+		ppu.dac.line += 512;
+		if (ppu.drawnTo < ppu.dac.line) {
+			ppu.drawnTo = ppu.dac.line;
+		}
+	}
+	return true;
+}
+
 // A whole line put together, 256 pixels wide, as objRun, windowRunWith, dacBelow and dacAbove would
 // pixel by pixel. The windows cut the line into stretches; in each, only the layers that are on a
 // screen and not hidden by a window are looked at. What those keep between pixels is held here and
@@ -2891,7 +3146,17 @@ static void renderSpan(u32 start, u32 end) {
 	for (int i = 0; tiled && i < 4; ++i) {
 		u32 n = order[i];
 		lined[n] = true;
-		if (whole && ppu.bg[n].io.mode <= BG_BPP8) {
+		bool shown = ppu.bg[n].io.aboveEnable || ppu.bg[n].io.belowEnable;
+		if (systemBalanced && whole && ppu.bg[n].io.mode <= BG_BPP8 && !ppu.bg[n].mosaic.enable) {
+			if (shown) {
+				bgLineBalanced(n, opt);
+			}
+		} else if (systemBalanced && whole && !shown && ppu.bg[n].io.mode == BG_INACTIVE) {
+			if (opt && n == 2) {
+				bgLineOffsets();
+			}
+			lineWide[n] = false;
+		} else if (whole && ppu.bg[n].io.mode <= BG_BPP8) {
 			bgLineTiles(n, true, opt);
 		} else if (whole && opt && n == 2) {
 			// BG3 isn't drawn in these modes, but the other two's offsets are fetched from it.
@@ -2951,6 +3216,10 @@ static void renderSpan(u32 start, u32 end) {
 	// So is one that shows nothing: its backgrounds weren't fetched, and aren't looked at.
 	bool dark = ppu.io.displayDisable || (!ppu.io.overscan && VCOUNTER >= 225);
 	if (objLine && (allLined || (!tiled && dark)) && draws && ppu.window.x == 0) {
+		if (systemBalanced && !hires && !ppu.io.pseudoHires && composeBalanced(effects, objPalette, objPriority)) {
+			ppu.counter.hcounter = start;
+			return;
+		}
 		composeLine(effects, objPalette, objPriority, tiled, hires || ppu.io.pseudoHires);
 		ppu.counter.hcounter = start;
 		return;

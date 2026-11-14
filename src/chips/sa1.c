@@ -91,7 +91,7 @@ static inline bool ioReadRepeats(u32 address) {
 // is done on the spot, with the same steps. Otherwise it goes the way that can stop.
 static bool fastRead(void);
 static bool fastWrite(void);
-static bool fastSteps(u32 steps);
+static inline bool fastSteps(u32 steps);
 static bool pcInRom(void);
 static bool romConflict(void);
 
@@ -1121,9 +1121,20 @@ static void dmaNormalAtOnce(void) {
 
 // --- Accesses that can't stop ---
 
-static bool fastSteps(u32 steps) {
+static inline __attribute__((always_inline)) bool fastSteps(u32 steps) {
 	// Balanced mode stops only between instructions: every access is done on the spot.
-	if (!systemBalanced && cpu.th.clock < sa1.th.clock + sa1.th.scalar * 2 * steps) {
+	if (systemBalanced) {
+		sa1.th.clock += sa1.th.scalar * 2 * steps;
+		if (!(sa1.io.hen | sa1.io.ven) && sa1.status.hcounter + steps * 2 < (sa1.io.hvselb ? 0x800u : 1364u)) {
+			sa1.status.hcounter += steps * 2;
+			return true;
+		}
+		while (steps--) {
+			counters();
+		}
+		return true;
+	}
+	if (cpu.th.clock < sa1.th.clock + sa1.th.scalar * 2 * steps) {
 		return false;
 	}
 	while (steps--) {

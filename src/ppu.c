@@ -564,6 +564,41 @@ static void objEvaluate(u8 index) {
 	}
 }
 
+#if !defined(ARMSNES_DOT)
+// Balanced mode: a whole line's evaluation at once, as the 128 calls of objEvaluate leave it.
+static void objEvaluateLine(void) {
+	if (ppu.io.displayDisable) {
+		return;
+	}
+	u32 widthSmall, widthLarge, heightSmall, heightLarge;
+	{
+		struct OamObject probe = { 0 };
+		widthSmall = objectWidth(&probe), heightSmall = objectHeight(&probe) >> ppu.obj.io.interlace;
+		probe.size = 1;
+		widthLarge = objectWidth(&probe), heightLarge = objectHeight(&probe) >> ppu.obj.io.interlace;
+	}
+	u32 line = ppu.obj.y % 256;
+	u32 count = ppu.obj.itemCount;
+	for (u32 index = 0; index < 128 && count <= 32; ++index) {
+		u8 n = (ppu.obj.latchFirstSprite + index) & 127;
+		const struct OamObject* sprite = &ppu.oam[n];
+		u32 width = sprite->size ? widthLarge : widthSmall, height = sprite->size ? heightLarge : heightSmall;
+		if (sprite->x > 256 && sprite->x + width - 1 < 512) {
+			continue;
+		}
+		if (((line - sprite->y) & 255) >= height) {
+			continue;
+		}
+		ppu.latch.oamAddress = n;
+		if (count++ < 32) {
+			ppu.obj.item[ppu.obj.active][count - 1].valid = true;
+			ppu.obj.item[ppu.obj.active][count - 1].index = n;
+		}
+	}
+	ppu.obj.itemCount = count;
+}
+#endif
+
 static void objRun(void) {
 	ppu.obj.above.priority = 0;
 	ppu.obj.below.priority = 0;
@@ -2682,15 +2717,29 @@ static bool composeBalanced(const struct WindowEffect effects[4], const u8* objP
 			}
 		}
 	} else {
-		u8 select[256];
-		u32 oneLeft = ppu.window.oneLeft, oneRight = ppu.window.oneRight;
-		u32 twoLeft = ppu.window.twoLeft, twoRight = ppu.window.twoRight;
-		for (u32 x = 0; x < 256; ++x) {
-			select[x] = (x >= oneLeft && x <= oneRight) | (x >= twoLeft && x <= twoRight) << 1;
+		// Which window effect each pixel has; one stretch when the windows change nothing.
+		static u8 select[256];
+		bool windows = memcmp(&effects[0], &effects[1], sizeof(effects[0])) || memcmp(&effects[0], &effects[2], sizeof(effects[0])) ||
+		               memcmp(&effects[0], &effects[3], sizeof(effects[0]));
+		if (windows) {
+			u32 oneLeft = ppu.window.oneLeft, oneRight = ppu.window.oneRight;
+			u32 twoLeft = ppu.window.twoLeft, twoRight = ppu.window.twoRight;
+			for (u32 x = 0; x < 256; ++x) {
+				select[x] = (x >= oneLeft && x <= oneRight) | (x >= twoLeft && x <= twoRight) << 1;
+			}
+		}
+		// Sprites on the line at all.
+		bool sprites = false;
+		for (u32 x = 0; x < 256 && !sprites; x += 8) {
+			u64 eight;
+			memcpy(&eight, &objPriority[x], 8);
+			sprites = eight != 0;
 		}
 		static u32 objValue[256];
-		for (u32 x = 0; x < 256; ++x) {
-			objValue[x] = (u32) objPriority[x] << 16 | objPalette[x];
+		if (sprites) {
+			for (u32 x = 0; x < 256; ++x) {
+				objValue[x] = (u32) objPriority[x] << 16 | objPalette[x];
+			}
 		}
 		static u32 above[256], below[256];
 		bool direct = directColorMode();
@@ -2698,8 +2747,11 @@ static bool composeBalanced(const struct WindowEffect effects[4], const u8* objP
 		u32 fixed = fixedColor();
 		u32 backColor = ppu.cgram[0];
 		for (u32 x = 0; x < 256;) {
-			const struct WindowEffect* effect = &effects[select[x]];
+			const struct WindowEffect* effect = &effects[windows ? select[x] : 0];
 			u32 end = x + 1;
+			if (!windows) {
+				end = 256;
+			}
 			while (end < 256 && select[end] == select[x]) {
 				++end;
 			}
@@ -2721,12 +2773,12 @@ static bool composeBalanced(const struct WindowEffect effects[4], const u8* objP
 					}
 				}
 			}
-			if (ppu.obj.io.aboveEnable && !(effect->hideAbove >> 4 & 1)) {
+			if (sprites && ppu.obj.io.aboveEnable && !(effect->hideAbove >> 4 & 1)) {
 				for (u32 at = x; at < end; ++at) {
 					above[at] = objValue[at] > above[at] ? objValue[at] : above[at];
 				}
 			}
-			if (ppu.obj.io.belowEnable && !(effect->hideBelow >> 4 & 1)) {
+			if (sprites && ppu.obj.io.belowEnable && !(effect->hideBelow >> 4 & 1)) {
 				for (u32 at = x; at < end; ++at) {
 					below[at] = objValue[at] > below[at] ? objValue[at] : below[at];
 				}
@@ -2738,6 +2790,17 @@ static bool composeBalanced(const struct WindowEffect effects[4], const u8* objP
 			}
 			mathFor[4] = ppu.dac.objColorEnable && windowBelow;
 			mathFor[5] = ppu.dac.backColorEnable && windowBelow;
+			if (!(mathFor[0] | mathFor[1] | mathFor[2] | mathFor[3] | mathFor[4] | mathFor[5])) {
+				// No color math: the main screen's pixel, or black.
+				for (; x < end; ++x) {
+					u32 a = above[x];
+					u32 aboveWinner = layerOf[a >> 16];
+					u32 color = !windowAbove ? 0 : aboveWinner == 5 ? backColor : direct && aboveWinner == 0 ? directColor(a, a >> 8) : ppu.cgram[a & 0xff];
+					line[x * 2] = brightness | color;
+					line[x * 2 + 1] = brightness | color;
+				}
+				continue;
+			}
 			for (; x < end; ++x) {
 				u32 b = below[x], a = above[x];
 				u32 belowWinner = layerOf[b >> 16], aboveWinner = layerOf[a >> 16];
@@ -3114,10 +3177,14 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 }
 
 static void renderSpan(u32 start, u32 end) {
-	for (u32 at = start; at < end && at <= 1016; at += 2) {
-		if (at % 8 == 0) {
-			ppu.counter.hcounter = at;
-			objEvaluate(at >> 3);
+	if (systemBalanced && start == 0 && end == 1080) {
+		objEvaluateLine();
+	} else {
+		for (u32 at = start; at < end && at <= 1016; at += 2) {
+			if (at % 8 == 0) {
+				ppu.counter.hcounter = at;
+				objEvaluate(at >> 3);
+			}
 		}
 	}
 

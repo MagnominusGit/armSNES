@@ -2806,7 +2806,7 @@ static inline u16 blendWith(u32 x, u32 y, bool subtract, bool halve) {
 // Balanced mode: a whole line, 256 pixels wide, put together without what the line leaves for a
 // line drawn in parts. A pixel's priority (bits 16 and up) is a layer's alone in each mode, so the
 // winner on a screen is the largest value; false if two layers that are shown share one.
-static bool composeBalanced(const struct WindowEffect effects[4], const u8* objPalette, const u8* objPriority) {
+static bool composeBalanced(const struct WindowEffect effects[4], const u8* objPalette, const u8* objPriority, bool wide) {
 	// Which layer each priority is: 0-3 the backgrounds, 4 the sprites, 5 none.
 	u8 layerOf[32];
 	memset(layerOf, 5, sizeof(layerOf));
@@ -2830,6 +2830,15 @@ static bool composeBalanced(const struct WindowEffect effects[4], const u8* objP
 		layerOf[p] = 4;
 	}
 	layerOf[0] = 5;
+	// Twice as wide, only without color math: a column's sub screen pixel shows when the column
+	// before showed its main screen's.
+	bool anyMath = ppu.dac.bgColorEnable[0] | ppu.dac.bgColorEnable[1] | ppu.dac.bgColorEnable[2] | ppu.dac.bgColorEnable[3] |
+	               ppu.dac.objColorEnable | ppu.dac.backColorEnable;
+	if (wide && anyMath &&
+	    (effects[0].belowColorEnable | effects[1].belowColorEnable | effects[2].belowColorEnable | effects[3].belowColorEnable)) {
+		return false;
+	}
+	bool shownBefore = ppu.dac.math.aboveColorEnable;
 
 	bool blank = ppu.io.displayDisable || (!ppu.io.overscan && VCOUNTER >= 225);
 	bool lineValid = ppu.dac.lineValid;
@@ -2915,6 +2924,18 @@ static bool composeBalanced(const struct WindowEffect effects[4], const u8* objP
 			}
 			mathFor[4] = ppu.dac.objColorEnable && windowBelow;
 			mathFor[5] = ppu.dac.backColorEnable && windowBelow;
+			if (wide) {
+				for (; x < end; ++x) {
+					u32 b = below[x], a = above[x];
+					u32 belowWinner = layerOf[b >> 16], aboveWinner = layerOf[a >> 16];
+					u32 belowPixel = belowWinner == 5 ? backColor : direct && belowWinner == 0 ? directColor(b, b >> 8) : ppu.cgram[b & 0xff];
+					u32 abovePixel = aboveWinner == 5 ? backColor : direct && aboveWinner == 0 ? directColor(a, a >> 8) : ppu.cgram[a & 0xff];
+					line[x * 2] = brightness | (shownBefore ? belowPixel : 0);
+					line[x * 2 + 1] = brightness | (windowAbove ? abovePixel : 0);
+					shownBefore = windowAbove;
+				}
+				continue;
+			}
 			if (!(mathFor[0] | mathFor[1] | mathFor[2] | mathFor[3] | mathFor[4] | mathFor[5])) {
 				// No color math: the main screen's pixel, or black.
 				for (; x < end; ++x) {
@@ -3417,7 +3438,7 @@ static void renderSpan(u32 start, u32 end) {
 	// So is one that shows nothing: its backgrounds weren't fetched, and aren't looked at.
 	bool dark = ppu.io.displayDisable || (!ppu.io.overscan && VCOUNTER >= 225);
 	if (objLine && (allLined || (!tiled && dark)) && draws && ppu.window.x == 0) {
-		if (systemBalanced && !hires && !ppu.io.pseudoHires && composeBalanced(effects, objPalette, objPriority)) {
+		if (systemBalanced && composeBalanced(effects, objPalette, objPriority, hires || ppu.io.pseudoHires)) {
 			ppu.counter.hcounter = start;
 			return;
 		}

@@ -503,13 +503,19 @@ static inline void idle(void) {
 	}
 }
 
-void cx4Run(void) {
+// Exact: the HG51B can stop at any clock step. In Balanced mode it leaves between instructions, for
+// the Balanced loop.
+static void cx4RunExact(void) {
 	int tail;
 	active = true;
 
 dispatch:
 	switch (cx4.state) {
 	case MAIN:
+		if (systemBalanced) {
+			active = false;
+			return;
+		}
 		if (cx4.io.lock) {
 			idle();
 			STEP(1);
@@ -667,6 +673,155 @@ dispatch:
 done:
 	cx4.state = MAIN;
 	goto dispatch;
+}
+
+// Balanced mode: the subroutines as functions, and the HG51B stopping only between instructions
+// once it is ahead of the S-CPU.
+static void stepBalanced(u32 clocks) {
+	if (cx4.io.bus.enable) {
+		if (cx4.io.bus.pending > clocks) {
+			cx4.io.bus.pending -= clocks;
+		} else {
+			cx4.io.bus.enable = 0;
+			cx4.io.bus.pending = 0;
+			if (cx4.io.bus.reading) {
+				cx4.io.bus.reading = 0;
+				cx4.r.mdr = read(cx4.io.bus.address);
+			}
+			if (cx4.io.bus.writing) {
+				cx4.io.bus.writing = 0;
+				write(cx4.io.bus.address, cx4.r.mdr);
+			}
+		}
+	}
+	cx4.th.clock += cx4.th.scalar * clocks;
+}
+
+static void cacheBalanced(void) {
+	u32 address = (cx4.io.cache.base + cx4.r.pb * 512) & 0xffffff;
+	if (cx4.io.cache.preload == 0) {
+		if (cx4.io.cache.address[cx4.io.cache.page] == address) {
+			cx4.io.cache.enable = 0;
+			cx4.result = true;
+			return;
+		}
+		cx4.io.cache.page ^= 1;
+		if (cx4.io.cache.address[cx4.io.cache.page] == address) {
+			cx4.io.cache.enable = 0;
+			cx4.result = true;
+			return;
+		}
+		if (cx4.io.cache.lock[cx4.io.cache.page]) {
+			cx4.io.cache.page ^= 1;
+		}
+		if (cx4.io.cache.lock[cx4.io.cache.page]) {
+			cx4.io.cache.enable = 0;
+			cx4.result = false;
+			return;
+		}
+	}
+	cx4.io.cache.preload = 0;
+	cx4.io.cache.address[cx4.io.cache.page] = address;
+	for (u32 n = 0; n < 256; ++n) {
+		u16* word = &cx4.programRAM[cx4.io.cache.page][n];
+		stepBalanced(waitFor(address));
+		*word = (*word & 0xff00) | read(address);
+		address = (address + 1) & 0xffffff;
+		stepBalanced(waitFor(address));
+		*word = (*word & 0x00ff) | read(address) << 8;
+		address = (address + 1) & 0xffffff;
+	}
+	cx4.io.cache.enable = 0;
+	cx4.result = true;
+}
+
+static void advanceBalanced(void) {
+	cx4.r.pc++;
+	if (cx4.r.pc == 0) {
+		if (cx4.io.cache.page == 1) {
+			halt();
+			return;
+		}
+		cx4.io.cache.page = 1;
+		if (cx4.io.cache.lock[cx4.io.cache.page]) {
+			halt();
+			return;
+		}
+		cx4.r.pb = cx4.r.p;
+		cacheBalanced();
+		if (!cx4.result) {
+			halt();
+		}
+	}
+}
+
+static void dmaBalanced(void) {
+	u32 length = cx4.io.dma.length;
+	for (u32 n = 0; n < length; ++n) {
+		u32 source = (cx4.io.dma.source + n) & 0xffffff;
+		u32 target = (cx4.io.dma.target + n) & 0xffffff;
+		if ((isRom(source) && isRom(target)) || (isRam(source) && isRam(target))) {
+			cx4.io.lock = true;
+			return;
+		}
+		stepBalanced(waitFor(source));
+		u8 data = read(source);
+		stepBalanced(waitFor(target));
+		write(target, data);
+	}
+	cx4.io.dma.enable = 0;
+}
+
+static void cx4RunBalanced(void) {
+	active = true;
+	while (cx4.th.clock <= cpu.th.clock) {
+		if (cx4.io.lock) {
+			idle();
+			stepBalanced(1);
+		} else if (cx4.io.suspendEnable) {
+			if (!cx4.io.suspendDuration) {
+				idle();
+				stepBalanced(1);
+			} else {
+				stepBalanced(cx4.io.suspendDuration);
+				cx4.io.suspendDuration = 0;
+				cx4.io.suspendEnable = 0;
+			}
+		} else if (cx4.io.cache.enable) {
+			cacheBalanced();
+		} else if (cx4.io.dma.enable) {
+			dmaBalanced();
+		} else if (cx4.io.halt) {
+			idle();
+			stepBalanced(1);
+		} else {
+			cacheBalanced();
+			if (!cx4.result) {
+				halt();
+				continue;
+			}
+			cx4.opcode = cx4.programRAM[cx4.io.cache.page][cx4.r.pc];
+			advanceBalanced();
+			stepBalanced(1);
+			int tail = instruction(cx4.opcode);
+			if (tail == TAIL_SKIP) {
+				advanceBalanced();
+				stepBalanced(1);
+			} else if (tail != TAIL_NONE) {
+				stepBalanced(tail);
+			}
+		}
+	}
+	active = false;
+}
+
+void cx4Run(void) {
+	if (!systemBalanced || cx4.state != MAIN) {
+		cx4RunExact();
+	}
+	if (systemBalanced && cx4.state == MAIN) {
+		cx4RunBalanced();
+	}
 }
 
 // --- The S-CPU's view ---

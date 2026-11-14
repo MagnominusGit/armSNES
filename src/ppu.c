@@ -2331,6 +2331,24 @@ static void bgLineTiles(u32 n, bool fetch, bool opt) {
 		// A background the mode doesn't use: a pixel is what its tile shifts out. The mosaic's counter still runs: it
 		// takes a pixel at 0 and every mosaicSize after, and the last one it took is kept.
 		u32 lastTaken = mosaicSize ? 255 - 255 % mosaicSize : 0;
+		// With nothing left in the tiles it shifts out, the line is empty.
+		bool empty = true;
+		for (u32 t = 0; t <= 32 && empty; ++t) {
+			const struct BgTile* tile = &bg->tiles[(bg->renderingIndex + t) & 127];
+			empty = !(tile->data[0] | tile->data[1] | tile->data[2] | tile->data[3]);
+		}
+		if (empty) {
+			memset(linePixels[n], 0, sizeof(linePixels[n]));
+			const struct BgTile* taken = &bg->tiles[(bg->renderingIndex + ((bg->pixelCounter + lastTaken) >> 3)) & 127];
+			bg->mosaic.pixel.priority = taken->priority;
+			bg->mosaic.pixel.palette = 0;
+			bg->mosaic.pixel.paletteGroup = taken->paletteGroup;
+			bg->renderingIndex = (bg->renderingIndex + 32) & 127;
+			bg->mosaic.hcounter = mosaicSize ? mosaicSize - 255 % mosaicSize : (u16) (0 - 255);
+			bg->output.above.priority = 0;
+			bg->output.below.priority = 0;
+			return;
+		}
 		u32 index = bg->renderingIndex;
 		u32 x = 0;
 		u32 pixels = 8 - bg->pixelCounter;
@@ -2810,8 +2828,18 @@ static bool composeBalanced(const struct WindowEffect effects[4], const u8* objP
 	// Which layer each priority is: 0-3 the backgrounds, 4 the sprites, 5 none.
 	u8 layerOf[32];
 	memset(layerOf, 5, sizeof(layerOf));
+	// A background the mode doesn't use, with nothing left to shift out, is left out.
+	bool skip[4];
 	for (u32 n = 0; n < 4; ++n) {
-		if (!ppu.bg[n].io.aboveEnable && !ppu.bg[n].io.belowEnable) {
+		skip[n] = !ppu.bg[n].io.aboveEnable && !ppu.bg[n].io.belowEnable;
+		if (!skip[n] && ppu.bg[n].io.mode == BG_INACTIVE) {
+			u32 any = 0;
+			for (u32 x = 0; x < 256; ++x) {
+				any |= linePixels[n][x] | lineSub(n)[x];
+			}
+			skip[n] = !any;
+		}
+		if (skip[n]) {
 			continue;
 		}
 		for (u32 k = 0; k < 2; ++k) {
@@ -2894,6 +2922,9 @@ static bool composeBalanced(const struct WindowEffect effects[4], const u8* objP
 				below[at] = 0;
 			}
 			for (u32 n = 0; n < 4; ++n) {
+				if (skip[n]) {
+					continue;
+				}
 				if (ppu.bg[n].io.aboveEnable && !(effect->hideAbove >> n & 1)) {
 					const u32* pixels = linePixels[n];
 					for (u32 at = x; at < end; ++at) {

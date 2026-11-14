@@ -1024,6 +1024,13 @@ static void syncFromCpu(void) {
 }
 
 void ppuLatchCounters(void) {
+	if (systemFast) {
+		syncFromCpu();
+		ppu.io.hcounter = counterHdot(&cpu.counter);
+		ppu.io.vcounter = cpu.counter.vcounter;
+		ppu.latch.counters = 1;
+		return;
+	}
 	// The counters as they will be once the PPU is past the CPU. While that is still on this line
 	// they can be told without drawing up to there, which leaves the line whole.
 	if (ppu.th.clock < cpu.th.clock) {
@@ -1319,6 +1326,10 @@ static u8 readIO(u32 address, u8 data) {
 // Whether the PPU, brought past the CPU now, would still be on the line it is on: then nothing
 // that happens at a line's start (a frame's end among them) is waiting on it.
 static bool sameLinePending(void) {
+	// Fast mode's PPU catches up for nothing: no reason to put it off.
+	if (systemFast) {
+		return false;
+	}
 	if (!(ppu.th.clock < cpu.th.clock)) {
 		return true;
 	}
@@ -2861,8 +2872,9 @@ static void renderSpan(u32 start, u32 end) {
 	bool opt = ppu.io.bgMode == 2 || ppu.io.bgMode == 4;
 
 	// While the display is off nothing is fetched or shifted; if it comes back on before the line
-	// ends, the backgrounds are brought up to here first, from VRAM as it is now.
-	bool tiled = true;
+	// ends, the backgrounds are brought up to here first, from VRAM as it is now. Nor, in Fast mode,
+	// below the picture.
+	bool tiled = !(systemFast && VCOUNTER >= ppu.state.vdisp);
 	if (tiled && ppu.io.displayDisable) {
 		if (ppu.blankFrom == BLANK_NONE) {
 			ppu.blankFrom = start;
@@ -3034,7 +3046,79 @@ static inline u32 stepsBeforeCpu(u32 wait) {
 
 #define F ppu.fetch
 
+// --- Fast mode: the PPU does a line in two goes, with nothing between them: its start (H = 0), and
+// the whole line drawn where the picture's part of it ends (H = 1096). A write before that shows on
+// the whole line, one after it from the next line on. ppu.resume says the PPU is between two such
+// goes, and its H counter which comes next. ---
+enum { FAST_FORM = 0xfa57, FAST_DRAW = 1096 };
+static bool toLineTop;
+
+static void fastAdvance(u32 clocks) {
+	tickN(clocks);
+	ppu.th.clock += ppu.th.scalar * clocks;
+}
+
+static void fastLine(void) {
+	const struct OamObject* sprite;
+	__typeof__(ppu.obj.tile[0][0])* tile;
+	u32 sx, mx, pos;
+	ppu.counter.hcounter = 0;
+	renderSpan(0, 1080);
+#pragma push_macro("STEP")
+#undef STEP
+#define STEP(clocks) ((void) 0)
+#include "ppu_fetch.inc"
+#pragma pop_macro("STEP")
+	ppu.obj.io.rangeOver |= ppu.obj.itemCount > 32;
+	ppu.obj.io.timeOver |= ppu.obj.tileCount > 34;
+	ppu.counter.hcounter = FAST_DRAW;
+}
+
+static void ppuRunExact(void);
+
+static void ppuRunFast(void) {
+	if (ppu.resume != FAST_FORM) {
+		// From Exact: the line it is in is finished as Exact does it.
+		u64 const now = cpu.th.clock;
+		cpu.th.clock = ~0ull >> 1;
+		toLineTop = true;
+		ppuRunExact();
+		toLineTop = false;
+		cpu.th.clock = now;
+		ppu.resume = FAST_FORM;
+	}
+	do {
+		if (ppu.counter.hcounter == 0) {
+			lineStart();
+			fastAdvance(FAST_DRAW);
+		} else {
+			if (VCOUNTER <= 240) {
+				fastLine();
+			}
+			fastAdvance(ppu.counter.hperiod - FAST_DRAW);
+		}
+	} while (!(cpu.th.clock < ppu.th.clock));
+}
+
 void ppuRun(void) {
+	if (systemFast) {
+		ppuRunFast();
+		return;
+	}
+	if (ppu.resume == FAST_FORM) {
+		// From Fast: a line begun there is drawn as Fast does it.
+		if (ppu.counter.hcounter) {
+			if (VCOUNTER <= 240) {
+				fastLine();
+			}
+			fastAdvance(ppu.counter.hperiod - FAST_DRAW);
+		}
+		ppu.resume = 0;
+	}
+	ppuRunExact();
+}
+
+static void ppuRunExact(void) {
 	const struct OamObject* sprite;
 	__typeof__(ppu.obj.tile[0][0])* tile;
 	u32 sx, mx, pos;
@@ -3042,6 +3126,10 @@ void ppuRun(void) {
 	switch (ppu.resume) {
 	case 0:
 		for (;;) {
+			if (toLineTop) {
+				ppu.resume = 0;
+				return;
+			}
 			lineStart();
 
 			if (VCOUNTER > 240) {
@@ -3065,88 +3153,7 @@ void ppuRun(void) {
 				}
 			}
 
-			// H = 1080: the tiles of the sprites found on this line are fetched for the next one, two
-			// words in eight clocks each.
-			for (F.i = 31; F.i >= 0; --F.i) {
-				if (!ppu.obj.item[ppu.obj.active][F.i].valid) {
-					continue;
-				}
-
-				if (ppu.io.displayDisable || VCOUNTER >= ppu.state.vdisp - 1u) {
-					STEP(8);
-					continue;
-				}
-
-				ppu.latch.oamAddress = ppu.obj.item[ppu.obj.active][F.i].index;
-				F.sprite = ppu.latch.oamAddress;
-				sprite = &ppu.oam[F.sprite];
-
-				F.tileWidth = objectWidth(sprite) >> 3;
-				F.x = sprite->x;
-				F.y = (ppu.obj.y - sprite->y) & 255;
-				if (ppu.obj.io.interlace) {
-					F.y <<= 1;
-				}
-
-				if (sprite->vflip) {
-					if (objectWidth(sprite) == objectHeight(sprite)) {
-						F.y = objectHeight(sprite) - 1 - F.y;
-					} else if ((u32) F.y < objectWidth(sprite)) {
-						F.y = objectWidth(sprite) - 1 - F.y;
-					} else {
-						F.y = objectWidth(sprite) + (objectWidth(sprite) - 1) - (F.y - objectWidth(sprite));
-					}
-				}
-
-				if (ppu.obj.io.interlace) {
-					F.y = !sprite->vflip ? F.y + ppu.counter.field : F.y - ppu.counter.field;
-				}
-
-				F.x &= 511;
-				F.y &= 255;
-
-				F.tiledataAddress = ppu.obj.io.tiledataAddress;
-				if (sprite->nameselect) {
-					F.tiledataAddress += (1 + ppu.obj.io.nameselect) << 12;
-				}
-				F.chrx = sprite->character & 15;
-				F.chry = (((sprite->character >> 4) + (F.y >> 3)) & 15) << 4;
-
-				for (F.tx = 0; F.tx < F.tileWidth; ++F.tx) {
-					sx = (F.x + (F.tx << 3)) & 511;
-					if (F.x != 256 && sx >= 256 && sx + 7 < 512) {
-						continue;
-					}
-					if (ppu.obj.tileCount++ >= 34) {
-						break;
-					}
-
-					sprite = &ppu.oam[F.sprite];
-					F.n = ppu.obj.tileCount - 1;
-					tile = &ppu.obj.tile[ppu.obj.active][F.n];
-					tile->valid = true;
-					tile->x = sx;
-					tile->priority = sprite->priority;
-					tile->palette = 128 + (sprite->palette << 4);
-					tile->hflip = sprite->hflip;
-
-					mx = !sprite->hflip ? F.tx : F.tileWidth - 1 - F.tx;
-					pos = F.tiledataAddress + ((F.chry + ((F.chrx + mx) & 15)) << 4);
-					F.address = (pos & 0xfff0) + (F.y & 7);
-
-					if (!ppu.io.displayDisable) {
-						tile->data = (tile->data & 0xffff0000) | *vramAt(F.address + 0);
-					}
-					STEP(4);
-
-					if (!ppu.io.displayDisable) {
-						tile = &ppu.obj.tile[ppu.obj.active][F.n];
-						tile->data = (tile->data & 0x0000ffff) | *vramAt(F.address + 8) << 16;
-					}
-					STEP(4);
-				}
-			}
-
+#include "ppu_fetch.inc"
 			ppu.obj.io.rangeOver |= ppu.obj.itemCount > 32;
 			ppu.obj.io.timeOver |= ppu.obj.tileCount > 34;
 

@@ -235,6 +235,8 @@ static inline void aluEdge(void) {
 	}
 }
 
+static void joypadCycle(void);
+
 // Every 128 clocks.
 static void joypadEdge(void) {
 	if (cpu.counter.vcounter == ppu.state.vdisp && (cpu.counterCpu & 255) == 0 && cpu.counter.hcounter >= 130 &&
@@ -248,7 +250,11 @@ static void joypadEdge(void) {
 		}
 		cpu.status.autoJoypadCounter++;
 	}
+	joypadCycle();
+}
 
+// One 128-clock cycle of the automatic polling, autoJoypadCounter saying which.
+static void joypadCycle(void) {
 	if (cpu.status.autoJoypadCounter == 0) {
 		// The controllers are latched on the first cycle.
 		cpu.status.autoJoypadLatch = cpu.io.autoJoypadPoll;
@@ -295,8 +301,134 @@ static void hdmaReset(void);
 static bool hdmaEnable(void);
 static bool hdmaActive(void);
 
+// --- Fast mode: the clock moves a bus access at a time, and what the counters bring about (the line's
+// end, the interrupts, HDMA, the DRAM refresh, the automatic joypad polling) is looked at only when
+// the access passed the place on the line where the next of them happens. ---
+
+// Where on this line the next of them is (0: to be worked out).
+static u32 fastNext;
+
+// The IRQ's level where the counters are. With an H position the level stands for "taken on this
+// line"; the line's end clears it.
+static void fastIrq(void) {
+	bool valid = false;
+	if (cpu.io.irqEnable) {
+		u32 v = cpu.counter.vcounter, h = cpu.counter.hcounter;
+		if (!cpu.io.hirqEnable) {
+			valid = v == cpu.io.vtime;
+		} else if ((u32) cpu.io.htime + 10 < cpu.counter.hperiod) {
+			valid = (!cpu.io.virqEnable || v == cpu.io.vtime) && h >= (u32) cpu.io.htime + 10;
+		} else if (cpu.io.htime < cpu.counter.lastHperiod) {
+			// Its place is in the next line's first clocks.
+			valid = !cpu.io.virqEnable || (v ? v - 1 : cpu.counter.lastVperiod - 1) == cpu.io.vtime;
+		}
+	}
+	if (raiseTo(&cpu.status.irqValid, valid)) {
+		cpu.status.irqLine = 1;
+		cpu.status.irqTransition = 1;
+	}
+}
+
+static void fastPlan(void) {
+	u32 h = cpu.counter.hcounter, next = cpu.counter.hperiod;
+	if (!cpu.status.dramRefresh && (u32) cpu.status.dramRefreshPosition < next) {
+		next = cpu.status.dramRefreshPosition;
+	}
+	if (!cpu.status.hdmaSetupTriggered && (u32) cpu.status.hdmaSetupPosition < next) {
+		next = cpu.status.hdmaSetupPosition;
+	}
+	if (!cpu.status.hdmaTriggered && (u32) cpu.status.hdmaPosition < next) {
+		next = cpu.status.hdmaPosition;
+	}
+	if (cpu.io.hirqEnable && !cpu.status.irqValid && (u32) cpu.io.htime + 10 > h && (u32) cpu.io.htime + 10 < next) {
+		next = cpu.io.htime + 10;
+	}
+	if (cpu.counter.vcounter == ppu.state.vdisp && cpu.status.autoJoypadCounter == 33 && h < 130) {
+		next = next < 130 ? next : 130;
+	}
+	fastNext = next;
+}
+
+static void fastCatch(void) {
+	for (;;) {
+		u32 h = cpu.counter.hcounter;
+		fastIrq();
+		if (!cpu.status.dramRefresh && h >= (u32) cpu.status.dramRefreshPosition) {
+			// Five refresh cycles of eight clocks.
+			cpu.status.dramRefresh = 2;
+			cpu.counterCpu += 40;
+			cpu.counter.hcounter += 40;
+			threadStep(&cpu.th, 40);
+			for (int n = 0; n < 5; ++n) {
+				aluEdge();
+			}
+			continue;
+		}
+		if (!cpu.status.hdmaSetupTriggered && h >= (u32) cpu.status.hdmaSetupPosition) {
+			cpu.status.hdmaSetupTriggered = 1;
+			hdmaReset();
+			if (hdmaEnable()) {
+				cpu.status.hdmaPending = 1;
+				cpu.status.hdmaMode = 0;
+			}
+		}
+		if (!cpu.status.hdmaTriggered && h >= (u32) cpu.status.hdmaPosition) {
+			cpu.status.hdmaTriggered = 1;
+			if (hdmaActive()) {
+				cpu.status.hdmaPending = 1;
+				cpu.status.hdmaMode = 1;
+			}
+		}
+		// The automatic polling's 34 cycles at once, a frame's marked done by the count past its end.
+		if (cpu.counter.vcounter == ppu.state.vdisp && cpu.status.autoJoypadCounter == 33 && h >= 130) {
+			cpu.status.autoJoypadCounter = 0;
+			joypadCycle();
+			while (cpu.status.autoJoypadCounter < 33) {
+				cpu.status.autoJoypadCounter++;
+				joypadCycle();
+			}
+			cpu.status.autoJoypadCounter = 34;
+		}
+		if (h < cpu.counter.hperiod) {
+			break;
+		}
+		cpu.counter.lastHperiod = cpu.counter.hperiod;
+		cpu.counter.hcounter -= cpu.counter.hperiod;
+		counterTickScanline(&cpu.counter);
+		// The others are brought up to the line's start, not to where the access ended, so the PPU's
+		// lines stay whole.
+		u64 const over = cpu.th.scalar * cpu.counter.hcounter;
+		cpu.th.clock -= over;
+		scanline();
+		cpu.th.clock += over;
+		if (cpu.io.hirqEnable) {
+			cpu.status.irqValid = 0;
+		}
+		if (flipTo(&cpu.status.nmiValid, cpu.counter.vcounter >= ppu.state.vdisp)) {
+			cpu.status.nmiLine = cpu.status.nmiValid;
+			if (cpu.status.nmiLine && cpu.io.nmiEnable) {
+				cpu.status.nmiTransition = 1;
+			}
+		}
+	}
+	fastPlan();
+}
+
+void cpuFastReplan(void) {
+	fastNext = 0;
+}
+
 static void step(u32 clocks) {
 	cpu.status.irqLock = 0;
+	if (systemFast && !inputGuns) {
+		cpu.counterCpu += clocks;
+		cpu.counter.hcounter += clocks;
+		threadStep(&cpu.th, clocks);
+		if (cpu.counter.hcounter >= fastNext) {
+			fastCatch();
+		}
+		return;
+	}
 	u32 ticks = clocks >> 1;
 	while (ticks--) {
 		cpu.counterCpu += 2;
@@ -796,6 +928,7 @@ static u8 readDMA(u32 address, u8 data) {
 }
 
 static void writeCPU(u32 address, u8 data) {
+	fastNext = 0;
 	switch (address & 0xffff) {
 	case 0x2180: {
 		u32 wramAddress = cpu.io.wramAddress;

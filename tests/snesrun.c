@@ -38,7 +38,24 @@ static u64 fnv(u64 hash, const void* data, size_t size) {
 	return hash;
 }
 
+// LOCK=1: every frame is run in Exact, then again in Fast from the same state; the picture, the
+// sound and the memories are compared, and the run goes on from Exact's state.
+static bool locking, lockKeep;
+static s16 lockSound[2][8192];
+static u32 lockSamples[2];
+static u32* lockPicture[2];
+
 void audioSample(s16 left, s16 right) {
+	if (locking) {
+		if (lockSamples[lockKeep] < 4096) {
+			lockSound[lockKeep][lockSamples[lockKeep] * 2] = left;
+			lockSound[lockKeep][lockSamples[lockKeep] * 2 + 1] = right;
+		}
+		lockSamples[lockKeep]++;
+		if (lockKeep) {
+			return;
+		}
+	}
 	s16 pair[2] = { left, right };
 	audioHash = fnv(audioHash, pair, sizeof(pair));
 	samples++;
@@ -50,6 +67,12 @@ void audioSample(s16 left, s16 right) {
 static u32 lastFrame;
 
 void videoFrame(const u32* canvas) {
+	if (locking) {
+		memcpy(lockPicture[lockKeep], canvas, CANVAS_WIDTH * rows * sizeof(u32));
+		if (lockKeep) {
+			return;
+		}
+	}
 	// Only the frames that are logged, and the last, are hashed, so timings are the core's.
 	if (frameLog || sys.frames + 1 >= lastFrame) {
 		lastHash = fnv(14695981039346656037ull, canvas, CANVAS_WIDTH * rows * sizeof(u32));
@@ -315,10 +338,96 @@ int main(int argc, char** argv) {
 	lastFrame = frames;
 	clock_t start = clock();
 	int resetAt = getenv("RESETAT") ? atoi(getenv("RESETAT")) : -1;
+	// FAST=1: Fast mode.
+	systemFast = getenv("FAST") != NULL;
 	// CHEAT=codes: cheat codes from the start.
 	if (getenv("CHEAT") && !cheatAdd(getenv("CHEAT"))) {
 		fprintf(stderr, "no cheat code in %s\n", getenv("CHEAT"));
 		return 1;
+	}
+	locking = getenv("LOCK") != NULL;
+	u8* before = locking ? malloc(stateBytes) : NULL;
+	u8* memories = locking ? malloc(sizeof(cpu.wram) + sizeof(ppu.vram) + sizeof(ppu.oam) + sizeof(ppu.cgram) + sizeof(dsp.apuram)) : NULL;
+	lockPicture[0] = malloc(CANVAS_WIDTH * CANVAS_HEIGHT * sizeof(u32));
+	lockPicture[1] = malloc(CANVAS_WIDTH * CANVAS_HEIGHT * sizeof(u32));
+	FILE* lockLog = getenv("LOCKLOG") ? fopen(getenv("LOCKLOG"), "w") : NULL;
+	u64 lockFrames = 0, pictureFrames = 0, pixelsOff = 0, soundFrames = 0, countFrames = 0, memoryFrames[5] = { 0 };
+	while (locking && sys.frames < frames) {
+		stateSave(before, stateBytes);
+		systemFast = false;
+		lockKeep = false;
+		lockSamples[0] = lockSamples[1] = 0;
+		systemRunFrame();
+		stateSave(state, stateBytes);
+		struct { void* at; size_t size; const char* name; } parts[5] = {
+			{ cpu.wram, sizeof(cpu.wram), "wram" }, { ppu.vram, sizeof(ppu.vram), "vram" }, { ppu.oam, sizeof(ppu.oam), "oam" },
+			{ ppu.cgram, sizeof(ppu.cgram), "cgram" }, { dsp.apuram, sizeof(dsp.apuram), "apuram" },
+		};
+		size_t at = 0;
+		for (int i = 0; i < 5; ++i) {
+			memcpy(memories + at, parts[i].at, parts[i].size);
+			at += parts[i].size;
+		}
+		u32 frame = sys.frames;
+		stateLoad(before, stateBytes);
+		systemFast = true;
+		cpuFastReplan();
+		lockKeep = true;
+		systemRunFrame();
+		// The picture: pixels that differ. The sound: the samples both made, compared in order.
+		u32 pixels = 0, x0 = CANVAS_WIDTH, x1 = 0, y0 = rows, y1 = 0;
+		// Only the picture's lines (1 to the last before the vertical blank) count: what is below them
+		// isn't shown.
+		u32 scale = ppu.state.interlace ? 2 : 1, top = ((ppu.state.overscan ? 1 : 9) + (sys.pal ? 20 : 0)) * scale;
+		u32 bottom = top + (ppu.state.vdisp - 1) * scale;
+		for (u32 i = top * CANVAS_WIDTH; i < bottom * CANVAS_WIDTH && i < CANVAS_WIDTH * rows; ++i) {
+			if (lockPicture[0][i] != lockPicture[1][i]) {
+				u32 x = i % CANVAS_WIDTH, y = i / CANVAS_WIDTH;
+				pixels++;
+				x0 = x < x0 ? x : x0, x1 = x > x1 ? x : x1, y0 = y < y0 ? y : y0, y1 = y > y1 ? y : y1;
+			}
+		}
+		u32 common = lockSamples[0] < lockSamples[1] ? lockSamples[0] : lockSamples[1], soundOff = 0;
+		common = common > 4096 ? 4096 : common;
+		for (u32 i = 0; i < common * 2; ++i) {
+			soundOff += lockSound[0][i] != lockSound[1][i];
+		}
+		u32 bytes[5];
+		at = 0;
+		for (int i = 0; i < 5; ++i) {
+			bytes[i] = 0;
+			const u8* was = memories + at;
+			const u8* now = parts[i].at;
+			for (size_t n = 0; n < parts[i].size; ++n) {
+				bytes[i] += was[n] != now[n];
+			}
+			memoryFrames[i] += bytes[i] != 0;
+			at += parts[i].size;
+		}
+		lockFrames++;
+		pictureFrames += pixels != 0;
+		pixelsOff += pixels;
+		soundFrames += soundOff != 0;
+		countFrames += lockSamples[0] != lockSamples[1];
+		if (lockLog && (pixels || soundOff || lockSamples[0] != lockSamples[1] || bytes[0] || bytes[1] || bytes[2] || bytes[3] || bytes[4])) {
+			if (pixels) {
+				fprintf(lockLog, "%u box %u,%u-%u,%u\n", frame, x0, y0, x1, y1);
+			}
+			fprintf(lockLog, "%u pixels %u sound %u of %u (%u/%u) wram %u vram %u oam %u cgram %u apuram %u\n", frame, pixels, soundOff, common * 2,
+			        lockSamples[0], lockSamples[1], bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]);
+		}
+		stateLoad(state, stateBytes);
+		systemFast = false;
+	}
+	if (locking) {
+		printf("lock frames=%llu picture=%llu (pixels %.0f a frame) sound=%llu count=%llu wram=%llu vram=%llu oam=%llu cgram=%llu apuram=%llu\n",
+		       (unsigned long long) lockFrames, (unsigned long long) pictureFrames, pictureFrames ? (double) pixelsOff / pictureFrames : 0,
+		       (unsigned long long) soundFrames, (unsigned long long) countFrames, (unsigned long long) memoryFrames[0],
+		       (unsigned long long) memoryFrames[1], (unsigned long long) memoryFrames[2], (unsigned long long) memoryFrames[3],
+		       (unsigned long long) memoryFrames[4]);
+		if (lockLog) {
+			fclose(lockLog);
+		}
 	}
 	while (sys.frames < frames) {
 		systemRunFrame();

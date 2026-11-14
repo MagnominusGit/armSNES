@@ -168,6 +168,7 @@ bool stateSave(void* data, size_t size) {
 }
 
 bool stateLoad(const void* data, size_t size) {
+	cpuFastReplan();
 	struct StateHeader header;
 	if (size < sizeof(header)) {
 		return false;

@@ -519,6 +519,18 @@ static u8 read(u32 address) {
 	cpu.status.clockCount = waitFor(address);
 	dmaEdge();
 	R.mar = address;
+	if (systemBalanced && !inputGuns) {
+		// Balanced mode: a read of plain memory takes its time in one step.
+		u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
+		const u8* memory = busDirectPages[at >> 8];
+		if (memory) {
+			step(cpu.status.clockCount);
+			u8 data = memory[at & 0xff];
+			aluEdge();
+			R.mdr = data;
+			return data;
+		}
+	}
 	step(cpu.status.clockCount - 4);
 	u8 data = busRead(address, R.mdr);
 	step(4);

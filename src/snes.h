@@ -389,6 +389,8 @@ void busReset(void);
 // ares's map() works out from size, base and mask.
 void busMap(BusReader reader, BusWriter writer, const char* address, u32 size, u32 base, u32 mask);
 u8 busRead(u32 address, u8 data);
+// Each page of plain memory, read straight from it; NULL where a reader is called.
+extern const u8* busDirectPages[0x10000];
 
 // Cheat codes (Game Genie, Pro Action Replay, "address:value"), joined by '+'; false if none was one.
 bool cheatAdd(const char* text);

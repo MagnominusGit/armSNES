@@ -26,7 +26,7 @@ enum { CHEAT_HANDLER = 255 };
 
 static struct Page pages[0x10000];
 // Pages whose reads are plain memory: where their first byte is (null for the others).
-static const u8* direct[0x10000];
+const u8* busDirectPages[0x10000];
 static struct {
 	BusReader reader;
 	const u8* memory;
@@ -223,7 +223,7 @@ void busFinish(void) {
 	lookup = NULL;
 	target = NULL;
 	for (u32 page = 0; page < 0x10000; ++page) {
-		direct[page] = directFor(&pages[page]);
+		busDirectPages[page] = directFor(&pages[page]);
 	}
 	cheatHook();
 }
@@ -233,7 +233,7 @@ u8 busRead(u32 address, u8 data) {
 	if (!(address & 0x40e000)) {
 		address = 0x7e0000 | (address & 0x1fff);
 	}
-	const u8* memory = direct[address >> 8];
+	const u8* memory = busDirectPages[address >> 8];
 	if (memory) {
 		return memory[address & 0xff];
 	}
@@ -271,7 +271,7 @@ void busCheat(u32 page) {
 	}
 	hooked[hookedCount].page = page;
 	hooked[hookedCount].was = pages[page];
-	direct[page] = NULL;
+	busDirectPages[page] = NULL;
 	++hookedCount;
 	readers[CHEAT_HANDLER] = readCheat;
 	pages[page] = (struct Page) { .id = CHEAT_HANDLER, .mixed = false, .base = page << 8 };
@@ -281,7 +281,7 @@ void busCheatsOff(void) {
 	while (hookedCount) {
 		--hookedCount;
 		pages[hooked[hookedCount].page] = hooked[hookedCount].was;
-		direct[hooked[hookedCount].page] = directFor(&hooked[hookedCount].was);
+		busDirectPages[hooked[hookedCount].page] = directFor(&hooked[hookedCount].was);
 	}
 }
 

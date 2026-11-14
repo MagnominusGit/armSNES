@@ -778,6 +778,7 @@ extern struct Ppu ppu;
 extern u32 ppuCanvas[CANVAS_WIDTH * CANVAS_HEIGHT];
 
 void ppuPower(bool reset);
+void ppuLoaded(void);
 void ppuMap(void);
 // Runs the PPU until its clock is past the CPU's.
 void ppuRun(void);

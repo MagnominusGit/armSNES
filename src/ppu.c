@@ -1110,12 +1110,20 @@ static u16 readVRAM(void) {
 	return *vramAt(addressVRAM());
 }
 
+// Counts the writes to VRAM, and state loads, for what is kept of it.
+static u32 vramWrites;
+
+void ppuLoaded(void) {
+	++vramWrites;
+}
+
 static void writeVRAM(bool byte, u8 data) {
 	if (rendering()) {
 		return;
 	}
 	u16* word = vramAt(addressVRAM());
 	*word = byte ? (*word & 0x00ff) | data << 8 : (*word & 0xff00) | data;
+	++vramWrites;
 }
 
 static u8 readOAM(u16 address) {
@@ -2037,6 +2045,22 @@ static void bgLineOffsets(void) {
 
 // Balanced mode: a whole line of a tiled background without the mosaic, its pixels only (what the
 // tiles' shift registers and the mosaic are left with isn't kept: no line is drawn in parts).
+// Balanced mode: the tiles of a background's current row of tiles, kept while nothing they come
+// from changes.
+struct RowKey {
+	u32 vramWrites, row, hscroll, screenAddress, screenSize, tileSize, tiledataAddress, mode, bgMode, priority, vramMask;
+};
+struct RowTile {
+	u16 origin, character;
+	u8 group, priority;
+	bool hmirror, vmirror;
+};
+static struct RowCache {
+	struct RowKey key;
+	struct RowTile tiles[33];
+	bool valid;
+} rowCaches[4];
+
 static void bgLineBalanced(u32 n, bool opt) {
 	struct Background* bg = &ppu.bg[n];
 	lineWide[n] = false;
@@ -2061,54 +2085,91 @@ static void bgLineBalanced(u32 n, bool opt) {
 		vpixel -= mosaicVoffset();
 	}
 
+	// Off the offset-per-tile modes, the tiles of a row of tiles come from the same name table
+	// entries on each of its lines.
+	u32 rowVoffset = (vpixel + vscroll) & (vsize - 1);
+	struct RowKey key;
+	memset(&key, 0, sizeof(key));
+	key.vramWrites = vramWrites;
+	key.row = rowVoffset >> 3;
+	key.hscroll = hscroll;
+	key.screenAddress = bg->io.screenAddress;
+	key.screenSize = bg->io.screenSize;
+	key.tileSize = bg->io.tileSize;
+	key.tiledataAddress = bg->io.tiledataAddress;
+	key.mode = mode;
+	key.bgMode = ppu.io.bgMode;
+	key.priority = bg->io.priority[0] | bg->io.priority[1] << 8;
+	key.vramMask = ppu.vramMask;
+	struct RowCache* cache = &rowCaches[n];
+	bool cached = !opt && cache->valid && !memcmp(&cache->key, &key, sizeof(key));
+
 	for (u32 k = 0, x = 0; k < 33; ++k) {
-		u32 hpixel = k << 3;
-		u32 hoffset = hpixel + hscroll;
-		u32 voffset = vpixel + vscroll;
-		if (opt) {
-			u32 hlookup = lineOptH[k];
-			u32 vlookup = lineOptV[k];
-			u32 valid = 13 + bg->id;
-			if (ppu.io.bgMode == 4) {
-				if (hlookup >> valid & 1) {
-					if (!(hlookup & 0x8000)) {
+		u32 voffset, character, group, priority;
+		bool hmirror, vmirror;
+		u16 origin;
+		if (cached) {
+			const struct RowTile* t = &cache->tiles[k];
+			voffset = rowVoffset;
+			character = t->character;
+			group = t->group;
+			priority = t->priority;
+			hmirror = t->hmirror;
+			vmirror = t->vmirror;
+			origin = t->origin;
+		} else {
+			u32 hpixel = k << 3;
+			u32 hoffset = hpixel + hscroll;
+			voffset = vpixel + vscroll;
+			if (opt) {
+				u32 hlookup = lineOptH[k];
+				u32 vlookup = lineOptV[k];
+				u32 valid = 13 + bg->id;
+				if (ppu.io.bgMode == 4) {
+					if (hlookup >> valid & 1) {
+						if (!(hlookup & 0x8000)) {
+							hoffset = hpixel + (hlookup & ~7) + (hscroll & 7);
+						} else {
+							voffset = vpixel + vlookup;
+						}
+					}
+				} else {
+					if (hlookup >> valid & 1) {
 						hoffset = hpixel + (hlookup & ~7) + (hscroll & 7);
-					} else {
+					}
+					if (vlookup >> valid & 1) {
 						voffset = vpixel + vlookup;
 					}
 				}
-			} else {
-				if (hlookup >> valid & 1) {
-					hoffset = hpixel + (hlookup & ~7) + (hscroll & 7);
-				}
-				if (vlookup >> valid & 1) {
-					voffset = vpixel + vlookup;
-				}
+			}
+			hoffset &= hsize - 1;
+			voffset &= vsize - 1;
+			u32 htile = hoffset >> tiles;
+			u32 vtile = voffset >> tiles;
+			u16 offset = (htile & 31) | (vtile & 31) << 5;
+			if (htile & 0x20) {
+				offset += hscreen;
+			}
+			if (vtile & 0x20) {
+				offset += vscreen;
+			}
+			u16 attributes = *vramAt((u16) (bg->io.screenAddress + offset));
+			character = attributes & 0x3ff;
+			group = attributes >> 10 & 7;
+			priority = bg->io.priority[attributes >> 13 & 1];
+			hmirror = attributes >> 14 & 1;
+			vmirror = attributes >> 15 & 1;
+			if (tiles == 4 && (bool) (hoffset & 8) != hmirror) {
+				character = (character + 1) & 0x3ff;
+			}
+			if (tiles == 4 && (bool) (voffset & 8) != vmirror) {
+				character = (character + 16) & 0x3ff;
+			}
+			origin = (character + characterIndex) & characterMask;
+			if (!opt) {
+				cache->tiles[k] = (struct RowTile) { origin, character, group, priority, hmirror, vmirror };
 			}
 		}
-		hoffset &= hsize - 1;
-		voffset &= vsize - 1;
-		u32 htile = hoffset >> tiles;
-		u32 vtile = voffset >> tiles;
-		u16 offset = (htile & 31) | (vtile & 31) << 5;
-		if (htile & 0x20) {
-			offset += hscreen;
-		}
-		if (vtile & 0x20) {
-			offset += vscreen;
-		}
-		u16 attributes = *vramAt((u16) (bg->io.screenAddress + offset));
-		u32 character = attributes & 0x3ff;
-		u32 group = attributes >> 10 & 7;
-		u32 priority = bg->io.priority[attributes >> 13 & 1];
-		bool hmirror = attributes >> 14 & 1, vmirror = attributes >> 15 & 1;
-		if (tiles == 4 && (bool) (hoffset & 8) != hmirror) {
-			character = (character + 1) & 0x3ff;
-		}
-		if (tiles == 4 && (bool) (voffset & 8) != vmirror) {
-			character = (character + 16) & 0x3ff;
-		}
-		u16 origin = (character + characterIndex) & characterMask;
 		if (vmirror) {
 			voffset ^= 7;
 		}
@@ -2168,6 +2229,10 @@ static void bgLineBalanced(u32 n, bool opt) {
 			}
 		}
 		x += count;
+	}
+	if (!opt && !cached) {
+		cache->key = key;
+		cache->valid = true;
 	}
 	for (u32 k = 0; k < 32; ++k) {
 		memset(bg->tiles[k].data, 0, sizeof(bg->tiles[k].data));
@@ -3714,6 +3779,7 @@ static void ppuRunExact(void) {
 }
 
 void ppuPower(bool reset) {
+	ppuLoaded();
 #if !defined(ARMSNES_DOT)
 	planeSpreadInit();
 #endif

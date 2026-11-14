@@ -215,6 +215,7 @@ bool stateLoad(const void* data, size_t size) {
 	if (cart.msu1) {
 		msu1Reopen();
 	}
+	ppuLoaded();
 
 	sys.pal = pal;
 	if (ppu.drawnTo > CANVAS_WIDTH * CANVAS_HEIGHT) {

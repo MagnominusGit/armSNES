@@ -2595,6 +2595,120 @@ static void bgLineTilesWide(u32 n, bool fetch) {
 	lineOutput(bg, n);
 }
 
+// bgLineTilesWide for a background the mode uses, without the mosaic, in Balanced mode: a tile's
+// eight pixels at a time, the tiles left as Exact leaves them.
+static void bgLineWideBalanced(u32 n) {
+	struct Background* bg = &ppu.bg[n];
+	lineWide[n] = true;
+	u32 mode = bg->io.mode;
+	u32 planes = 1u << mode;
+	u32 vpixel = VCOUNTER;
+	if (ppu.io.interlace) {
+		vpixel = vpixel << 1 | ppu.counter.field;
+	}
+	u32 hscroll = bg->io.hoffset << 1;
+	u32 vscroll = bg->io.voffset;
+	u32 hsize = 512u << bg->io.tileSize << (bg->io.screenSize & 1);
+	u32 vsize = 512u << bg->io.tileSize << (bg->io.screenSize >> 1 & 1);
+	u32 vtiles = 3 + bg->io.tileSize;
+	u32 hscreen = bg->io.screenSize & 1 ? 32 << 5 : 0;
+	u32 vscreen = bg->io.screenSize & 2 ? 32 << (5 + (bg->io.screenSize & 1)) : 0;
+	u32 characterMask = ppu.vramMask >> (3 + mode);
+	u32 characterIndex = bg->io.tiledataAddress >> (3 + mode);
+	u32 paletteSize = 2 << mode;
+	u32 scrolled = bg->pixelCounter;
+	u32 mosaicSize = ppu.mosaic.size;
+	u32 lastTaken = mosaicSize ? 255 - 255 % mosaicSize : 0;
+	u32* main = linePixels[n];
+	u32* sub = linePixelsSub[n];
+
+	for (u32 k = 0, at = 0; k < 66; ++k) {
+		u32 hoffset = ((k << 3) + hscroll) & (hsize - 1);
+		u32 voffset = (vpixel + vscroll) & (vsize - 1);
+		u32 htile = hoffset >> 4;
+		u32 vtile = voffset >> vtiles;
+		u16 offset = (htile & 31) | (vtile & 31) << 5;
+		if (htile & 0x20) {
+			offset += hscreen;
+		}
+		if (vtile & 0x20) {
+			offset += vscreen;
+		}
+		u16 attributes = *vramAt((u16) (bg->io.screenAddress + offset));
+		u32 character = attributes & 0x3ff;
+		u32 group = attributes >> 10 & 7;
+		u32 priority = bg->io.priority[attributes >> 13 & 1];
+		bool hmirror = attributes >> 14 & 1, vmirror = attributes >> 15 & 1;
+		if ((bool) (hoffset & 8) != hmirror) {
+			character = (character + 1) & 0x3ff;
+		}
+		if (vtiles == 4 && (bool) (voffset & 8) != vmirror) {
+			character = (character + 16) & 0x3ff;
+		}
+		u16 origin = (character + characterIndex) & characterMask;
+		if (vmirror) {
+			voffset ^= 7;
+		}
+		u32 address = (origin << (3 + mode)) + (voffset & 7);
+		u8 palette = group << paletteSize;
+		if (k >= 64) {
+			// The tiles past the line's end stay in the shift registers, the first with the pixels
+			// the scroll takes off it shifted out.
+			struct BgTile* tile = &bg->tiles[k];
+			tile->character = character;
+			tile->paletteGroup = group;
+			tile->priority = priority;
+			tile->hmirror = hmirror;
+			tile->vmirror = vmirror;
+			tile->address = address;
+			tile->palette = palette;
+			const u16* spread = planeSpread[hmirror];
+			memset(tile->data, 0, sizeof(tile->data));
+			for (u32 index = 0; index < planes; ++index) {
+				u16 data = *vramAt(address + (index << 3));
+				tile->data[index] = (spread[data & 0xff] | spread[data >> 8] << 1) >> (k == 64 ? scrolled * 2 : 0);
+			}
+		}
+		u32 first = k ? 0 : scrolled;
+		u32 count = 8 - first;
+		if (count > 512 - at) {
+			count = 512 - at;
+		}
+		if (!count) {
+			continue;
+		}
+		const u64* bytes = planeBytes[hmirror];
+		u64 colors = 0;
+		for (u32 index = 0; index < planes; ++index) {
+			u16 data = *vramAt(address + (index << 3));
+			colors |= (bytes[data & 0xff] | bytes[data >> 8] << 1) << (index * 2);
+		}
+		colors >>= first * 8;
+		u32 base = group << 8 | priority << 16;
+		for (u32 i = 0; i < count; ++i, ++at) {
+			u8 color = colors >> (i * 8);
+			u8 entry = palette + color;
+			u32 value = color && entry ? base | entry : 0;
+			if (at & 1) {
+				main[at >> 1] = value;
+			} else {
+				sub[at >> 1] = value;
+				if (at >> 1 == lastTaken) {
+					bg->mosaic.pixel.priority = priority;
+					bg->mosaic.pixel.palette = color ? entry : 0;
+					bg->mosaic.pixel.paletteGroup = group;
+				}
+			}
+		}
+	}
+	for (u32 k = 0; k < 64; ++k) {
+		memset(bg->tiles[k].data, 0, sizeof(bg->tiles[k].data));
+	}
+	bg->renderingIndex = 64;
+	bg->mosaic.hcounter = mosaicSize ? mosaicSize - 255 % mosaicSize : (u16) (0 - 255);
+	lineOutput(bg, n);
+}
+
 // A whole line of a mode 7 background, as bgRunMode7 makes each pixel of it: what doesn't change
 // along the line is worked out once.
 static void bgLineMode7(u32 n) {
@@ -3243,6 +3357,12 @@ static void renderSpan(u32 start, u32 end) {
 			// BG3 isn't drawn in these modes, but the other two's offsets are fetched from it.
 			bgLineOffsets();
 			bgLineTiles(n, false, false);
+		} else if (systemBalanced && start == 0 && end == 1080 && draws && ppu.io.bgMode == 5 && ppu.bg[n].io.mode <= BG_BPP8 &&
+		           !ppu.bg[n].mosaic.enable) {
+			bgLineWideBalanced(n);
+		} else if (systemBalanced && start == 0 && end == 1080 && draws && ppu.io.bgMode == 5 && !shown &&
+		           ppu.bg[n].io.mode == BG_INACTIVE) {
+			lineWide[n] = false;
 		} else if (start == 0 && end == 1080 && draws && ppu.io.bgMode == 5 && ppu.bg[n].io.mode != BG_MODE7) {
 			bgLineTilesWide(n, ppu.bg[n].io.mode <= BG_BPP8);
 		} else if (start == 0 && end == 1080 && draws && ppu.bg[n].io.mode == BG_MODE7) {

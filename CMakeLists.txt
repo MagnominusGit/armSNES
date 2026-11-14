@@ -7,6 +7,12 @@ if(NOT CMAKE_BUILD_TYPE)
 	set(CMAKE_BUILD_TYPE Release)
 endif()
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+# The whole program optimized together, where the compiler can.
+include(CheckIPOSupported)
+check_ipo_supported(RESULT ARMSNES_IPO OUTPUT ARMSNES_IPO_ERROR)
+if(ARMSNES_IPO)
+	set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+endif()
 add_compile_options(-Wall -Wextra -Wno-unused-parameter -fwrapv)
 
 # The Super Game Boy's Game Boy: Gambatte-Speedrun's core (gambatte/, GPL-2.0), as armGBA has it.

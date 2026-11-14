@@ -90,6 +90,26 @@ static void stepTimers(u32 clocks) {
 	timerStep(&smp.timer[2], 16, clocks);
 }
 
+// Balanced mode: the timers' clocks since they were brought up to date. Only the I/O registers see
+// them, so they are brought up to date before an I/O access and as the SMP stops; as no step is
+// longer than a timer's period, the same pulses come out as from stepping them.
+static u32 timersPending;
+
+static void timersCatchUp(void) {
+	static const u32 frequency[3] = { 128, 128, 16 };
+	for (int n = 0; n < 3; ++n) {
+		struct SmpTimer* timer = &smp.timer[n];
+		u32 stage0 = timer->stage0 + timersPending;
+		while (stage0 >= frequency[n]) {
+			stage0 -= frequency[n];
+			timer->stage1 ^= 1;
+			timerSynchronizeStage1(timer);
+		}
+		timer->stage0 = stage0;
+	}
+	timersPending = 0;
+}
+
 // Memory
 
 static u8 readRAM(u16 address) {
@@ -394,7 +414,7 @@ enum { MAIN = 256, FIRST_STOP = 257 };
 	do { \
 		smp.pend = (states); \
 		STEP(cycleWaitStates[smp.pend] >> (halve)); \
-		stepTimers(timerWaitStates[smp.pend] >> (halve)); \
+		TIMERS(timerWaitStates[smp.pend] >> (halve)); \
 	} while (0)
 
 #define IDLE() WAIT(0, smp.internalWaitStates)
@@ -920,6 +940,7 @@ static void divide(void) {
 // Exact: the SMP can stop at any clock step, and brings the DSP up to itself at each. In Balanced
 // mode it finishes the instruction under way and leaves (to the Balanced run loop).
 #define STEP(clocks) STEP_EXACT(clocks)
+#define TIMERS(clocks) stepTimers(clocks)
 #define SMP_AT_INSTRUCTION() \
 	if (systemBalanced) { \
 		return; \
@@ -929,6 +950,7 @@ static void divide(void) {
 #define SMP_RUN smpRunExact
 #include "smp_run.inc"
 #undef STEP
+#undef TIMERS
 #undef SMP_AT_INSTRUCTION
 #undef SMP_BEFORE_READ
 #undef SMP_BEFORE_WRITE
@@ -947,16 +969,24 @@ static bool echoWritten(u16 address) {
 // brought up to it only before a read or write of its registers, a write to RAM it may soon read or
 // its echo writes to, a read of the RAM its echo writes to, and as the SMP stops.
 #define STEP(clocks) threadStep(&smp.th, (clocks))
+#define TIMERS(clocks) (timersPending += (clocks))
 #define SMP_BEFORE_READ(address) \
+	if ((address & 0xfff0) == 0x00f0) { \
+		timersCatchUp(); \
+	} \
 	if (dsp.th.clock < smp.th.clock && echoWritten(address)) { \
 		dspRun(); \
 	}
 #define SMP_BEFORE_WRITE() \
+	if ((smp.ad & 0xfff0) == 0x00f0) { \
+		timersCatchUp(); \
+	} \
 	if (dsp.th.clock < smp.th.clock && (dspWillRead(smp.ad) || echoWritten(smp.ad))) { \
 		dspRun(); \
 	}
 #define SMP_AT_INSTRUCTION() \
 	if (cpu.th.clock < smp.th.clock) { \
+		timersCatchUp(); \
 		if (dsp.th.clock < smp.th.clock) { \
 			dspRun(); \
 		} \
@@ -965,6 +995,7 @@ static bool echoWritten(u16 address) {
 #define SMP_RUN smpRunBalanced
 #include "smp_run.inc"
 #undef STEP
+#undef TIMERS
 #undef SMP_AT_INSTRUCTION
 #undef SMP_BEFORE_READ
 #undef SMP_BEFORE_WRITE

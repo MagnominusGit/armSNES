@@ -565,9 +565,26 @@ static void writeRam(u32 address, u8 data) {
 	cart.ram[address] = data;
 }
 
+// Whether the header at this offset has a checksum and complement that agree.
+static bool headerSums(const u8* rom, size_t size, u32 at) {
+	if (size < at + 0x20) {
+		return false;
+	}
+	u16 complement = rom[at + 0x1c] | rom[at + 0x1d] << 8;
+	u16 checksum = rom[at + 0x1e] | rom[at + 0x1f] << 8;
+	return (complement ^ checksum) == 0xffff;
+}
+
 bool cartLoad(const u8* data, u32 size) {
-	// A copier's 512-byte header.
-	if ((size & 0x7fff) == 512) {
+	// A copier's 512-byte header: a dump 512 bytes over a whole number of banks has one. So has one
+	// that isn't, when a header's checksum and its complement agree only where the ROM starts after
+	// it: some patched dumps were cut or padded back to whole banks with it still there.
+	bool headered = (size & 0x7fff) == 512;
+	if (!headered && size > 0x10200 && !headerSums(data, size, 0x7fc0) && !headerSums(data, size, 0xffc0) &&
+	    !headerSums(data, size, 0x40ffc0) && (headerSums(data + 512, size - 512, 0x7fc0) || headerSums(data + 512, size - 512, 0xffc0))) {
+		headered = true;
+	}
+	if (headered) {
 		data += 512;
 		size -= 512;
 	}

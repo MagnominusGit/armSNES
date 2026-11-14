@@ -2056,6 +2056,10 @@ static void bgLineBalanced(u32 n, bool opt) {
 	u32 paletteSize = 2 << mode;
 	u32 scrolled = bg->pixelCounter;
 	u32* out = linePixels[n];
+	bool mosaic = bg->mosaic.enable;
+	if (mosaic) {
+		vpixel -= mosaicVoffset();
+	}
 
 	for (u32 k = 0, x = 0; k < 33; ++k) {
 		u32 hpixel = k << 3;
@@ -2143,13 +2147,20 @@ static void bgLineBalanced(u32 n, bool opt) {
 			break;
 		}
 		colors >>= first * 8;
+		u8 palette = paletteOffset + (group << paletteSize);
+		if (mosaic && x + count == 256) {
+			// A mosaic of one takes every pixel; the last one is kept.
+			u8 color = colors >> ((count - 1) * 8);
+			bg->mosaic.pixel.priority = priority;
+			bg->mosaic.pixel.palette = color ? palette + color : 0;
+			bg->mosaic.pixel.paletteGroup = group;
+		}
 		if (!colors) {
 			for (u32 i = 0; i < count; ++i) {
 				out[x + i] = 0;
 			}
 		} else {
 			u32 base = group << 8 | priority << 16;
-			u8 palette = paletteOffset + (group << paletteSize);
 			for (u32 i = 0; i < count; ++i) {
 				u8 color = colors >> (i * 8);
 				u8 entry = palette + color;
@@ -3217,7 +3228,7 @@ static void renderSpan(u32 start, u32 end) {
 		u32 n = order[i];
 		lined[n] = true;
 		bool shown = ppu.bg[n].io.aboveEnable || ppu.bg[n].io.belowEnable;
-		if (systemBalanced && whole && ppu.bg[n].io.mode <= BG_BPP8 && !ppu.bg[n].mosaic.enable) {
+		if (systemBalanced && whole && ppu.bg[n].io.mode <= BG_BPP8 && (!ppu.bg[n].mosaic.enable || ppu.mosaic.size == 1)) {
 			if (shown) {
 				bgLineBalanced(n, opt);
 			}

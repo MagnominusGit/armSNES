@@ -1785,26 +1785,36 @@ static struct BgPixel spanBelow[4][256];
 // A whole line of a background, a value to a pixel: the palette entry, the palette group above it and
 // the priority above that, or 0 where the background is clear.
 static u32 linePixels[4][256];
+// In the double-width mode a background's main and sub screen pixels are different ones: these are
+// the sub screen's, and linePixels the main screen's, for a background whose lineWide is set.
+static u32 linePixelsSub[4][256];
+static bool lineWide[4];
+
+static inline const u32* lineSub(u32 n) {
+	return lineWide[n] ? linePixelsSub[n] : linePixels[n];
+}
 
 // What a background's main and sub screen pixels are left as after such a line: the priority of the
 // last pixel, and the palette of the last one that wasn't clear.
 static void lineOutput(struct Background* bg, u32 n) {
+	bg->output.above.priority = 0;
+	bg->output.below.priority = 0;
 	const u32* pixels = linePixels[n];
 	s32 x = 255;
 	while (x >= 0 && !pixels[x]) {
 		--x;
 	}
-	bg->output.above.priority = 0;
-	bg->output.below.priority = 0;
-	if (x < 0) {
-		return;
-	}
-	if (bg->io.aboveEnable) {
+	if (x >= 0 && bg->io.aboveEnable) {
 		bg->output.above.palette = pixels[x];
 		bg->output.above.paletteGroup = pixels[x] >> 8;
 		bg->output.above.priority = pixels[255] >> 16;
 	}
-	if (bg->io.belowEnable) {
+	pixels = lineSub(n);
+	x = 255;
+	while (x >= 0 && !pixels[x]) {
+		--x;
+	}
+	if (x >= 0 && bg->io.belowEnable) {
 		bg->output.below.palette = pixels[x];
 		bg->output.below.paletteGroup = pixels[x] >> 8;
 		bg->output.below.priority = pixels[255] >> 16;
@@ -1817,18 +1827,17 @@ static void lineToSlots(u32 n) {
 	struct Background* bg = &ppu.bg[n];
 	struct BgPixel above = bg->output.above;
 	struct BgPixel below = bg->output.below;
+	const u32* sub = lineSub(n);
 	for (u32 x = 0; x < 256; ++x) {
 		u32 value = linePixels[n][x];
+		u32 subValue = sub[x];
 		above.priority = 0;
 		below.priority = 0;
-		if (value) {
-			struct BgPixel pixel = { value >> 16, value, value >> 8 };
-			if (bg->io.aboveEnable) {
-				above = pixel;
-			}
-			if (bg->io.belowEnable) {
-				below = pixel;
-			}
+		if (value && bg->io.aboveEnable) {
+			above = (struct BgPixel) { value >> 16, value, value >> 8 };
+		}
+		if (subValue && bg->io.belowEnable) {
+			below = (struct BgPixel) { subValue >> 16, subValue, subValue >> 8 };
 		}
 		spanAbove[n][x] = above;
 		spanBelow[n][x] = below;
@@ -1943,6 +1952,7 @@ static void bgLineOffsets(void) {
 
 static void bgLineTiles(u32 n, bool fetch, bool opt) {
 	struct Background* bg = &ppu.bg[n];
+	lineWide[n] = false;
 	u32 mode = bg->io.mode;
 	u32 planes = 1u << mode;
 
@@ -2217,10 +2227,152 @@ static void bgLineTiles(u32 n, bool fetch, bool opt) {
 	lineOutput(bg, n);
 }
 
+// A whole line of a background in mode 5, where the picture is twice as wide: 66 tiles sixteen
+// pixels wide are fetched, two in the time of one, and each column of the screen takes two pixels,
+// the first for the sub screen and the second for the main. A background the mode doesn't use
+// fetches nothing and shifts out what its tiles were left with.
+static void bgLineTilesWide(u32 n, bool fetch) {
+	struct Background* bg = &ppu.bg[n];
+	lineWide[n] = true;
+	u32 mode = bg->io.mode;
+	u32 planes = 1u << mode;
+
+	if (fetch) {
+		u32 vpixel = VCOUNTER;
+		if (ppu.io.interlace) {
+			vpixel = vpixel << 1 | (ppu.counter.field && !bg->mosaic.enable);
+		}
+		if (bg->mosaic.enable) {
+			vpixel -= mosaicVoffset() << ppu.io.interlace;
+		}
+		u32 hscroll = bg->io.hoffset << 1;
+		u32 vscroll = bg->io.voffset;
+		u32 hsize = 512u << bg->io.tileSize << (bg->io.screenSize & 1);
+		u32 vsize = 512u << bg->io.tileSize << (bg->io.screenSize >> 1 & 1);
+		u32 vtiles = 3 + bg->io.tileSize;
+		u32 hscreen = bg->io.screenSize & 1 ? 32 << 5 : 0;
+		u32 vscreen = bg->io.screenSize & 2 ? 32 << (5 + (bg->io.screenSize & 1)) : 0;
+		u32 characterMask = ppu.vramMask >> (3 + mode);
+		u32 characterIndex = bg->io.tiledataAddress >> (3 + mode);
+		u32 paletteSize = 2 << mode;
+		for (u32 k = 0; k < 66; ++k) {
+			u32 hoffset = ((k << 3) + hscroll) & (hsize - 1);
+			u32 voffset = (vpixel + vscroll) & (vsize - 1);
+			u32 htile = hoffset >> 4;
+			u32 vtile = voffset >> vtiles;
+			u16 offset = (htile & 31) | (vtile & 31) << 5;
+			if (htile & 0x20) {
+				offset += hscreen;
+			}
+			if (vtile & 0x20) {
+				offset += vscreen;
+			}
+			u16 attributes = *vramAt((u16) (bg->io.screenAddress + offset));
+
+			struct BgTile* tile = &bg->tiles[k];
+			tile->character = attributes & 0x3ff;
+			tile->paletteGroup = attributes >> 10 & 7;
+			tile->priority = bg->io.priority[attributes >> 13 & 1];
+			tile->hmirror = attributes >> 14 & 1;
+			tile->vmirror = attributes >> 15 & 1;
+			if ((bool) (hoffset & 8) != tile->hmirror) {
+				tile->character = (tile->character + 1) & 0x3ff;
+			}
+			if (vtiles == 4 && (bool) (voffset & 8) != tile->vmirror) {
+				tile->character = (tile->character + 16) & 0x3ff;
+			}
+			u16 origin = (tile->character + characterIndex) & characterMask;
+			if (tile->vmirror) {
+				voffset ^= 7;
+			}
+			tile->address = (origin << (3 + mode)) + (voffset & 7);
+			tile->palette = tile->paletteGroup << paletteSize;
+
+			const u16* spread = planeSpread[tile->hmirror];
+			for (u32 index = 0; index < planes; ++index) {
+				u16 data = *vramAt(tile->address + (index << 3));
+				tile->data[index] = spread[data & 0xff] | spread[data >> 8] << 1;
+			}
+		}
+	}
+
+	bgBegin(bg);
+
+	bool mosaic = bg->mosaic.enable;
+	u32 mosaicSize = ppu.mosaic.size;
+	u32 mosaicCounter = bg->mosaic.hcounter;
+	struct BgPixel mosaicPixel = bg->mosaic.pixel;
+	u32 index = bg->renderingIndex;
+	u32 counter = bg->pixelCounter;
+	struct BgTile* tile = &bg->tiles[index];
+	u32 d0 = tile->data[0], d1 = tile->data[1], d2 = tile->data[2], d3 = tile->data[3];
+
+	for (u32 at = 0; at < 512; ++at) {
+		u32 color = d0 & 3;
+		if (mode >= BG_BPP4) {
+			color |= (d1 & 3) << 2;
+		}
+		if (mode >= BG_BPP8) {
+			color |= (d2 & 3) << 4 | (d3 & 3) << 6;
+		}
+		d0 >>= 2;
+		d1 >>= 2;
+		d2 >>= 2;
+		d3 >>= 2;
+
+		struct BgPixel pixel;
+		pixel.priority = tile->priority;
+		pixel.palette = color ? tile->palette + color : 0;
+		pixel.paletteGroup = tile->paletteGroup;
+
+		counter = (counter + 1) & 7;
+		if (counter == 0) {
+			tile->data[0] = d0;
+			tile->data[1] = d1;
+			tile->data[2] = d2;
+			tile->data[3] = d3;
+			index = (index + 1) & 127;
+			tile = &bg->tiles[index];
+			d0 = tile->data[0];
+			d1 = tile->data[1];
+			d2 = tile->data[2];
+			d3 = tile->data[3];
+		}
+
+		// The mosaic counts columns, on the sub screen's pixel.
+		u32 x = at >> 1;
+		bool sub = !(at & 1);
+		if (sub && (x == 0 || (mosaicCounter = (u16) (mosaicCounter - 1)) == 0)) {
+			mosaicCounter = mosaicSize;
+			mosaicPixel = pixel;
+		} else if (mosaic) {
+			pixel = mosaicPixel;
+		}
+
+		u32 value = pixel.palette ? pixel.palette | pixel.paletteGroup << 8 | pixel.priority << 16 : 0;
+		if (sub) {
+			linePixelsSub[n][x] = value;
+		} else {
+			linePixels[n][x] = value;
+		}
+	}
+
+	tile->data[0] = d0;
+	tile->data[1] = d1;
+	tile->data[2] = d2;
+	tile->data[3] = d3;
+	bg->renderingIndex = index;
+	bg->pixelCounter = counter;
+	bg->mosaic.hcounter = mosaicCounter;
+	bg->mosaic.pixel = mosaicPixel;
+	lineOutput(bg, n);
+}
+
 // A whole line of a mode 7 background, as bgRunMode7 makes each pixel of it: what doesn't change
 // along the line is worked out once.
 static void bgLineMode7(u32 n) {
 	struct Background* bg = &ppu.bg[n];
+	lineWide[n] = false;
 	bgBegin(bg);
 
 	s32 a = (s16) ppu.io.m7a;
@@ -2314,7 +2466,7 @@ static inline u16 blendWith(u32 x, u32 y, bool subtract, bool halve) {
 // pixel by pixel. The windows cut the line into stretches; in each, only the layers that are on a
 // screen and not hidden by a window are looked at. What those keep between pixels is held here and
 // put back at the end.
-static void composeLine(const struct WindowEffect effects[4], const u8* objPalette, const u8* objPriority, bool refreshed) {
+static void composeLine(const struct WindowEffect effects[4], const u8* objPalette, const u8* objPriority, bool refreshed, bool wide) {
 	bool blank = ppu.io.displayDisable || (!ppu.io.overscan && VCOUNTER >= 225);
 	bool direct = directColorMode();
 	bool objAboveEnable = ppu.obj.io.aboveEnable;
@@ -2360,6 +2512,11 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 	u32 brightness = ppu.io.displayBrightness << 15;
 	bool lineValid = ppu.dac.lineValid;
 	u32* line = &ppuCanvas[ppu.dac.line];
+	// What the color math keeps from column to column, for the double width.
+	u32 wideAbove = ppu.dac.math.aboveColor, wideBelow = ppu.dac.math.belowColor;
+	bool wideAboveOn = ppu.dac.math.aboveColorEnable, wideMath = ppu.dac.math.belowColorEnable;
+	bool wideClear = ppu.dac.math.transparent, wideBlend = ppu.dac.math.blendMode, wideHalve = ppu.dac.math.colorHalve;
+	u32 wideLatch = ppu.latch.cgramAddress;
 
 	u32 hiddenAbove = 0, hiddenBelow = 0;
 	for (u32 x = 0; x < 256;) {
@@ -2382,7 +2539,7 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 				aboveIndex[aboveCount++] = n;
 			}
 			if (ppu.bg[n].io.belowEnable && !(effect->hideBelow >> n & 1)) {
-				belowPixels[belowCount] = linePixels[n];
+				belowPixels[belowCount] = lineSub(n);
 				belowIndex[belowCount++] = n;
 			}
 		}
@@ -2399,6 +2556,93 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 				}
 			}
 			x = end;
+			continue;
+		}
+
+		if (wide) {
+			// Twice as wide: each column shows the sub screen's pixel, then the main screen's. The
+			// sub screen's is blended by what the column before left of the main screen's color
+			// math, so the columns are done in turn, as dacBelow and dacAbove do them.
+			for (; x < end; ++x) {
+				u32 priority = 0;
+				for (u32 i = 0; i < belowCount; ++i) {
+					u32 value = belowPixels[i][x];
+					if (value >> 16 > priority) {
+						priority = value >> 16;
+						if (direct && belowIndex[i] == 0) {
+							wideBelow = directColor(value, value >> 8);
+						} else {
+							wideLatch = value & 0xff;
+							wideBelow = ppu.cgram[wideLatch];
+						}
+					}
+				}
+				if (objBelow && objPriority[x] > priority) {
+					priority = objPriority[x];
+					wideLatch = objPalette[x];
+					wideBelow = ppu.cgram[wideLatch];
+				}
+				wideClear = priority == 0;
+				if (wideClear) {
+					wideLatch = 0;
+					wideBelow = ppu.cgram[0];
+				}
+				u32 subColor;
+				if (!wideMath) {
+					subColor = wideAboveOn ? wideBelow : 0;
+				} else {
+					subColor = blendWith(wideAboveOn ? wideBelow : 0, wideBlend ? wideAbove : fixed, subtract, wideHalve);
+				}
+
+				priority = 0;
+				for (u32 i = 0; i < aboveCount; ++i) {
+					u32 value = abovePixels[i][x];
+					if (value >> 16 > priority) {
+						priority = value >> 16;
+						if (direct && aboveIndex[i] == 0) {
+							wideAbove = directColor(value, value >> 8);
+						} else {
+							wideLatch = value & 0xff;
+							wideAbove = ppu.cgram[wideLatch];
+						}
+						wideMath = ppu.dac.bgColorEnable[aboveIndex[i]];
+					}
+				}
+				if (objAbove && objPriority[x] > priority) {
+					priority = objPriority[x];
+					wideLatch = objPalette[x];
+					wideAbove = ppu.cgram[wideLatch];
+					wideMath = objColorEnable && objPalette[x] >= 192;
+				}
+				if (priority == 0) {
+					wideLatch = 0;
+					wideAbove = ppu.cgram[0];
+					wideMath = backColorEnable;
+				}
+				if (!windowBelow) {
+					wideMath = false;
+				}
+				wideAboveOn = windowAbove;
+				u32 mainColor;
+				if (!wideMath) {
+					mainColor = wideAboveOn ? wideAbove : 0;
+				} else {
+					if (dacBlend && wideClear) {
+						wideBlend = false;
+						wideHalve = false;
+					} else {
+						wideBlend = dacBlend;
+						wideHalve = dacHalve && wideAboveOn;
+					}
+					mainColor = blendWith(wideAboveOn ? wideAbove : 0, wideBlend ? wideBelow : fixed, subtract, wideHalve);
+				}
+
+				if (lineValid) {
+					line[0] = brightness | subColor;
+					line[1] = brightness | mainColor;
+					line += 2;
+				}
+			}
 			continue;
 		}
 
@@ -2481,7 +2725,16 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 		}
 	}
 
-	if (!blank) {
+	if (wide) {
+		ppu.dac.math.aboveColor = wideAbove;
+		ppu.dac.math.belowColor = wideBelow;
+		ppu.dac.math.aboveColorEnable = wideAboveOn;
+		ppu.dac.math.belowColorEnable = wideMath;
+		ppu.dac.math.transparent = wideClear;
+		ppu.dac.math.blendMode = wideBlend;
+		ppu.dac.math.colorHalve = wideHalve;
+		ppu.latch.cgramAddress = wideLatch;
+	} else if (!blank) {
 		// What the pixels left behind them: the last one's colors, the palette entry last looked up
 		// (a direct color looks none up), and the blend of the last pixel that had color math.
 		u32 below = belowBest[255], above = aboveBest[255];
@@ -2598,6 +2851,8 @@ static void renderSpan(u32 start, u32 end) {
 			// BG3 isn't drawn in these modes, but the other two's offsets are fetched from it.
 			bgLineOffsets();
 			bgLineTiles(n, false, false);
+		} else if (start == 0 && end == 1080 && draws && ppu.io.bgMode == 5 && ppu.bg[n].io.mode != BG_MODE7) {
+			bgLineTilesWide(n, ppu.bg[n].io.mode <= BG_BPP8);
 		} else if (start == 0 && end == 1080 && draws && ppu.bg[n].io.mode == BG_MODE7) {
 			bgLineMode7(n);
 		} else if (start == 0 && end == 1080 && draws && !hires && ppu.bg[n].io.mode == BG_INACTIVE &&
@@ -2649,8 +2904,8 @@ static void renderSpan(u32 start, u32 end) {
 	// A whole line that draws, in a mode a pixel wide, is put together in one go.
 	// So is one that shows nothing: its backgrounds weren't fetched, and aren't looked at.
 	bool dark = ppu.io.displayDisable || (!ppu.io.overscan && VCOUNTER >= 225);
-	if (objLine && (allLined || (!tiled && dark)) && draws && ppu.window.x == 0 && !ppu.io.pseudoHires && !hires) {
-		composeLine(effects, objPalette, objPriority, tiled);
+	if (objLine && (allLined || (!tiled && dark)) && draws && ppu.window.x == 0) {
+		composeLine(effects, objPalette, objPriority, tiled, hires || ppu.io.pseudoHires);
 		ppu.counter.hcounter = start;
 		return;
 	}

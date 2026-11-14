@@ -446,7 +446,11 @@ static u8 oamRead(u16 address) {
 	return data;
 }
 
+// Counts the writes to OAM, and state loads, for what Balanced mode keeps of it.
+static u32 oamWrites;
+
 static void oamWrite(u16 address, u8 data) {
+	++oamWrites;
 	address &= 0x3ff;
 
 	if (!(address & 0x200)) {
@@ -577,22 +581,49 @@ static void objEvaluateLine(void) {
 		probe.size = 1;
 		widthLarge = objectWidth(&probe), heightLarge = objectHeight(&probe) >> ppu.obj.io.interlace;
 	}
-	u32 line = ppu.obj.y % 256;
+	// Which sprites are on each line, worked out again when the OAM or the sizes change.
+	static u64 onLine[256][2];
+	static u32 onLineKey[5];
+	u32 key[5] = { oamWrites, widthSmall, widthLarge, heightSmall, heightLarge };
+	if (memcmp(key, onLineKey, sizeof(key))) {
+		memcpy(onLineKey, key, sizeof(key));
+		memset(onLine, 0, sizeof(onLine));
+		for (u32 n = 0; n < 128; ++n) {
+			const struct OamObject* sprite = &ppu.oam[n];
+			u32 width = sprite->size ? widthLarge : widthSmall, height = sprite->size ? heightLarge : heightSmall;
+			if (sprite->x > 256 && sprite->x + width - 1 < 512) {
+				continue;
+			}
+			for (u32 y = 0; y < height && y < 256; ++y) {
+				onLine[(sprite->y + y) & 255][n >> 6] |= 1ull << (n & 63);
+			}
+		}
+	}
+
+	// The sprites in the order they are looked at, from the first sprite round to the one before it.
+	const u64* set = onLine[ppu.obj.y % 256];
+	u32 first = ppu.obj.latchFirstSprite & 127;
 	u32 count = ppu.obj.itemCount;
-	for (u32 index = 0; index < 128 && count <= 32; ++index) {
-		u8 n = (ppu.obj.latchFirstSprite + index) & 127;
-		const struct OamObject* sprite = &ppu.oam[n];
-		u32 width = sprite->size ? widthLarge : widthSmall, height = sprite->size ? heightLarge : heightSmall;
-		if (sprite->x > 256 && sprite->x + width - 1 < 512) {
-			continue;
-		}
-		if (((line - sprite->y) & 255) >= height) {
-			continue;
-		}
-		ppu.latch.oamAddress = n;
-		if (count++ < 32) {
-			ppu.obj.item[ppu.obj.active][count - 1].valid = true;
-			ppu.obj.item[ppu.obj.active][count - 1].index = n;
+	for (u32 pass = 0; pass < 2 && count <= 32; ++pass) {
+		u32 from = pass ? 0 : first, to = pass ? first : 128;
+		for (u32 word = 0; word < 2 && count <= 32; ++word) {
+			u32 low = from > word * 64 ? from - word * 64 : 0, high = to < word * 64 + 64 ? (to > word * 64 ? to - word * 64 : 0) : 64;
+			if (low >= high) {
+				continue;
+			}
+			u64 bits = set[word] >> low << low;
+			if (high < 64) {
+				bits &= (1ull << high) - 1;
+			}
+			while (bits && count <= 32) {
+				u32 n = word * 64 + __builtin_ctzll(bits);
+				bits &= bits - 1;
+				ppu.latch.oamAddress = n;
+				if (count++ < 32) {
+					ppu.obj.item[ppu.obj.active][count - 1].valid = true;
+					ppu.obj.item[ppu.obj.active][count - 1].index = n;
+				}
+			}
 		}
 	}
 	ppu.obj.itemCount = count;
@@ -1115,6 +1146,7 @@ static u32 vramWrites;
 
 void ppuLoaded(void) {
 	++vramWrites;
+	++oamWrites;
 }
 
 static void writeVRAM(bool byte, u8 data) {

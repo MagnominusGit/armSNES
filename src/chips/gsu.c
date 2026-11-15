@@ -605,12 +605,13 @@ static inline __attribute__((always_inline)) void callBalanced(u32 sub, u32 a, u
 
 static void gsuRunBalanced(void) {
 	u32 n;
+	// Only the S-CPU gives and takes the ROM and the RAM.
+	if (!gsu.scmr.ron || !gsu.scmr.ran) {
+		gsuRunExact();
+		return;
+	}
 	for (;;) {
 		if (cpu.th.clock < gsu.th.clock) {
-			return;
-		}
-		if (!gsu.scmr.ron || !gsu.scmr.ran) {
-			gsuRunExact();
 			return;
 		}
 		if (FLAG(SFR_G) == 0) {
@@ -621,7 +622,14 @@ static void gsuRunBalanced(void) {
 			continue;
 		}
 		gsu.opcode = gsu.pipeline;
-		readOpcodeBalanced(gsu.r[15]);
+		u32 offset = (u16) (gsu.r[15] - gsu.cbr);
+		if (offset < 512 && gsu.cacheValid[offset >> 4]) {
+			stepBalanced(gsu.clsr ? 1 : 2);
+			gsu.pipeline = gsu.cache[offset];
+			gsu.modified[15] = false;
+		} else {
+			readOpcodeBalanced(gsu.r[15]);
+		}
 		switch (gsu.opcode) {
 #include "gsu_ops.inc"
 		}

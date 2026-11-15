@@ -907,6 +907,7 @@ struct Sa1 {
 extern struct Sa1 sa1;
 
 void sa1Power(void);
+void sa1FrameStart(void);
 void sa1Run(void);
 u8 sa1ReadIOCPU(u32 address, u8 data);
 void sa1WriteIOCPU(u32 address, u8 data);

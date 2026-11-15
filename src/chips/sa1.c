@@ -353,14 +353,29 @@ static void syncFromCpu(void) {
 	}
 }
 
+// A frame starts knowing no loop, as a state loaded at a frame's end does.
+void sa1FrameStart(void) {
+	loop.valid = false;
+}
+
+// Fast mode: a read by the S-CPU needn't bring an SA-1 waiting in a loop up to it, while its timer
+// can't interrupt it: the loop writes nothing the read could see. It catches up at the next write.
+static void syncForRead(void) {
+	if (systemFast && loop.valid && !sa1.io.hen && !sa1.io.ven) {
+		return;
+	}
+	syncFromCpu();
+}
+
 u8 sa1ReadIramCPU(u32 address, u8 data) {
 	(void) data;
-	syncFromCpu();
+	syncForRead();
 	return iramRead(address);
 }
 
 void sa1WriteIramCPU(u32 address, u8 data) {
 	syncFromCpu();
+	loop.valid = false;
 	if (!(sa1.io.siwp >> (address >> 8 & 7) & 1)) {
 		return;
 	}
@@ -404,7 +419,7 @@ static u8 dmaCC1Read(u32 address);
 
 // 00-3f,80-bf:6000-7fff comes here as 0000-1fff; 40-4f:0000-ffff as it is.
 u8 sa1ReadBwramCPU(u32 address, u8 data) {
-	syncFromCpu();
+	syncForRead();
 	if (address < 0x2000) {
 		address = sa1.io.sbm * 0x2000 + (address & 0x1fff);
 	}
@@ -421,6 +436,7 @@ static inline bool bwramProtected(u32 address) {
 
 void sa1WriteBwramCPU(u32 address, u8 data) {
 	syncFromCpu();
+	loop.valid = false;
 	if (address < 0x2000) {
 		address = sa1.io.sbm * 0x2000 + (address & 0x1fff);
 	}
@@ -655,7 +671,7 @@ static void writeIOShared(u32 address, u8 data) {
 static void dmaNormalAtOnce(void);
 
 u8 sa1ReadIOCPU(u32 address, u8 data) {
-	syncFromCpu();
+	syncForRead();
 	switch (0x2200 | (address & 0x1ff)) {
 	// SFR
 	case 0x2300:
@@ -669,6 +685,7 @@ u8 sa1ReadIOCPU(u32 address, u8 data) {
 
 void sa1WriteIOCPU(u32 address, u8 data) {
 	syncFromCpu();
+	loop.valid = false;
 	switch (0x2200 | (address & 0x1ff)) {
 	// CCNT
 	case 0x2200:
@@ -1263,8 +1280,11 @@ static bool countersSkip(u64 steps) {
 }
 
 void sa1Run(void) {
-	// The S-CPU has run since: whatever was known of a loop is gone.
-	loop.valid = false;
+	// The S-CPU has run since: whatever was known of a loop is gone. In Fast mode it is kept unless the
+	// S-CPU wrote what the SA-1 sees; only the stalls its accesses cause the SA-1 can change.
+	if (!systemFast) {
+		loop.valid = false;
+	}
 dispatch:
 	switch (sa1.state) {
 	case MAIN:

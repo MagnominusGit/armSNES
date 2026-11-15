@@ -3545,13 +3545,9 @@ static void fastWholeLine(void) {
 }
 
 static void renderSpan(u32 start, u32 end) {
-	// Not mode 6, which snes_faust doesn't draw, nor color math on a line twice as wide, which it draws
-	// otherwise than the S-PPU.
-	bool fastHires = ppu.io.bgMode == 5 || ppu.io.pseudoHires;
-	bool fastMath = ppu.dac.bgColorEnable[0] | ppu.dac.bgColorEnable[1] | ppu.dac.bgColorEnable[2] | ppu.dac.bgColorEnable[3] |
-	                ppu.dac.objColorEnable | ppu.dac.backColorEnable;
+	// Not mode 6, which snes_faust doesn't draw.
 	if (systemFast && start == 0 && end == 1080 && VCOUNTER != 0 && ppu.obj.x == 0 && ppu.window.x == 0 &&
-	    ppu.blankFrom == BLANK_NONE && ppu.io.bgMode != 6 && !(fastHires && fastMath)) {
+	    ppu.blankFrom == BLANK_NONE && ppu.io.bgMode != 6) {
 		objEvaluateLine();
 		fastWholeLine();
 		ppu.obj.x += 256;

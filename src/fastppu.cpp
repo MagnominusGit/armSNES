@@ -821,48 +821,49 @@ static MDFN_HOT MDFN_FASTCALL NO_INLINE void MixMainSubSubSubMarine(T* MDFN_REST
 {
  if(any_hires)
  {
-  // FIXME: hires color math.
+  // armSNES: color math on a line twice as wide as the S-PPU does it. The main screen pixel is mathed
+  // as on any line; the sub screen pixel left of it with the math settings and the color of the main
+  // screen pixel before it.
+  const bool subtract = cmath_mode & 2;
+  uint32 prev_main = 0, prev_sub = 0;
+
   for(unsigned i = 0; i < 256; i++)
   {
    uint32 main = linebuf.main[i];
    uint32 sub = linebuf.sub[i];
-   unsigned main_color = main >> 16;
-   unsigned sub_color = sub >> 16;
+   uint32 main_color = (main & 2) ? main >> 16 : 0;
+   uint32 sub_color = sub >> 16;
+   uint32 out_main = main_color;
+   uint32 out_sub = (prev_main & 2) ? sub_color : 0;
 
    if(main & 1)
    {
-    if(hires_cmath_add_subscreen) //CGWSEL & 0x2)
-    {
-     if(sub & 0x8)	// Is subscreen backdrop?  Then no half-math when (CGWSEL & 0x2)
-     {
-      main_color = CMath<false, (bool)(cmath_mode & 2)>(main_color, FixedColor);
-      sub_color  = CMath<false, (bool)(cmath_mode & 2)>(sub_color,  FixedColor);
-     }
-     else
-     {
-      if((cmath_mode & 1) && (main & 2))	// If half math enabled, and main wasn't clipped to 0 by color window, then half math.
-      {
-       main_color = CMath<true,  (bool)(cmath_mode & 2)>(main_color, sub_color);
-       sub_color  = CMath<true,  (bool)(cmath_mode & 2)>(sub_color,  main_color);
-      }
-      else
-      {
-       main_color = CMath<false, (bool)(cmath_mode & 2)>(main_color, sub_color);
-       sub_color  = CMath<false, (bool)(cmath_mode & 2)>(sub_color,  main_color);
-      }
-     }
-    }
-    else
-    {
-     main_color = CMath<(bool)(cmath_mode & 1), (bool)(cmath_mode & 2)>(main_color, FixedColor);
-     sub_color  = CMath<(bool)(cmath_mode & 1), (bool)(cmath_mode & 2)>(sub_color,  FixedColor);
-    }
-   }
-   else if(!(main & 0x2))
-    sub_color = 0; //rand();
+    const bool with_sub = hires_cmath_add_subscreen && !(sub & 0x8);
+    const bool half = (cmath_mode & 1) && (main & 2) && (with_sub || !hires_cmath_add_subscreen);
+    const uint32 other = with_sub ? sub_color : FixedColor;
 
-   target[(i << 1) + 0] = ConvertRGB555(sub_color);
-   target[(i << 1) + 1] = ConvertRGB555(main_color);
+    if(subtract)
+     out_main = half ? CMath<true, true>(main_color, other) : CMath<false, true>(main_color, other);
+    else
+     out_main = half ? CMath<true, false>(main_color, other) : CMath<false, false>(main_color, other);
+   }
+
+   if(prev_main & 1)
+   {
+    const bool with_main = hires_cmath_add_subscreen && !(prev_sub & 0x8);
+    const bool half = (cmath_mode & 1) && (prev_main & 2) && (with_main || !hires_cmath_add_subscreen);
+    const uint32 other = with_main ? prev_main >> 16 : FixedColor;
+
+    if(subtract)
+     out_sub = half ? CMath<true, true>(out_sub, other) : CMath<false, true>(out_sub, other);
+    else
+     out_sub = half ? CMath<true, false>(out_sub, other) : CMath<false, false>(out_sub, other);
+   }
+
+   target[(i << 1) + 0] = ConvertRGB555(out_sub);
+   target[(i << 1) + 1] = ConvertRGB555(out_main);
+   prev_main = main;
+   prev_sub = sub;
   }
  }
  else

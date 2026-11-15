@@ -553,8 +553,11 @@ static inline __attribute__((always_inline)) void stepFast(u32 clocks) {
 	}
 }
 
+// Fast mode's accesses, unless a gun is plugged in: worked out once an instruction.
+static bool fastNow;
+
 static inline bool fastAccess(void) {
-	return systemFast && !inputGuns;
+	return fastNow;
 }
 
 static void idle(void) {
@@ -1285,6 +1288,7 @@ static void fastBetween(void) {
 }
 
 void cpuMain(void) {
+	fastNow = systemFast && !inputGuns;
 	if (fastAccess()) {
 		fastBetween();
 	}

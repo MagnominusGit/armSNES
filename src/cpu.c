@@ -539,6 +539,7 @@ static u32 waitFrom;
 
 void cpuFrameStart(void) {
 	wait.valid = false;
+	wait.unsafe = false;
 }
 
 // Fast mode: an access only moves the clock on. The IRQ lock, the DMA and the ALU are seen to between

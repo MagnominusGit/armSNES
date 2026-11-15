@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  * Ported from ares (ISC); see LICENSES/ISC-ares.txt. */
 #include "snes.h"
+#include "fastppu.h"
 
 // The S-PPU, drawn dot by dot: every two master clocks it does what the hardware does in that slot
 // (evaluates a sprite, fetches a tile, puts out a pixel) and then stops if its clock has passed the
@@ -3450,7 +3451,100 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 	}
 }
 
+// Fast mode: a whole line by snes_faust's renderer, from the registers as they are now.
+static void fastWholeLine(void) {
+	static struct FastPpuLine l;
+	l.vram = ppu.vram;
+	l.cgram = ppu.cgram;
+	l.out = ppu.dac.lineValid ? &ppuCanvas[ppu.dac.line] : NULL;
+	l.brightness = ppu.io.displayBrightness << 15;
+	l.blank = ppu.io.displayDisable || (!ppu.io.overscan && VCOUNTER >= 225);
+	l.y = VCOUNTER;
+	l.field = ppu.counter.field;
+	l.bgMode = ppu.io.bgMode | ppu.io.bgPriority << 3;
+	l.mosaic = (ppu.mosaic.size - 1) << 4;
+	for (u32 n = 0; n < 4; ++n) {
+		const struct Background* bg = &ppu.bg[n];
+		l.bgMode |= bg->io.tileSize << (4 + n);
+		l.mosaic |= bg->mosaic.enable << n;
+		l.bgsc[n] = bg->io.screenAddress >> 8 | bg->io.screenSize;
+		l.bghofs[n] = bg->io.hoffset & 0x3ff;
+		l.bgvofs[n] = bg->io.voffset & 0x3ff;
+	}
+	l.mosaicYOffset = mosaicEnable() ? mosaicVoffset() : 0;
+	l.bgnba[0] = ppu.bg[0].io.tiledataAddress >> 12 | ppu.bg[1].io.tiledataAddress >> 12 << 4;
+	l.bgnba[1] = ppu.bg[2].io.tiledataAddress >> 12 | ppu.bg[3].io.tiledataAddress >> 12 << 4;
+	l.m7sel = ppu.io.hflipMode7 | ppu.io.vflipMode7 << 1 | ppu.io.repeatMode7 << 6;
+	l.m7Matrix[0] = ppu.io.m7a;
+	l.m7Matrix[1] = ppu.io.m7b;
+	l.m7Matrix[2] = ppu.io.m7c;
+	l.m7Matrix[3] = ppu.io.m7d;
+	l.m7Center[0] = signedBits(ppu.io.m7x, 13);
+	l.m7Center[1] = signedBits(ppu.io.m7y, 13);
+	l.m7hofs = signedBits(ppu.io.hoffsetMode7, 13);
+	l.m7vofs = signedBits(ppu.io.voffsetMode7, 13);
+	const struct WindowLayer* layers[5] = { &ppu.window.bg[0], &ppu.window.bg[1], &ppu.window.bg[2], &ppu.window.bg[3], &ppu.window.obj };
+	u8 settings[6];
+	l.wmLogic = ppu.window.col.mask << 10;
+	l.wmMainEnable = l.wmSubEnable = l.msEnable = l.ssEnable = 0;
+	for (u32 n = 0; n < 5; ++n) {
+		const struct WindowLayer* w = layers[n];
+		settings[n] = w->oneInvert | w->oneEnable << 1 | w->twoInvert << 2 | w->twoEnable << 3;
+		l.wmLogic |= w->mask << (n * 2);
+		l.wmMainEnable |= w->aboveEnable << n;
+		l.wmSubEnable |= w->belowEnable << n;
+		l.msEnable |= (n < 4 ? ppu.bg[n].io.aboveEnable : ppu.obj.io.aboveEnable) << n;
+		l.ssEnable |= (n < 4 ? ppu.bg[n].io.belowEnable : ppu.obj.io.belowEnable) << n;
+	}
+	settings[5] = ppu.window.col.oneInvert | ppu.window.col.oneEnable << 1 | ppu.window.col.twoInvert << 2 | ppu.window.col.twoEnable << 3;
+	for (u32 n = 0; n < 3; ++n) {
+		l.wmSettings[n] = settings[n * 2] | settings[n * 2 + 1] << 4;
+	}
+	l.windowPos[0][0] = ppu.window.oneLeft;
+	l.windowPos[0][1] = ppu.window.oneRight;
+	l.windowPos[1][0] = ppu.window.twoLeft;
+	l.windowPos[1][1] = ppu.window.twoRight;
+	l.cgwsel = ppu.dac.directColor | ppu.dac.blendMode << 1 | ppu.window.col.belowMask << 4 | ppu.window.col.aboveMask << 6;
+	l.cgadsub = ppu.dac.objColorEnable << 4 | ppu.dac.backColorEnable << 5 | ppu.dac.colorHalve << 6 | ppu.dac.colorMode << 7;
+	for (u32 n = 0; n < 4; ++n) {
+		l.cgadsub |= ppu.dac.bgColorEnable[n] << n;
+	}
+	l.fixedColor = fixedColor();
+	l.screenMode = ppu.io.interlace | ppu.obj.io.interlace << 1 | ppu.io.overscan << 2 | ppu.io.pseudoHires << 3 | ppu.io.extbg << 6;
+	l.spriteCount = 0;
+	for (u32 n = 0; n < 34; ++n) {
+		const __typeof__(ppu.obj.tile[0][0])* tile = &ppu.obj.tile[!ppu.obj.active][n];
+		if (!tile->valid) {
+			break;
+		}
+		l.sprites[l.spriteCount++] = (struct FastPpuSprite) { signedBits(tile->x, 9), tile->priority, tile->palette, tile->hflip, tile->data };
+	}
+	fastPpuLine(&l);
+	// The first column's sub screen pixel of a line twice as wide is black.
+	if (l.out && !l.blank && (ppu.io.bgMode == 5 || ppu.io.pseudoHires)) {
+		l.out[0] = l.brightness;
+	}
+}
+
 static void renderSpan(u32 start, u32 end) {
+	// Not mode 6, which snes_faust doesn't draw, nor color math on a line twice as wide, which it draws
+	// otherwise than the S-PPU.
+	bool fastHires = ppu.io.bgMode == 5 || ppu.io.pseudoHires;
+	bool fastMath = ppu.dac.bgColorEnable[0] | ppu.dac.bgColorEnable[1] | ppu.dac.bgColorEnable[2] | ppu.dac.bgColorEnable[3] |
+	                ppu.dac.objColorEnable | ppu.dac.backColorEnable;
+	if (systemFast && start == 0 && end == 1080 && VCOUNTER != 0 && ppu.obj.x == 0 && ppu.window.x == 0 &&
+	    ppu.blankFrom == BLANK_NONE && ppu.io.bgMode != 6 && !(fastHires && fastMath)) {
+		objEvaluateLine();
+		fastWholeLine();
+		ppu.obj.x += 256;
+		if (ppu.dac.lineValid) {
+			ppu.dac.line += 512;
+			if (ppu.drawnTo < ppu.dac.line) {
+				ppu.drawnTo = ppu.dac.line;
+			}
+		}
+		return;
+	}
 	if (systemBalanced && start == 0 && end == 1080) {
 		objEvaluateLine();
 	} else {

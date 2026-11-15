@@ -338,8 +338,10 @@ int main(int argc, char** argv) {
 	lastFrame = frames;
 	clock_t start = clock();
 	int resetAt = getenv("RESETAT") ? atoi(getenv("RESETAT")) : -1;
-	// BALANCED=1: Balanced mode.
-	systemBalanced = getenv("BALANCED") != NULL;
+	// BALANCED=1: Balanced mode. FAST=1: Fast mode.
+	bool fastWanted = getenv("FAST") != NULL;
+	systemFast = fastWanted;
+	systemBalanced = getenv("BALANCED") != NULL || fastWanted;
 	// CHEAT=codes: cheat codes from the start.
 	if (getenv("CHEAT") && !cheatAdd(getenv("CHEAT"))) {
 		fprintf(stderr, "no cheat code in %s\n", getenv("CHEAT"));
@@ -355,6 +357,7 @@ int main(int argc, char** argv) {
 	while (locking && sys.frames < frames) {
 		stateSave(before, stateBytes);
 		systemBalanced = false;
+		systemFast = false;
 		lockKeep = false;
 		lockSamples[0] = lockSamples[1] = 0;
 		systemRunFrame();
@@ -371,6 +374,7 @@ int main(int argc, char** argv) {
 		u32 frame = sys.frames;
 		stateLoad(before, stateBytes);
 		systemBalanced = true;
+		systemFast = fastWanted;
 		cpuFastReplan();
 		lockKeep = true;
 		systemRunFrame();
@@ -427,6 +431,7 @@ int main(int argc, char** argv) {
 		}
 		stateLoad(state, stateBytes);
 		systemBalanced = false;
+		systemFast = false;
 	}
 	if (locking) {
 		printf("lock frames=%llu picture=%llu (pixels %.0f a frame) sound=%llu count=%llu wram=%llu vram=%llu oam=%llu cgram=%llu apuram=%llu\n",

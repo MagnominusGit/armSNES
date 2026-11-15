@@ -81,6 +81,8 @@ extern bool systemClearPowerOn;
 // Balanced mode: the same machine with coarser timing (docs/ROADMAP.md). Not part of a saved state:
 // a state from either mode loads in the other at a frame's end.
 extern bool systemBalanced;
+// Fast mode: Balanced, with whole lines drawn by snes_faust's renderer (fastppu.cpp).
+extern bool systemFast;
 // Balanced mode works out again what comes next on the line (after a state is loaded or the mode set).
 void cpuFastReplan(void);
 

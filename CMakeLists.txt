@@ -34,6 +34,7 @@ add_library(armsnes STATIC
 	src/mix.c
 	src/sha256.c
 	src/ppu.c
+	src/fastppu.cpp
 	src/smp.c
 	src/state.c
 	src/system.c

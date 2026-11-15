@@ -2,6 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "../src/snes.h"
+#include "../src/fastppu.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -345,6 +346,10 @@ int main(int argc, char** argv) {
 	systemFastThreaded = !getenv("FASTTHREAD") || strcmp(getenv("FASTTHREAD"), "0");
 	// FRAMETOP=1: frames end as their last line starts, in every mode.
 	systemFrameAtTop = getenv("FRAMETOP") != NULL;
+	// FASTRENDER=n: n render threads.
+	if (getenv("FASTRENDER")) {
+		fastPpuThreads(atoi(getenv("FASTRENDER")));
+	}
 	systemBalanced = getenv("BALANCED") != NULL || fastWanted;
 	// CHEAT=codes: cheat codes from the start.
 	if (getenv("CHEAT") && !cheatAdd(getenv("CHEAT"))) {

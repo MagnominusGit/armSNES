@@ -65,6 +65,8 @@ void fastPpuFence(void);
 void fastPpuResync(const uint16_t* vram, const uint16_t* cgram);
 // The thread drawn out and ended; the next line given starts it again.
 void fastPpuStop(void);
+// How many render threads to use: 0 for as many as the cores allow.
+void fastPpuThreads(unsigned count);
 // Called on the thread with each line it has drawn.
 void fastPpuSetSink(void (*sink)(const uint32_t* line));
 

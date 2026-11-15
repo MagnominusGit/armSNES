@@ -51,6 +51,11 @@ static inline u16 rgb565(u32 pixel) {
 	return (r >> 3) << 11 | (g >> 2) << 5 | (b >> 3);
 }
 
+// The same at full brightness, where the table only moves bits.
+static inline u16 rgb565Bright(u32 pixel) {
+	return (pixel << 11 & 0xf800) | (pixel << 1 & 0x07c0) | (pixel >> 4 & 0x0020) | (pixel >> 10 & 0x001f);
+}
+
 // The part of the canvas a television shows, as ares crops it without overscan.
 void videoFrame(const u32* canvas) {
 	bool interlace = ppu.state.interlace;
@@ -76,7 +81,12 @@ void videoFrame(const u32* canvas) {
 	for (u32 row = 0; row < h; ++row) {
 		const u32* from = &canvas[(y + row) * CANVAS_WIDTH + x];
 		u16* to = &output[row * OUTPUT_WIDTH];
+		u32 dim = 0;
 		for (u32 n = 0; n < OUTPUT_WIDTH; ++n) {
+			dim |= ~from[n] & 0x78000;
+			to[n] = rgb565Bright(from[n]);
+		}
+		for (u32 n = 0; dim && n < OUTPUT_WIDTH; ++n) {
 			to[n] = rgb565(from[n]);
 		}
 	}

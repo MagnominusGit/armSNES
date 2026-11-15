@@ -992,6 +992,44 @@ static bool echoWritten(u16 address) {
 		} \
 		return; \
 	}
+// Plain RAM (not the I/O registers or the IPL ROM's place) is read and written straight.
+#define PLAIN(address) ((u16) ((address) - 0x00f0) >= 0x10 && (address) < 0xffc0)
+#undef READ
+#define READ(target, address) \
+	do { \
+		smp.ad = (address); \
+		if (PLAIN(smp.ad)) { \
+			WAIT(0, smp.externalWaitStates); \
+			SMP_BEFORE_READ(smp.ad); \
+			smp.dr = smp.ramDisable ? 0x5a : dsp.apuram[smp.ad]; \
+		} else if ((smp.ad & 0xfffc) == 0x00f4) { \
+			WAIT(1, waitStatesFor(smp.ad)); \
+			smp.dr = readMemory(smp.ad); \
+			WAIT(1, waitStatesFor(smp.ad)); \
+		} else { \
+			WAIT(0, waitStatesFor(smp.ad)); \
+			SMP_BEFORE_READ(smp.ad); \
+			smp.dr = readMemory(smp.ad); \
+		} \
+		target = smp.dr; \
+	} while (0)
+#undef WRITE
+#define WRITE(address, data) \
+	do { \
+		smp.ad = (address); \
+		smp.dw = (data); \
+		if (PLAIN(smp.ad)) { \
+			WAIT(0, smp.externalWaitStates); \
+			SMP_BEFORE_WRITE(); \
+			if (smp.ramWritable && !smp.ramDisable) { \
+				dsp.apuram[smp.ad] = smp.dw; \
+			} \
+		} else { \
+			WAIT(0, waitStatesFor(smp.ad)); \
+			SMP_BEFORE_WRITE(); \
+			writeMemory(smp.ad, smp.dw); \
+		} \
+	} while (0)
 #define SMP_RUN smpRunBalanced
 #include "smp_run.inc"
 #undef STEP

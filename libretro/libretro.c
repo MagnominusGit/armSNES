@@ -81,13 +81,21 @@ void videoFrame(const u32* canvas) {
 	for (u32 row = 0; row < h; ++row) {
 		const u32* from = &canvas[(y + row) * CANVAS_WIDTH + x];
 		u16* to = &output[row * OUTPUT_WIDTH];
-		u32 dim = 0;
+		u32 dim = 0, mixed = 0;
 		for (u32 n = 0; n < OUTPUT_WIDTH; ++n) {
 			dim |= ~from[n] & 0x78000;
+			mixed |= from[n] ^ from[0];
 			to[n] = rgb565Bright(from[n]);
 		}
-		for (u32 n = 0; dim && n < OUTPUT_WIDTH; ++n) {
-			to[n] = rgb565(from[n]);
+		if (dim && !mixed) {
+			u16 color = rgb565(from[0]);
+			for (u32 n = 0; n < OUTPUT_WIDTH; ++n) {
+				to[n] = color;
+			}
+		} else if (dim) {
+			for (u32 n = 0; n < OUTPUT_WIDTH; ++n) {
+				to[n] = rgb565(from[n]);
+			}
 		}
 	}
 	outputHeight = h;

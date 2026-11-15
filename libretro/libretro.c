@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "libretro.h"
 #include "snes.h"
+#include "fastppu.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -289,6 +290,7 @@ void retro_set_environment(retro_environment_t callback) {
 
 	// The first value is the default.
 	static const struct retro_variable variables[] = {
+		{ "armsnes_mode", "Mode; Fast|Balanced|Exact" },
 		{ "armsnes_power_on_ram", "Power-On RAM; Cleared|Patterned" },
 		{ "armsnes_crosshair", "Light Gun Crosshair; On|Off" },
 		{ NULL, NULL },
@@ -355,6 +357,7 @@ void retro_init(void) {
 }
 
 void retro_deinit(void) {
+	fastPpuStop();
 }
 
 void retro_get_system_info(struct retro_system_info* info) {
@@ -461,7 +464,18 @@ void retro_cheat_set(unsigned index, bool enabled, const char* code) {
 
 // Patterned is ares's: stripes of two values. Cleared is all 0, which some unlicensed games and
 // betas need.
+// Exact is ares's timing, Balanced coarser, Fast Balanced's with snes_faust's renderer on a thread of
+// its own (docs/ROADMAP.md). A change takes effect between frames.
 static void readOptions(void) {
+	struct retro_variable mode = { "armsnes_mode", NULL };
+	const char* value = environment(RETRO_ENVIRONMENT_GET_VARIABLE, &mode) && mode.value ? mode.value : "Fast";
+	bool exact = !strcmp(value, "Exact"), balanced = !exact, fast = !exact && strcmp(value, "Balanced");
+	if (balanced != systemBalanced || fast != systemFast) {
+		systemBalanced = balanced;
+		systemFast = fast;
+		systemFastThreaded = true;
+		cpuFastReplan();
+	}
 	struct retro_variable variable = { "armsnes_power_on_ram", NULL };
 	systemClearPowerOn = !environment(RETRO_ENVIRONMENT_GET_VARIABLE, &variable) || !variable.value ||
 	                     strcmp(variable.value, "Patterned");
@@ -594,6 +608,7 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info* info, 
 }
 
 void retro_unload_game(void) {
+	fastPpuStop();
 	loaded = false;
 	cheatReset();
 	free(game);

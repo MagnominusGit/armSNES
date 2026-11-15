@@ -352,7 +352,11 @@ static void fastPlan(void) {
 	fastNext = next;
 }
 
+// fastCatch calls, so that a turn of a waiting loop an event fell in isn't taken for its length.
+static u32 fastCatches;
+
 static void fastCatch(void) {
+	fastCatches++;
 	for (;;) {
 		u32 h = cpu.counter.hcounter;
 		fastIrq();
@@ -522,6 +526,7 @@ static struct {
 	u8 regs[WAIT_SIZE];
 	u8 mdr;
 	u64 clock;
+	u32 catches;
 	bool unsafe;
 } wait;
 // Where the instruction being run started.
@@ -1218,16 +1223,15 @@ static void fastBranch(void) {
 		return;
 	}
 	// A short jump back. A turn that wrote, or read what can change, starts over; after a clean one
-	// the registers are kept, and the same turn again with the same registers is waiting. Not with
-	// an SA-1 or GSU running beside it, whose work the wait can be for; nor with an H or V IRQ set,
-	// which a raster effect waits for.
-	if (wait.unsafe || cart.sa1 || cart.gsu || cpu.io.irqEnable) {
+	// the registers are kept, and the same turn again with the same registers and no event inside
+	// it is waiting. Not with an SA-1 or GSU running beside it, whose work the wait can be for.
+	if (wait.unsafe || cart.sa1 || cart.gsu) {
 		wait.valid = false;
 		wait.unsafe = false;
 		return;
 	}
 	const u8* regs = (const u8*) &R + WAIT_FROM;
-	if (wait.valid && pc == wait.pc && R.mdr == wait.mdr && !memcmp(regs, wait.regs, WAIT_SIZE) && !cpu.status.interruptPending &&
+	if (wait.valid && wait.catches == fastCatches && pc == wait.pc && R.mdr == wait.mdr && !memcmp(regs, wait.regs, WAIT_SIZE) && !cpu.status.interruptPending &&
 	    !cpu.status.dmaActive && !cpu.status.dmaPending && !cpu.status.hdmaPending) {
 		fastSkipTurns();
 	}
@@ -1236,6 +1240,7 @@ static void fastBranch(void) {
 	memcpy(wait.regs, regs, WAIT_SIZE);
 	wait.mdr = R.mdr;
 	wait.clock = cpu.th.clock;
+	wait.catches = fastCatches;
 }
 
 // Fast mode: what an access would see to, once an instruction. A DMA starts at the second access edge.

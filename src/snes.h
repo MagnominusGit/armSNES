@@ -220,6 +220,8 @@ void dspPower(bool reset);
 void dspRun(void);
 // Whether the DSP may soon read this address of its RAM (Balanced mode brings it up first).
 bool dspWillRead(u16 address);
+// Whether the DSP's echo writes may reach this page.
+bool dspEchoPage(u16 address);
 void dspLoaded(void);
 u8 dspRead(u8 address);
 void dspWrite(u8 address, u8 data);

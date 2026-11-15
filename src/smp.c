@@ -974,14 +974,14 @@ static bool echoWritten(u16 address) {
 	if ((address & 0xfff0) == 0x00f0) { \
 		timersCatchUp(); \
 	} \
-	if (dsp.th.clock < smp.th.clock && echoWritten(address)) { \
+	if (dsp.th.clock < smp.th.clock && dspEchoPage(address) && echoWritten(address)) { \
 		dspRun(); \
 	}
 #define SMP_BEFORE_WRITE() \
 	if ((smp.ad & 0xfff0) == 0x00f0) { \
 		timersCatchUp(); \
 	} \
-	if (dsp.th.clock < smp.th.clock && (dspWillRead(smp.ad) || echoWritten(smp.ad))) { \
+	if (dsp.th.clock < smp.th.clock && (dspWillRead(smp.ad) || (dspEchoPage(smp.ad) && echoWritten(smp.ad)))) { \
 		dspRun(); \
 	}
 #define SMP_AT_INSTRUCTION() \

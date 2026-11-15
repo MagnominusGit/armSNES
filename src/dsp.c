@@ -77,9 +77,13 @@ u8 dspRead(u8 address) {
 	return dsp.registers[address & 0x7f];
 }
 
-// The pages dspWillRead can say yes for, worked out again when what it looks at may have changed.
-static u8 readPages[32];
+// The pages dspWillRead and dspEchoPage can say yes for, worked out again when what they look at may
+// have changed. Each voice's are marked for its next 256 bytes of samples, so they last while it
+// stays inside them.
+static u8 readPages[32], echoPages[32];
 static bool readPagesStale = true;
+static u16 markedAt[8], markedEchoLength;
+static u8 markedBank, markedEchoPage;
 
 void dspWrite(u8 address, u8 data) {
 	address &= 0x7f;
@@ -711,10 +715,38 @@ static void step(int phase) {
 
 // Whether the DSP may soon read this address of its RAM: the sample directory, each voice's sample
 // block and the next, and the blocks its directory entry starts and loops at.
-static void markPages(u16 from, u16 length) {
+static void markPages(u8* pages, u16 from, u32 length) {
 	for (u32 page = from >> 8, last = page + ((from & 0xff) + length - 1) / 256; page <= last; ++page) {
-		readPages[page >> 3 & 31] |= 1 << (page & 7);
+		pages[page >> 3 & 31] |= 1 << (page & 7);
 	}
+}
+
+static void markAll(void) {
+	readPagesStale = false;
+	memset(readPages, 0, sizeof(readPages));
+	memset(echoPages, 0, sizeof(echoPages));
+	markPages(readPages, dsp.brr._bank << 8, 0x400);
+	markPages(readPages, dsp.brr.bank << 8, 0x400);
+	for (int n = 0; n < 8; ++n) {
+		const struct DspVoice* v = &dsp.voice[n];
+		u16 entry = (dsp.brr._bank << 8) + (v->source << 2);
+		markedAt[n] = v->brrAddress;
+		markPages(readPages, v->brrAddress, 256 + 18);
+		markPages(readPages, dsp.apuram[entry] | dsp.apuram[(u16) (entry + 1)] << 8, 9);
+		markPages(readPages, dsp.apuram[(u16) (entry + 2)] | dsp.apuram[(u16) (entry + 3)] << 8, 9);
+	}
+	markedBank = dsp.brr._bank;
+	markedEchoPage = dsp.echo._page;
+	markedEchoLength = dsp.echo._length;
+	markPages(echoPages, dsp.echo._page << 8, dsp.echo._length > 4 ? dsp.echo._length : 4);
+	markPages(echoPages, dsp.echo.page << 8, dsp.echo.delay ? dsp.echo.delay * 2048 : 4);
+}
+
+bool dspEchoPage(u16 address) {
+	if (readPagesStale) {
+		markAll();
+	}
+	return echoPages[address >> 11] >> (address >> 8 & 7) & 1;
 }
 
 void dspLoaded(void) {
@@ -723,17 +755,7 @@ void dspLoaded(void) {
 
 bool dspWillRead(u16 address) {
 	if (readPagesStale) {
-		readPagesStale = false;
-		memset(readPages, 0, sizeof(readPages));
-		markPages(dsp.brr._bank << 8, 0x400);
-		markPages(dsp.brr.bank << 8, 0x400);
-		for (int n = 0; n < 8; ++n) {
-			const struct DspVoice* v = &dsp.voice[n];
-			u16 entry = (dsp.brr._bank << 8) + (v->source << 2);
-			markPages(v->brrAddress, 18);
-			markPages(dsp.apuram[entry] | dsp.apuram[(u16) (entry + 1)] << 8, 9);
-			markPages(dsp.apuram[(u16) (entry + 2)] | dsp.apuram[(u16) (entry + 3)] << 8, 9);
-		}
+		markAll();
 	}
 	if (!(readPages[address >> 11] >> (address >> 8 & 7) & 1)) {
 		return false;
@@ -764,7 +786,14 @@ void dspRun(void) {
 		dsp.phase = (dsp.phase + 1) & 31;
 		threadStep(&dsp.th, 3 * 8);
 	} while (!(smp.th.clock < dsp.th.clock));
-	readPagesStale = true;
+	for (int n = 0; n < 8; ++n) {
+		if ((u16) (dsp.voice[n].brrAddress - markedAt[n]) > 256) {
+			readPagesStale = true;
+		}
+	}
+	if (dsp.brr._bank != markedBank || dsp.echo._page != markedEchoPage || dsp.echo._length != markedEchoLength) {
+		readPagesStale = true;
+	}
 }
 
 void dspPower(bool reset) {

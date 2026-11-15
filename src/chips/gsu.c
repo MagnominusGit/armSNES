@@ -67,6 +67,9 @@ static inline u8 romAt(u32 address) {
 	return address < cart.romSize ? cart.rom[address] : 0;
 }
 
+// Where gsuRunTo's run stopped.
+static u64 stoppedAt = ~0ull;
+
 static void flushCache(void) {
 	memset(gsu.cacheValid, 0, sizeof(gsu.cacheValid));
 }
@@ -642,6 +645,25 @@ void gsuRun(void) {
 	if (systemBalanced && gsu.state == MAIN) {
 		gsuRunBalanced();
 	}
+}
+
+u64 gsuRunTo(u64 clock) {
+	if (!FLAG(SFR_G)) {
+		return ~0ull;
+	}
+	u64 now = cpu.th.clock;
+	cpu.th.clock = clock;
+	stoppedAt = ~0ull;
+	if (gsu.th.clock < clock) {
+		gsuRun();
+	}
+	cpu.th.clock = now;
+	// Stopped, the GSU only waited after: its clock goes back to where it stopped, so a start the
+	// S-CPU makes before the end of the run isn't late.
+	if (stoppedAt != ~0ull && !FLAG(SFR_G)) {
+		gsu.th.clock = stoppedAt > now ? stoppedAt : now;
+	}
+	return stoppedAt;
 }
 
 static void syncFromCpu(void) {

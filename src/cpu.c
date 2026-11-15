@@ -572,7 +572,10 @@ static u8 read(u32 address) {
 			R.mar = address;
 			return R.mdr = memory[at & 0xff];
 		}
-		wait.unsafe = true;
+		// The GSU's status changes only as the GSU stops, which a skip stops at.
+		if (!cart.gsu || (address & 0x40ffff) != 0x3030) {
+			wait.unsafe = true;
+		}
 	}
 	cpu.status.clockCount = waitFor(address);
 	dmaEdge();
@@ -1206,6 +1209,13 @@ static void fastSkipTurns(void) {
 		return;
 	}
 	u64 room = (u64) (limitH - h) * cpu.th.scalar;
+	// The GSU stopping can interrupt the S-CPU or end what it waits for: no further than that.
+	if (cart.gsu) {
+		u64 stopped = gsuRunTo(cpu.th.clock + room);
+		if (stopped != ~0ull) {
+			room = stopped > cpu.th.clock ? stopped - cpu.th.clock : 0;
+		}
+	}
 	// Not worth it for less than two turns.
 	if (room < 2 * turn) {
 		return;
@@ -1224,8 +1234,8 @@ static void fastBranch(void) {
 	}
 	// A short jump back. A turn that wrote, or read what can change, starts over; after a clean one
 	// the registers are kept, and the same turn again with the same registers and no event inside
-	// it is waiting. Not with an SA-1 or GSU running beside it, whose work the wait can be for.
-	if (wait.unsafe || cart.sa1 || cart.gsu) {
+	// it is waiting. Not with an SA-1 running beside it, whose work the wait can be for.
+	if (wait.unsafe || cart.sa1) {
 		wait.valid = false;
 		wait.unsafe = false;
 		return;

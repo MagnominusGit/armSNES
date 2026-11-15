@@ -988,6 +988,9 @@ struct Gsu {
 extern struct Gsu gsu;
 
 void gsuPower(void);
+// Fast mode: the GSU run up to clock (the S-CPU's clock), and the clock it stopped at in that time
+// (all ones if it didn't, or wasn't running).
+u64 gsuRunTo(u64 clock);
 void gsuRun(void);
 u8 gsuReadIO(u32 address, u8 data);
 void gsuWriteIO(u32 address, u8 data);

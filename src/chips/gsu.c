@@ -438,7 +438,8 @@ done:
 // either, which only the S-CPU can end, is Exact's.
 static inline void callBalanced(u32 sub, u32 a, u32 b);
 
-static void stepBalanced(u32 clocks) {
+// A pending ROM read or RAM write is seen to out of line; the clock moves on in place.
+static __attribute__((noinline)) void stepBuffers(u32 clocks) {
 	if (gsu.romcl) {
 		gsu.romcl -= clocks < gsu.romcl ? clocks : gsu.romcl;
 		if (gsu.romcl == 0) {
@@ -452,6 +453,12 @@ static void stepBalanced(u32 clocks) {
 		if (gsu.ramcl == 0) {
 			callBalanced(SUB_WRITE, 0x700000 + (gsu.rambr << 16) + gsu.ramar, gsu.ramdr);
 		}
+	}
+}
+
+static inline __attribute__((always_inline)) void stepBalanced(u32 clocks) {
+	if (gsu.romcl | gsu.ramcl) {
+		stepBuffers(clocks);
 	}
 	gsu.th.clock += gsu.th.scalar * clocks;
 }
@@ -476,7 +483,7 @@ static void writeBalanced(u32 address, u32 data) {
 	}
 }
 
-static void readOpcodeBalanced(u32 address) {
+static __attribute__((noinline)) void readOpcodeBalanced(u32 address) {
 	u32 offset = (u16) (address - gsu.cbr);
 	if (offset < 512) {
 		if (gsu.cacheValid[offset >> 4] == false) {
@@ -505,6 +512,18 @@ static void readOpcodeBalanced(u32 address) {
 		gsu.pipeline = gsu.result;
 	}
 	gsu.modified[15] = false;
+}
+
+// An opcode in the cache is fetched in place.
+static inline __attribute__((always_inline)) void readOpcodeCached(u32 address) {
+	u32 offset = (u16) (address - gsu.cbr);
+	if (offset < 512 && gsu.cacheValid[offset >> 4]) {
+		stepBalanced(gsu.clsr ? 1 : 2);
+		gsu.pipeline = gsu.cache[offset];
+		gsu.modified[15] = false;
+	} else {
+		readOpcodeBalanced(address);
+	}
 }
 
 static void flushBalanced(u32 which) {
@@ -593,7 +612,7 @@ static inline __attribute__((always_inline)) void callBalanced(u32 sub, u32 a, u
 	case SUB_STEP: stepBalanced(a); return;
 	case SUB_READ: readBalanced(a); return;
 	case SUB_WRITE: writeBalanced(a, b); return;
-	case SUB_READ_OPCODE: readOpcodeBalanced(a); return;
+	case SUB_READ_OPCODE: readOpcodeCached(a); return;
 	case SUB_FLUSH: flushBalanced(a); return;
 	case SUB_PLOT: plotBalanced(a, b); return;
 	case SUB_RPIX: rpixBalanced(a, b); return;
@@ -622,14 +641,7 @@ static void gsuRunBalanced(void) {
 			continue;
 		}
 		gsu.opcode = gsu.pipeline;
-		u32 offset = (u16) (gsu.r[15] - gsu.cbr);
-		if (offset < 512 && gsu.cacheValid[offset >> 4]) {
-			stepBalanced(gsu.clsr ? 1 : 2);
-			gsu.pipeline = gsu.cache[offset];
-			gsu.modified[15] = false;
-		} else {
-			readOpcodeBalanced(gsu.r[15]);
-		}
+		readOpcodeCached(gsu.r[15]);
 		switch (gsu.opcode) {
 #include "gsu_ops.inc"
 		}

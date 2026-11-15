@@ -562,7 +562,10 @@ static void idle(void) {
 	aluEdge();
 }
 
-static u8 read(u32 address) {
+static u8 readSlow(u32 address);
+
+// Fast mode's read of plain memory is made in place; the rest are a call.
+static inline __attribute__((always_inline)) u8 read(u32 address) {
 	address &= 0xffffff;
 	if (fastAccess()) {
 		u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
@@ -572,6 +575,12 @@ static u8 read(u32 address) {
 			R.mar = address;
 			return R.mdr = memory[at & 0xff];
 		}
+	}
+	return readSlow(address);
+}
+
+static __attribute__((noinline)) u8 readSlow(u32 address) {
+	if (fastAccess()) {
 		// The GSU's status changes only as the GSU stops, which a skip stops at.
 		if (!cart.gsu || (address & 0x40ffff) != 0x3030) {
 			wait.unsafe = true;

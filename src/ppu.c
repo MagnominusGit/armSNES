@@ -3469,79 +3469,79 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 
 // Fast mode: a whole line by snes_faust's renderer, from the registers as they are now.
 static void fastWholeLine(void) {
-	struct FastPpuLine l;
-	l.vram = ppu.vram;
-	l.cgram = ppu.cgram;
-	l.out = ppu.dac.lineValid ? &ppuCanvas[ppu.dac.line] : NULL;
-	l.brightness = ppu.io.displayBrightness << 15;
-	l.blank = ppu.io.displayDisable || (!ppu.io.overscan && VCOUNTER >= 225);
-	l.y = VCOUNTER;
-	l.field = ppu.counter.field;
-	l.bgMode = ppu.io.bgMode | ppu.io.bgPriority << 3;
-	l.mosaic = (ppu.mosaic.size - 1) << 4;
+	if (systemFastThreaded && fastStale) {
+		fastPpuResync(ppu.vram, ppu.cgram);
+		fastStale = false;
+	}
+	struct FastPpuLine* line = fastPpuNext(systemFastThreaded);
+	line->vram = ppu.vram;
+	line->cgram = ppu.cgram;
+	line->out = ppu.dac.lineValid ? &ppuCanvas[ppu.dac.line] : NULL;
+	line->brightness = ppu.io.displayBrightness << 15;
+	line->blank = ppu.io.displayDisable || (!ppu.io.overscan && VCOUNTER >= 225);
+	line->y = VCOUNTER;
+	line->field = ppu.counter.field;
+	line->bgMode = ppu.io.bgMode | ppu.io.bgPriority << 3;
+	line->mosaic = (ppu.mosaic.size - 1) << 4;
 	for (u32 n = 0; n < 4; ++n) {
 		const struct Background* bg = &ppu.bg[n];
-		l.bgMode |= bg->io.tileSize << (4 + n);
-		l.mosaic |= bg->mosaic.enable << n;
-		l.bgsc[n] = bg->io.screenAddress >> 8 | bg->io.screenSize;
-		l.bghofs[n] = bg->io.hoffset & 0x3ff;
-		l.bgvofs[n] = bg->io.voffset & 0x3ff;
+		line->bgMode |= bg->io.tileSize << (4 + n);
+		line->mosaic |= bg->mosaic.enable << n;
+		line->bgsc[n] = bg->io.screenAddress >> 8 | bg->io.screenSize;
+		line->bghofs[n] = bg->io.hoffset & 0x3ff;
+		line->bgvofs[n] = bg->io.voffset & 0x3ff;
 	}
-	l.mosaicYOffset = mosaicEnable() ? mosaicVoffset() : 0;
-	l.bgnba[0] = ppu.bg[0].io.tiledataAddress >> 12 | ppu.bg[1].io.tiledataAddress >> 12 << 4;
-	l.bgnba[1] = ppu.bg[2].io.tiledataAddress >> 12 | ppu.bg[3].io.tiledataAddress >> 12 << 4;
-	l.m7sel = ppu.io.hflipMode7 | ppu.io.vflipMode7 << 1 | ppu.io.repeatMode7 << 6;
-	l.m7Matrix[0] = ppu.io.m7a;
-	l.m7Matrix[1] = ppu.io.m7b;
-	l.m7Matrix[2] = ppu.io.m7c;
-	l.m7Matrix[3] = ppu.io.m7d;
-	l.m7Center[0] = signedBits(ppu.io.m7x, 13);
-	l.m7Center[1] = signedBits(ppu.io.m7y, 13);
-	l.m7hofs = signedBits(ppu.io.hoffsetMode7, 13);
-	l.m7vofs = signedBits(ppu.io.voffsetMode7, 13);
+	line->mosaicYOffset = mosaicEnable() ? mosaicVoffset() : 0;
+	line->bgnba[0] = ppu.bg[0].io.tiledataAddress >> 12 | ppu.bg[1].io.tiledataAddress >> 12 << 4;
+	line->bgnba[1] = ppu.bg[2].io.tiledataAddress >> 12 | ppu.bg[3].io.tiledataAddress >> 12 << 4;
+	line->m7sel = ppu.io.hflipMode7 | ppu.io.vflipMode7 << 1 | ppu.io.repeatMode7 << 6;
+	line->m7Matrix[0] = ppu.io.m7a;
+	line->m7Matrix[1] = ppu.io.m7b;
+	line->m7Matrix[2] = ppu.io.m7c;
+	line->m7Matrix[3] = ppu.io.m7d;
+	line->m7Center[0] = signedBits(ppu.io.m7x, 13);
+	line->m7Center[1] = signedBits(ppu.io.m7y, 13);
+	line->m7hofs = signedBits(ppu.io.hoffsetMode7, 13);
+	line->m7vofs = signedBits(ppu.io.voffsetMode7, 13);
 	const struct WindowLayer* layers[5] = { &ppu.window.bg[0], &ppu.window.bg[1], &ppu.window.bg[2], &ppu.window.bg[3], &ppu.window.obj };
 	u8 settings[6];
-	l.wmLogic = ppu.window.col.mask << 10;
-	l.wmMainEnable = l.wmSubEnable = l.msEnable = l.ssEnable = 0;
+	line->wmLogic = ppu.window.col.mask << 10;
+	line->wmMainEnable = line->wmSubEnable = line->msEnable = line->ssEnable = 0;
 	for (u32 n = 0; n < 5; ++n) {
 		const struct WindowLayer* w = layers[n];
 		settings[n] = w->oneInvert | w->oneEnable << 1 | w->twoInvert << 2 | w->twoEnable << 3;
-		l.wmLogic |= w->mask << (n * 2);
-		l.wmMainEnable |= w->aboveEnable << n;
-		l.wmSubEnable |= w->belowEnable << n;
-		l.msEnable |= (n < 4 ? ppu.bg[n].io.aboveEnable : ppu.obj.io.aboveEnable) << n;
-		l.ssEnable |= (n < 4 ? ppu.bg[n].io.belowEnable : ppu.obj.io.belowEnable) << n;
+		line->wmLogic |= w->mask << (n * 2);
+		line->wmMainEnable |= w->aboveEnable << n;
+		line->wmSubEnable |= w->belowEnable << n;
+		line->msEnable |= (n < 4 ? ppu.bg[n].io.aboveEnable : ppu.obj.io.aboveEnable) << n;
+		line->ssEnable |= (n < 4 ? ppu.bg[n].io.belowEnable : ppu.obj.io.belowEnable) << n;
 	}
 	settings[5] = ppu.window.col.oneInvert | ppu.window.col.oneEnable << 1 | ppu.window.col.twoInvert << 2 | ppu.window.col.twoEnable << 3;
 	for (u32 n = 0; n < 3; ++n) {
-		l.wmSettings[n] = settings[n * 2] | settings[n * 2 + 1] << 4;
+		line->wmSettings[n] = settings[n * 2] | settings[n * 2 + 1] << 4;
 	}
-	l.windowPos[0][0] = ppu.window.oneLeft;
-	l.windowPos[0][1] = ppu.window.oneRight;
-	l.windowPos[1][0] = ppu.window.twoLeft;
-	l.windowPos[1][1] = ppu.window.twoRight;
-	l.cgwsel = ppu.dac.directColor | ppu.dac.blendMode << 1 | ppu.window.col.belowMask << 4 | ppu.window.col.aboveMask << 6;
-	l.cgadsub = ppu.dac.objColorEnable << 4 | ppu.dac.backColorEnable << 5 | ppu.dac.colorHalve << 6 | ppu.dac.colorMode << 7;
+	line->windowPos[0][0] = ppu.window.oneLeft;
+	line->windowPos[0][1] = ppu.window.oneRight;
+	line->windowPos[1][0] = ppu.window.twoLeft;
+	line->windowPos[1][1] = ppu.window.twoRight;
+	line->cgwsel = ppu.dac.directColor | ppu.dac.blendMode << 1 | ppu.window.col.belowMask << 4 | ppu.window.col.aboveMask << 6;
+	line->cgadsub = ppu.dac.objColorEnable << 4 | ppu.dac.backColorEnable << 5 | ppu.dac.colorHalve << 6 | ppu.dac.colorMode << 7;
 	for (u32 n = 0; n < 4; ++n) {
-		l.cgadsub |= ppu.dac.bgColorEnable[n] << n;
+		line->cgadsub |= ppu.dac.bgColorEnable[n] << n;
 	}
-	l.fixedColor = fixedColor();
-	l.screenMode = ppu.io.interlace | ppu.obj.io.interlace << 1 | ppu.io.overscan << 2 | ppu.io.pseudoHires << 3 | ppu.io.extbg << 6;
-	l.spriteCount = 0;
+	line->fixedColor = fixedColor();
+	line->screenMode = ppu.io.interlace | ppu.obj.io.interlace << 1 | ppu.io.overscan << 2 | ppu.io.pseudoHires << 3 | ppu.io.extbg << 6;
+	line->spriteCount = 0;
 	for (u32 n = 0; n < 34; ++n) {
 		const __typeof__(ppu.obj.tile[0][0])* tile = &ppu.obj.tile[!ppu.obj.active][n];
 		if (!tile->valid) {
 			break;
 		}
-		l.sprites[l.spriteCount++] = (struct FastPpuSprite) { signedBits(tile->x, 9), tile->priority, tile->palette, tile->hflip, tile->data };
+		line->sprites[line->spriteCount++] = (struct FastPpuSprite) { signedBits(tile->x, 9), tile->priority, tile->palette, tile->hflip, tile->data };
 	}
 	// The first column's sub screen pixel of a line twice as wide is black.
-	l.hiresFirstBlack = !l.blank && (ppu.io.bgMode == 5 || ppu.io.pseudoHires);
-	if (systemFastThreaded && fastStale) {
-		fastPpuResync(ppu.vram, ppu.cgram);
-		fastStale = false;
-	}
-	fastPpuSubmit(&l, systemFastThreaded);
+	line->hiresFirstBlack = !line->blank && (ppu.io.bgMode == 5 || ppu.io.pseudoHires);
+	fastPpuSubmit(line);
 }
 
 static void renderSpan(u32 start, u32 end) {

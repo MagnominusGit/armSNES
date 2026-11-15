@@ -1273,6 +1273,8 @@ uint16 CgramCopy[256];
 uint64 Ring[RING];
 FastPpuLine Pool[POOL];
 uint32 RingHead, RingTail;   // written by the main thread, by the render thread
+uint32 HeadLocal, TailSeen;  // the main thread's: where it has written to, the tail it last saw
+FastPpuLine Scratch;
 uint32 LinesGiven, LinesDone;
 pthread_t Thread;
 pthread_mutex_t Lock = PTHREAD_MUTEX_INITIALIZER;
@@ -1334,65 +1336,69 @@ void WakeIfSleeping(void)
  }
 }
 
-// A VRAM or CGRAM write needn't wake the thread: a line or a fence always follows it, and they do.
-void Push(uint64 c, bool wake)
+// What was written to the ring, given to the thread, which is woken for it.
+void Publish(void)
 {
- const uint32 head = RingHead;
+ __atomic_store_n(&RingHead, HeadLocal, __ATOMIC_SEQ_CST);
+ WakeIfSleeping();
+}
 
- while(head - __atomic_load_n(&RingTail, __ATOMIC_ACQUIRE) >= RING)
+// VRAM and CGRAM writes are given to the thread only with the line or fence that always follows them.
+inline void Push(uint64 c)
+{
+ if(HeadLocal - TailSeen >= RING)
  {
-  WakeIfSleeping();
-  sched_yield();
+  TailSeen = __atomic_load_n(&RingTail, __ATOMIC_ACQUIRE);
+  if(HeadLocal - TailSeen >= RING)
+   Publish();
+  while(HeadLocal - TailSeen >= RING)
+  {
+   sched_yield();
+   WakeIfSleeping();
+   TailSeen = __atomic_load_n(&RingTail, __ATOMIC_ACQUIRE);
+  }
  }
 
- Ring[head & (RING - 1)] = c;
- if(wake)
- {
-  __atomic_store_n(&RingHead, head + 1, __ATOMIC_SEQ_CST);
-  WakeIfSleeping();
- }
- else
-  __atomic_store_n(&RingHead, head + 1, __ATOMIC_RELEASE);
+ Ring[HeadLocal++ & (RING - 1)] = c;
 }
 
 } // namespace
 
-extern "C" void fastPpuSubmit(const FastPpuLine* l, bool threaded)
+extern "C" FastPpuLine* fastPpuNext(bool threaded)
 {
- if(!threaded)
+ if(threaded && !Started)
+  Started = pthread_create(&Thread, NULL, RenderThread, NULL) == 0;
+ if(!threaded || !Started)
+  return &Scratch;
+
+ while(LinesGiven - __atomic_load_n(&LinesDone, __ATOMIC_ACQUIRE) >= POOL)
+  sched_yield();
+
+ return &Pool[LinesGiven & (POOL - 1)];
+}
+
+extern "C" void fastPpuSubmit(FastPpuLine* l)
+{
+ if(l == &Scratch)
  {
   fastPpuLine(l);
   return;
  }
 
- if(!Started)
- {
-  Started = pthread_create(&Thread, NULL, RenderThread, NULL) == 0;
-  if(!Started)
-  {
-   fastPpuLine(l);
-   return;
-  }
- }
-
- while(LinesGiven - __atomic_load_n(&LinesDone, __ATOMIC_ACQUIRE) >= POOL)
-  sched_yield();
-
- const uint32 slot = LinesGiven++ & (POOL - 1);
- Pool[slot] = *l;
- Push((uint64)CMD_LINE << 56 | slot, true);
+ Push((uint64)CMD_LINE << 56 | (LinesGiven++ & (POOL - 1)));
+ Publish();
 }
 
 extern "C" void fastPpuVram(uint32_t address, uint16_t data)
 {
  if(Started)
-  Push((uint64)CMD_VRAM << 56 | (uint64)(address & 0x7FFF) << 16 | data, false);
+  Push((uint64)CMD_VRAM << 56 | (uint64)(address & 0x7FFF) << 16 | data);
 }
 
 extern "C" void fastPpuCgram(uint32_t address, uint16_t data)
 {
  if(Started)
-  Push((uint64)CMD_CGRAM << 56 | (uint64)(address & 0xFF) << 16 | data, false);
+  Push((uint64)CMD_CGRAM << 56 | (uint64)(address & 0xFF) << 16 | data);
 }
 
 extern "C" void fastPpuFence(void)
@@ -1400,12 +1406,13 @@ extern "C" void fastPpuFence(void)
  if(!Started)
   return;
 
- __atomic_thread_fence(__ATOMIC_SEQ_CST);
- while(__atomic_load_n(&RingTail, __ATOMIC_ACQUIRE) != RingHead)
+ Publish();
+ while(__atomic_load_n(&RingTail, __ATOMIC_ACQUIRE) != HeadLocal)
  {
   WakeIfSleeping();
   sched_yield();
  }
+ TailSeen = HeadLocal;
 }
 
 extern "C" void fastPpuStop(void)

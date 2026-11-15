@@ -56,7 +56,9 @@ void fastPpuLine(const struct FastPpuLine* line);
 // The same, on a thread of its own when threaded is set: the line is drawn later, from the thread's
 // copies of VRAM and CGRAM, which see every write in order. Fence waits for every line given to be
 // drawn; Resync gives the copies all of VRAM and CGRAM again. The picture is the same either way.
-void fastPpuSubmit(const struct FastPpuLine* line, bool threaded);
+// Next gives the place to fill the line in, Submit draws it or gives it to the thread.
+struct FastPpuLine* fastPpuNext(bool threaded);
+void fastPpuSubmit(struct FastPpuLine* line);
 void fastPpuVram(uint32_t address, uint16_t data);
 void fastPpuCgram(uint32_t address, uint16_t data);
 void fastPpuFence(void);

@@ -1274,6 +1274,7 @@ uint64 Ring[RING];
 FastPpuLine Pool[POOL];
 uint32 RingHead, RingTail;   // written by the main thread, by the render thread
 uint32 HeadLocal, TailSeen;  // the main thread's: where it has written to, the tail it last saw
+void (*Sink)(const uint32_t* line);
 FastPpuLine Scratch;
 uint32 LinesGiven, LinesDone;
 pthread_t Thread;
@@ -1302,6 +1303,8 @@ void* RenderThread(void*)
     l->vram = VramCopy;
     l->cgram = CgramCopy;
     fastPpuLine(l);
+    if(Sink && l->out)
+     Sink(l->out);
     __atomic_store_n(&LinesDone, LinesDone + 1, __ATOMIC_RELEASE);
    }
    tail++;
@@ -1413,6 +1416,12 @@ extern "C" void fastPpuFence(void)
   sched_yield();
  }
  TailSeen = HeadLocal;
+}
+
+extern "C" void fastPpuSetSink(void (*sink)(const uint32_t* line))
+{
+ fastPpuStop();
+ Sink = sink;
 }
 
 extern "C" void fastPpuStop(void)

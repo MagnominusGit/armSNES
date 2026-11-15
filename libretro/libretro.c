@@ -56,6 +56,39 @@ static inline u16 rgb565Bright(u32 pixel) {
 	return (pixel << 11 & 0xf800) | (pixel << 1 & 0x07c0) | (pixel >> 4 & 0x0020) | (pixel >> 10 & 0x001f);
 }
 
+static void convertRow(const u32* from, u16* to) {
+	u32 dim = 0, mixed = 0;
+	for (u32 n = 0; n < OUTPUT_WIDTH; ++n) {
+		dim |= ~from[n] & 0x78000;
+		mixed |= from[n] ^ from[0];
+		to[n] = rgb565Bright(from[n]);
+	}
+	if (dim && !mixed) {
+		u16 color = rgb565(from[0]);
+		for (u32 n = 0; n < OUTPUT_WIDTH; ++n) {
+			to[n] = color;
+		}
+	} else if (dim) {
+		for (u32 n = 0; n < OUTPUT_WIDTH; ++n) {
+			to[n] = rgb565(from[n]);
+		}
+	}
+}
+
+// Fast mode's render thread converts each line it draws as it goes, for the last frame's crop, and
+// marks its row with the frame's stamp; videoFrame converts the others.
+static u32 cropX = 26, cropY = 9, cropHeight = 224;
+static u32 rowStamp[CANVAS_HEIGHT];
+static u32 stamp = 1;
+
+static void lineDrawn(const u32* line) {
+	u32 row = (u32) (line - ppuCanvas) / CANVAS_WIDTH;
+	if (row - cropY < cropHeight && line == &ppuCanvas[row * CANVAS_WIDTH + cropX]) {
+		convertRow(line, &output[(row - cropY) * OUTPUT_WIDTH]);
+		rowStamp[row] = stamp;
+	}
+}
+
 // The part of the canvas a television shows, as ares crops it without overscan.
 void videoFrame(const u32* canvas) {
 	bool interlace = ppu.state.interlace;
@@ -78,26 +111,16 @@ void videoFrame(const u32* canvas) {
 		h = OUTPUT_HEIGHT;
 	}
 
+	bool sameCrop = canvas == ppuCanvas && x == cropX && y == cropY && h == cropHeight;
 	for (u32 row = 0; row < h; ++row) {
-		const u32* from = &canvas[(y + row) * CANVAS_WIDTH + x];
-		u16* to = &output[row * OUTPUT_WIDTH];
-		u32 dim = 0, mixed = 0;
-		for (u32 n = 0; n < OUTPUT_WIDTH; ++n) {
-			dim |= ~from[n] & 0x78000;
-			mixed |= from[n] ^ from[0];
-			to[n] = rgb565Bright(from[n]);
-		}
-		if (dim && !mixed) {
-			u16 color = rgb565(from[0]);
-			for (u32 n = 0; n < OUTPUT_WIDTH; ++n) {
-				to[n] = color;
-			}
-		} else if (dim) {
-			for (u32 n = 0; n < OUTPUT_WIDTH; ++n) {
-				to[n] = rgb565(from[n]);
-			}
+		if (!sameCrop || rowStamp[y + row] != stamp) {
+			convertRow(&canvas[(y + row) * CANVAS_WIDTH + x], &output[row * OUTPUT_WIDTH]);
 		}
 	}
+	cropX = x;
+	cropY = y;
+	cropHeight = h;
+	stamp++;
 	outputHeight = h;
 	outputReady = true;
 }
@@ -371,6 +394,7 @@ unsigned retro_api_version(void) {
 
 void retro_init(void) {
 	makeColors();
+	fastPpuSetSink(lineDrawn);
 	bitmasks = environment(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL);
 }
 

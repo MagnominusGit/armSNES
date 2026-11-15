@@ -852,7 +852,7 @@ void cartMap(void) {
 		case PART_PROCESSOR_GSU_MEMORY_ROM_PROGRAM:
 			// While the GSU has the ROM, the S-CPU reads its vectors from a table, and games run it
 			// from RAM meanwhile.
-			busDirectFast(gsuReadRomCPU, cart.rom);
+			busDirectFast(gsuReadRomCPU, cart.rom, cart.romSize);
 			busMap(gsuReadRomCPU, gsuWriteRomCPU, map->address, map->size ? map->size : cart.romSize, map->base, map->mask);
 			break;
 		case PART_PROCESSOR_GSU_MEMORY_RAM_SAVE:
@@ -923,6 +923,9 @@ void cartMap(void) {
 			busMap(cx4ReadIO, cx4WriteIO, map->address, map->size, map->base, map->mask);
 			break;
 		case PART_PROCESSOR_HG51BS169_MEMORY_ROM_PROGRAM:
+			// While the HG51B has the bus, the S-CPU reads its registers in the vectors' page, and
+			// games don't read the ROM meanwhile.
+			busDirectFast(cx4ReadRomCPU, cart.rom, cart.romSize);
 			busMap(cx4ReadRomCPU, cx4WriteRomCPU, map->address, map->size, map->base, map->mask);
 			break;
 		case PART_PROCESSOR_HG51BS169_MEMORY_RAM_SAVE:

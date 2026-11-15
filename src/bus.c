@@ -37,6 +37,7 @@ const u8* busFastPages[0x10000];
 static struct {
 	BusReader reader;
 	const u8* memory;
+	u32 size;
 } fastReaders[2];
 static u32 fastCount;
 static struct MixedPage* mixedPages;
@@ -124,24 +125,25 @@ void busDirect(BusReader reader, const u8* memory) {
 	}
 }
 
-void busDirectFast(BusReader reader, const u8* memory) {
+void busDirectFast(BusReader reader, const u8* memory, u32 size) {
 	if (fastCount < sizeof(fastReaders) / sizeof(fastReaders[0])) {
 		fastReaders[fastCount].reader = reader;
 		fastReaders[fastCount].memory = memory;
+		fastReaders[fastCount].size = size;
 		++fastCount;
 	}
 }
 
 static const u8* directFor(const struct Page* page);
 
-// The interrupt vectors' page is always read through its reader.
+// The interrupt vectors' page, in either half of the banks, is always read through its reader.
 static const u8* fastFor(u32 at, const struct Page* page) {
 	const u8* direct = directFor(page);
-	if (direct || page->mixed || at == 0x00ff) {
+	if (direct || page->mixed || (at & 0x7fff) == 0x00ff) {
 		return direct;
 	}
 	for (u32 i = 0; i < fastCount; ++i) {
-		if (readers[page->id] == fastReaders[i].reader) {
+		if (readers[page->id] == fastReaders[i].reader && page->base + 0x100 <= fastReaders[i].size) {
 			return fastReaders[i].memory + page->base;
 		}
 	}

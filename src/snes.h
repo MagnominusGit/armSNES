@@ -533,7 +533,7 @@ void busFinish(void);
 void busDirect(BusReader reader, const u8* memory);
 // Fast mode: a reader that reads memory[offset] but for rare times its pages are read straight from
 // too (busFastPages), but for the interrupt vectors' page.
-void busDirectFast(BusReader reader, const u8* memory);
+void busDirectFast(BusReader reader, const u8* memory, u32 size);
 extern const u8* busFastPages[0x10000];
 void cartMap(void);
 void systemFrameEvent(void);

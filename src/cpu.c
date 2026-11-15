@@ -507,7 +507,26 @@ static inline u32 waitFor(u32 address) {
 	return 12;
 }
 
+// Fast mode: an access only moves the clock on. The IRQ lock, the DMA and the ALU are seen to between
+// instructions (fastBetween), as snes_faust does.
+static inline __attribute__((always_inline)) void stepFast(u32 clocks) {
+	cpu.counterCpu += clocks;
+	cpu.counter.hcounter += clocks;
+	threadStep(&cpu.th, clocks);
+	if (cpu.counter.hcounter >= fastNext) {
+		fastCatch();
+	}
+}
+
+static inline bool fastAccess(void) {
+	return systemFast && !inputGuns;
+}
+
 static void idle(void) {
+	if (fastAccess()) {
+		stepFast(6);
+		return;
+	}
 	cpu.status.clockCount = 6;
 	dmaEdge();
 	step(6);
@@ -516,6 +535,15 @@ static void idle(void) {
 
 static u8 read(u32 address) {
 	address &= 0xffffff;
+	if (fastAccess()) {
+		u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
+		const u8* memory = busDirectPages[at >> 8];
+		if (memory) {
+			stepFast(waitFor(address));
+			R.mar = address;
+			return R.mdr = memory[at & 0xff];
+		}
+	}
 	cpu.status.clockCount = waitFor(address);
 	dmaEdge();
 	R.mar = address;
@@ -544,6 +572,16 @@ static u8 read(u32 address) {
 
 static void write(u32 address, u8 data) {
 	address &= 0xffffff;
+	if (fastAccess()) {
+		stepFast(waitFor(address));
+		R.mar = address;
+		busWrite(address, R.mdr = data);
+		// A multiplication or division has its result at once.
+		while (cpu.alu.mpyctr || cpu.alu.divctr) {
+			aluEdge();
+		}
+		return;
+	}
 	aluEdge();
 	cpu.status.clockCount = waitFor(address);
 	dmaEdge();
@@ -1129,7 +1167,20 @@ void cpuMap(void) {
 	busMap(readDMA, writeDMA, "00-3f,80-bf:4300-437f", 0, 0, 0);
 }
 
+// Fast mode: what an access would see to, once an instruction. A DMA starts at the second access edge.
+static void fastBetween(void) {
+	cpu.status.irqLock = 0;
+	if (cpu.status.dmaActive || cpu.status.dmaPending || cpu.status.hdmaPending) {
+		cpu.status.clockCount = 8;
+		dmaEdgeRun();
+		dmaEdge();
+	}
+}
+
 void cpuMain(void) {
+	if (fastAccess()) {
+		fastBetween();
+	}
 	// A waiting CPU idles until an interrupt is looked for and found, then idles once more. A stopped
 	// one idles for good.
 	if (R.wai) {

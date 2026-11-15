@@ -2,6 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "snes.h"
+#include "fastppu.h"
 #include "chips/gb.h"
 
 // A saved state is the machine and nothing else: the processors' structs as they are, the cartridge's
@@ -127,6 +128,7 @@ size_t stateSize(void) {
 	} while (0)
 
 bool stateSave(void* data, size_t size) {
+	fastPpuFence();
 	if (size < stateSize()) {
 		return false;
 	}
@@ -168,6 +170,7 @@ bool stateSave(void* data, size_t size) {
 }
 
 bool stateLoad(const void* data, size_t size) {
+	fastPpuFence();
 	cpuFastReplan();
 	struct StateHeader header;
 	if (size < sizeof(header)) {

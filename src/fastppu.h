@@ -45,12 +45,24 @@ struct FastPpuLine {
 	uint8_t cgwsel, cgadsub;
 	uint16_t fixedColor;
 	uint8_t screenMode;     // $2133
+	bool hiresFirstBlack;   // the first column's sub screen pixel is black
 
 	uint32_t spriteCount;
 	struct FastPpuSprite sprites[34];
 };
 
 void fastPpuLine(const struct FastPpuLine* line);
+
+// The same, on a thread of its own when threaded is set: the line is drawn later, from the thread's
+// copies of VRAM and CGRAM, which see every write in order. Fence waits for every line given to be
+// drawn; Resync gives the copies all of VRAM and CGRAM again. The picture is the same either way.
+void fastPpuSubmit(const struct FastPpuLine* line, bool threaded);
+void fastPpuVram(uint32_t address, uint16_t data);
+void fastPpuCgram(uint32_t address, uint16_t data);
+void fastPpuFence(void);
+void fastPpuResync(const uint16_t* vram, const uint16_t* cgram);
+// The thread drawn out and ended; the next line given starts it again.
+void fastPpuStop(void);
 
 #ifdef __cplusplus
 }

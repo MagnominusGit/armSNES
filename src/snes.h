@@ -83,6 +83,8 @@ extern bool systemClearPowerOn;
 extern bool systemBalanced;
 // Fast mode: Balanced, with whole lines drawn by snes_faust's renderer (fastppu.cpp).
 extern bool systemFast;
+// Fast mode's lines drawn on a thread of their own: the same picture, on another core.
+extern bool systemFastThreaded;
 // Balanced mode works out again what comes next on the line (after a state is loaded or the mode set).
 void cpuFastReplan(void);
 

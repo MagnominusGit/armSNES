@@ -25,6 +25,8 @@
  * ppu_render_common.inc, drawing one line from the registers fastPpuLine is given. */
 #include "fastppu.h"
 
+#include <pthread.h>
+#include <sched.h>
 #include <string.h>
 #include <utility>
 
@@ -1255,4 +1257,175 @@ extern "C" void fastPpuLine(const FastPpuLine* l)
   MixMainSub<true, false>(l->out);
  else
   MixMainSub<false, false>(l->out);
+
+ if(l->hiresFirstBlack)
+  l->out[0] = l->brightness;
+}
+
+// armSNES: the renderer on a thread of its own, fed in order through a ring of commands.
+namespace {
+
+enum { RING = 1 << 16, POOL = 1024 };
+enum { CMD_VRAM, CMD_CGRAM, CMD_LINE };
+
+uint16 VramCopy[32768];
+uint16 CgramCopy[256];
+uint64 Ring[RING];
+FastPpuLine Pool[POOL];
+uint32 RingHead, RingTail;   // written by the main thread, by the render thread
+uint32 LinesGiven, LinesDone;
+pthread_t Thread;
+pthread_mutex_t Lock = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t Wake = PTHREAD_COND_INITIALIZER;
+bool Started, Sleeping, Stopping;
+
+void* RenderThread(void*)
+{
+ for(;;)
+ {
+  uint32 tail = RingTail;
+
+  while(tail != __atomic_load_n(&RingHead, __ATOMIC_ACQUIRE))
+  {
+   const uint64 c = Ring[tail & (RING - 1)];
+   const uint32 kind = c >> 56;
+
+   if(kind == CMD_VRAM)
+    VramCopy[(c >> 16) & 0x7FFF] = (uint16)c;
+   else if(kind == CMD_CGRAM)
+    CgramCopy[(c >> 16) & 0xFF] = (uint16)c;
+   else
+   {
+    FastPpuLine* l = &Pool[(uint32)c & (POOL - 1)];
+    l->vram = VramCopy;
+    l->cgram = CgramCopy;
+    fastPpuLine(l);
+    __atomic_store_n(&LinesDone, LinesDone + 1, __ATOMIC_RELEASE);
+   }
+   tail++;
+   __atomic_store_n(&RingTail, tail, __ATOMIC_RELEASE);
+  }
+
+  for(unsigned spin = 0; spin < 2000 && tail == __atomic_load_n(&RingHead, __ATOMIC_ACQUIRE); spin++)
+   sched_yield();
+
+  // Sleeping is set before the ring is looked at again, and Push looks at Sleeping after it adds
+  // to the ring, both in one order for both threads: one of them sees the other.
+  pthread_mutex_lock(&Lock);
+  __atomic_store_n(&Sleeping, true, __ATOMIC_SEQ_CST);
+  while(tail == __atomic_load_n(&RingHead, __ATOMIC_SEQ_CST) && !Stopping)
+   pthread_cond_wait(&Wake, &Lock);
+  __atomic_store_n(&Sleeping, false, __ATOMIC_SEQ_CST);
+  const bool stop = Stopping && tail == __atomic_load_n(&RingHead, __ATOMIC_SEQ_CST);
+  pthread_mutex_unlock(&Lock);
+  if(stop)
+   return NULL;
+ }
+ return NULL;
+}
+
+void WakeIfSleeping(void)
+{
+ if(__atomic_load_n(&Sleeping, __ATOMIC_SEQ_CST))
+ {
+  pthread_mutex_lock(&Lock);
+  pthread_cond_signal(&Wake);
+  pthread_mutex_unlock(&Lock);
+ }
+}
+
+// A VRAM or CGRAM write needn't wake the thread: a line or a fence always follows it, and they do.
+void Push(uint64 c, bool wake)
+{
+ const uint32 head = RingHead;
+
+ while(head - __atomic_load_n(&RingTail, __ATOMIC_ACQUIRE) >= RING)
+ {
+  WakeIfSleeping();
+  sched_yield();
+ }
+
+ Ring[head & (RING - 1)] = c;
+ if(wake)
+ {
+  __atomic_store_n(&RingHead, head + 1, __ATOMIC_SEQ_CST);
+  WakeIfSleeping();
+ }
+ else
+  __atomic_store_n(&RingHead, head + 1, __ATOMIC_RELEASE);
+}
+
+} // namespace
+
+extern "C" void fastPpuSubmit(const FastPpuLine* l, bool threaded)
+{
+ if(!threaded)
+ {
+  fastPpuLine(l);
+  return;
+ }
+
+ if(!Started)
+ {
+  Started = pthread_create(&Thread, NULL, RenderThread, NULL) == 0;
+  if(!Started)
+  {
+   fastPpuLine(l);
+   return;
+  }
+ }
+
+ while(LinesGiven - __atomic_load_n(&LinesDone, __ATOMIC_ACQUIRE) >= POOL)
+  sched_yield();
+
+ const uint32 slot = LinesGiven++ & (POOL - 1);
+ Pool[slot] = *l;
+ Push((uint64)CMD_LINE << 56 | slot, true);
+}
+
+extern "C" void fastPpuVram(uint32_t address, uint16_t data)
+{
+ if(Started)
+  Push((uint64)CMD_VRAM << 56 | (uint64)(address & 0x7FFF) << 16 | data, false);
+}
+
+extern "C" void fastPpuCgram(uint32_t address, uint16_t data)
+{
+ if(Started)
+  Push((uint64)CMD_CGRAM << 56 | (uint64)(address & 0xFF) << 16 | data, false);
+}
+
+extern "C" void fastPpuFence(void)
+{
+ if(!Started)
+  return;
+
+ __atomic_thread_fence(__ATOMIC_SEQ_CST);
+ while(__atomic_load_n(&RingTail, __ATOMIC_ACQUIRE) != RingHead)
+ {
+  WakeIfSleeping();
+  sched_yield();
+ }
+}
+
+extern "C" void fastPpuStop(void)
+{
+ if(!Started)
+  return;
+
+ fastPpuFence();
+ pthread_mutex_lock(&Lock);
+ Stopping = true;
+ pthread_cond_signal(&Wake);
+ pthread_mutex_unlock(&Lock);
+ pthread_join(Thread, NULL);
+ Stopping = false;
+ Started = false;
+}
+
+extern "C" void fastPpuResync(const uint16_t* vram, const uint16_t* cgram)
+{
+ fastPpuFence();
+ memcpy(VramCopy, vram, sizeof(VramCopy));
+ memcpy(CgramCopy, cgram, sizeof(CgramCopy));
 }

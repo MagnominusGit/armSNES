@@ -1145,7 +1145,12 @@ static u16 readVRAM(void) {
 // Counts the writes to VRAM, and state loads, for what is kept of it.
 static u32 vramWrites;
 
+// Fast mode: VRAM or CGRAM was written while the render thread's copies weren't told.
+static bool fastStale = true;
+
 void ppuLoaded(void) {
+	fastPpuFence();
+	fastStale = true;
 	++vramWrites;
 	++oamWrites;
 }
@@ -1157,6 +1162,11 @@ static void writeVRAM(bool byte, u8 data) {
 	u16* word = vramAt(addressVRAM());
 	*word = byte ? (*word & 0x00ff) | data << 8 : (*word & 0xff00) | data;
 	++vramWrites;
+	if (systemFast && systemFastThreaded) {
+		fastPpuVram(addressVRAM() & ppu.vramMask, *word);
+	} else {
+		fastStale = true;
+	}
 }
 
 static u8 readOAM(u16 address) {
@@ -1199,6 +1209,11 @@ static void writeCGRAM(u8 address, u16 data) {
 		address = ppu.latch.cgramAddress;
 	}
 	ppu.cgram[address] = data & 0x7fff;
+	if (systemFast && systemFastThreaded) {
+		fastPpuCgram(address, data & 0x7fff);
+	} else {
+		fastStale = true;
+	}
 }
 
 static void updateVideoMode(void) {
@@ -1794,6 +1809,7 @@ static void lineStart(void) {
 
 	if (VCOUNTER == 240) {
 		// The frame is done. The next one starts on a black canvas, so lines it doesn't draw stay black.
+		fastPpuFence();
 		videoFrame(ppuCanvas);
 		memset(ppuCanvas, 0, ppu.drawnTo * sizeof(u32));
 		ppu.drawnTo = 0;
@@ -3453,7 +3469,7 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 
 // Fast mode: a whole line by snes_faust's renderer, from the registers as they are now.
 static void fastWholeLine(void) {
-	static struct FastPpuLine l;
+	struct FastPpuLine l;
 	l.vram = ppu.vram;
 	l.cgram = ppu.cgram;
 	l.out = ppu.dac.lineValid ? &ppuCanvas[ppu.dac.line] : NULL;
@@ -3519,11 +3535,13 @@ static void fastWholeLine(void) {
 		}
 		l.sprites[l.spriteCount++] = (struct FastPpuSprite) { signedBits(tile->x, 9), tile->priority, tile->palette, tile->hflip, tile->data };
 	}
-	fastPpuLine(&l);
 	// The first column's sub screen pixel of a line twice as wide is black.
-	if (l.out && !l.blank && (ppu.io.bgMode == 5 || ppu.io.pseudoHires)) {
-		l.out[0] = l.brightness;
+	l.hiresFirstBlack = !l.blank && (ppu.io.bgMode == 5 || ppu.io.pseudoHires);
+	if (systemFastThreaded && fastStale) {
+		fastPpuResync(ppu.vram, ppu.cgram);
+		fastStale = false;
 	}
+	fastPpuSubmit(&l, systemFastThreaded);
 }
 
 static void renderSpan(u32 start, u32 end) {

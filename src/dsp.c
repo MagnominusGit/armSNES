@@ -88,7 +88,6 @@ static u8 markedBank, markedEchoPage;
 void dspWrite(u8 address, u8 data) {
 	address &= 0x7f;
 	dsp.registers[address] = data;
-	readPagesStale = true;
 
 	switch (address) {
 	case 0x0c:
@@ -149,12 +148,15 @@ void dspWrite(u8 address, u8 data) {
 		break;
 	case 0x5d:
 		dsp.brr.bank = data;
+		readPagesStale = true;
 		break;
 	case 0x6d:
 		dsp.echo.page = data;
+		readPagesStale = true;
 		break;
 	case 0x7d:
 		dsp.echo.delay = data & 15;
+		readPagesStale = true;
 		break;
 	}
 
@@ -174,6 +176,7 @@ void dspWrite(u8 address, u8 data) {
 		break;
 	case 0x04:
 		v->source = data;
+		readPagesStale = true;
 		break;
 	case 0x05:
 		v->adsr0 = data;

@@ -5,6 +5,9 @@
  * Ported from ares (ISC); see LICENSES/ISC-ares.txt. */
 #include "snes.h"
 
+#include <pthread.h>
+#include <sched.h>
+
 // The S-SMP: an SPC700 with three timers and four ports to the CPU.
 //
 // The SMP runs only when the CPU needs it, and stops as soon as its clock passes the CPU's, which can
@@ -20,6 +23,9 @@ static const u8 iplrom[64] = {
 	0xcb, 0xf4, 0xd7, 0x00, 0xfc, 0xd0, 0xf3, 0xab, 0x01, 0x10, 0xef, 0x7e, 0xf4, 0x10, 0xeb, 0xba,
 	0xf6, 0xda, 0x00, 0xba, 0xf4, 0xc4, 0xf4, 0xdd, 0x5d, 0xd0, 0xdb, 0x1f, 0x00, 0x00, 0xc0, 0xff,
 };
+
+// The clock the SMP runs up to: the CPU's, when they were last brought together.
+u64 smpLimit;
 
 void smpPower(bool reset) {
 	struct Thread th = smp.th;
@@ -985,7 +991,7 @@ static bool echoWritten(u16 address) {
 		dspRun(); \
 	}
 #define SMP_AT_INSTRUCTION() \
-	if (cpu.th.clock < smp.th.clock) { \
+	if (smpLimit < smp.th.clock) { \
 		timersCatchUp(); \
 		if (dsp.th.clock < smp.th.clock) { \
 			dspRun(); \
@@ -1053,3 +1059,128 @@ void smpRun(void) {
 	}
 	smpRunBalanced();
 }
+
+bool smpCanThread(void) {
+	return smp.state == MAIN;
+}
+
+// Fast mode: the SMP and the DSP on a thread of their own, fed in order through a ring of commands from
+// the CPU's thread: run up to a clock, then perhaps take a write to a port. It stops at the same clocks
+// as on the CPU's thread, so it does the same.
+enum { APU_RING = 1 << 12 };
+static struct ApuCommand {
+	u64 clock;
+	bool write;
+	u8 port, data;
+} apuRing[APU_RING];
+static u32 apuHead, apuTail;  // written by the CPU's thread, by the APU's
+static pthread_t apuThread;
+static pthread_mutex_t apuLock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t apuWake = PTHREAD_COND_INITIALIZER;
+static bool apuStarted, apuSleeping, apuStopping;
+bool smpThreaded;
+
+// A wait in a spin loop, without leaving the core.
+static inline void apuRelax(void) {
+#if defined(__aarch64__) || defined(__arm__)
+	__asm__ volatile("yield");
+#elif defined(__x86_64__) || defined(__i386__)
+	__builtin_ia32_pause();
+#endif
+}
+
+static void* apuMain(void* unused) {
+	(void) unused;
+	for (;;) {
+		u32 tail = apuTail;
+		while (tail != __atomic_load_n(&apuHead, __ATOMIC_ACQUIRE)) {
+			const struct ApuCommand* c = &apuRing[tail & (APU_RING - 1)];
+			smpLimit = c->clock;
+			if (smp.th.clock < smpLimit) {
+				smpRun();
+			}
+			if (c->write) {
+				smp.fromCpu[c->port] = c->data;
+			}
+			tail++;
+			__atomic_store_n(&apuTail, tail, __ATOMIC_RELEASE);
+		}
+		// The CPU waits on the thread when it reads a port: a new command is looked for at once for a
+		// while before the thread gives way.
+		for (u32 spin = 0; spin < 20000 && tail == __atomic_load_n(&apuHead, __ATOMIC_ACQUIRE); spin++) {
+			apuRelax();
+		}
+		for (u32 spin = 0; spin < 2000 && tail == __atomic_load_n(&apuHead, __ATOMIC_ACQUIRE); spin++) {
+			sched_yield();
+		}
+		// Sleeping is set before the ring is looked at again, and smpPost looks at it after it adds to
+		// the ring, both in one order for both threads: one of them sees the other.
+		pthread_mutex_lock(&apuLock);
+		__atomic_store_n(&apuSleeping, true, __ATOMIC_SEQ_CST);
+		while (tail == __atomic_load_n(&apuHead, __ATOMIC_SEQ_CST) && !apuStopping) {
+			pthread_cond_wait(&apuWake, &apuLock);
+		}
+		__atomic_store_n(&apuSleeping, false, __ATOMIC_SEQ_CST);
+		bool stop = apuStopping && tail == __atomic_load_n(&apuHead, __ATOMIC_SEQ_CST);
+		pthread_mutex_unlock(&apuLock);
+		if (stop) {
+			return NULL;
+		}
+	}
+}
+
+static void apuWakeIfSleeping(void) {
+	if (__atomic_load_n(&apuSleeping, __ATOMIC_SEQ_CST)) {
+		pthread_mutex_lock(&apuLock);
+		pthread_cond_signal(&apuWake);
+		pthread_mutex_unlock(&apuLock);
+	}
+}
+
+void smpPost(u64 clock, bool write, u32 port, u8 data) {
+	if (!apuStarted) {
+		apuStarted = pthread_create(&apuThread, NULL, apuMain, NULL) == 0;
+		if (!apuStarted) {
+			smpLimit = clock;
+			if (smp.th.clock < smpLimit) {
+				smpRun();
+			}
+			if (write) {
+				smp.fromCpu[port] = data;
+			}
+			return;
+		}
+	}
+	while (apuHead - __atomic_load_n(&apuTail, __ATOMIC_ACQUIRE) >= APU_RING) {
+		apuWakeIfSleeping();
+		sched_yield();
+	}
+	apuRing[apuHead & (APU_RING - 1)] = (struct ApuCommand) { clock, write, (u8) port, data };
+	__atomic_store_n(&apuHead, apuHead + 1, __ATOMIC_SEQ_CST);
+	apuWakeIfSleeping();
+}
+
+void smpDrain(void) {
+	if (!apuStarted) {
+		return;
+	}
+	while (__atomic_load_n(&apuTail, __ATOMIC_ACQUIRE) != apuHead) {
+		apuWakeIfSleeping();
+		apuRelax();
+	}
+}
+
+void smpStop(void) {
+	if (!apuStarted) {
+		return;
+	}
+	smpDrain();
+	pthread_mutex_lock(&apuLock);
+	apuStopping = true;
+	pthread_cond_signal(&apuWake);
+	pthread_mutex_unlock(&apuLock);
+	pthread_join(apuThread, NULL);
+	apuStopping = false;
+	apuStarted = false;
+}
+

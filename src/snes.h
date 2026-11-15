@@ -143,6 +143,16 @@ extern struct Smp smp;
 void smpPower(bool reset);
 // Runs the SMP until its clock is past the CPU's.
 void smpRun(void);
+// The clock the SMP runs up to.
+extern u64 smpLimit;
+// Fast mode: the SMP (with the DSP) on a thread of its own, for frames smpThreaded is set for, which
+// smpCanThread allows. Post has it run up to clock, then take a write to a port if write is set;
+// Drain waits for all it was given to be done; Stop ends the thread.
+extern bool smpThreaded;
+bool smpCanThread(void);
+void smpPost(u64 clock, bool write, u32 port, u8 data);
+void smpDrain(void);
+void smpStop(void);
 
 // --- S-DSP ---
 

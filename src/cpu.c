@@ -29,6 +29,11 @@ static void fastBranch(void);
 // The other processors, brought up to the CPU's clock.
 
 static void syncSmp(void) {
+	if (smpThreaded) {
+		smpPost(cpu.th.clock, false, 0, 0);
+		return;
+	}
+	smpLimit = cpu.th.clock;
 	if (smp.th.clock < cpu.th.clock) {
 		smpRun();
 	}
@@ -940,10 +945,15 @@ static void writeRAM(u32 address, u8 data) {
 static u8 readAPU(u32 address, u8 data) {
 	(void) data;
 	syncSmp();
+	smpDrain();
 	return smp.toCpu[address & 3];
 }
 
 static void writeAPU(u32 address, u8 data) {
+	if (smpThreaded) {
+		smpPost(cpu.th.clock, true, address & 3, data);
+		return;
+	}
 	syncSmp();
 	smp.fromCpu[address & 3] = data;
 }

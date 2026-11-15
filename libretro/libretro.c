@@ -400,6 +400,7 @@ void retro_init(void) {
 
 void retro_deinit(void) {
 	fastPpuStop();
+	smpStop();
 }
 
 void retro_get_system_info(struct retro_system_info* info) {
@@ -651,6 +652,7 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info* info, 
 
 void retro_unload_game(void) {
 	fastPpuStop();
+	smpStop();
 	loaded = false;
 	cheatReset();
 	free(game);

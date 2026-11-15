@@ -531,6 +531,10 @@ void inputPollGun(int gun, int* x, int* y, u8* buttons);
 void busFinish(void);
 // A reader that reads memory[offset] and nothing else: its pages are read without calling it.
 void busDirect(BusReader reader, const u8* memory);
+// Fast mode: a reader that reads memory[offset] but for rare times its pages are read straight from
+// too (busFastPages), but for the interrupt vectors' page.
+void busDirectFast(BusReader reader, const u8* memory);
+extern const u8* busFastPages[0x10000];
 void cartMap(void);
 void systemFrameEvent(void);
 

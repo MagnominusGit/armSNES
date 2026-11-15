@@ -537,7 +537,7 @@ static u8 read(u32 address) {
 	address &= 0xffffff;
 	if (fastAccess()) {
 		u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
-		const u8* memory = busDirectPages[at >> 8];
+		const u8* memory = busFastPages[at >> 8];
 		if (memory) {
 			stepFast(waitFor(address));
 			R.mar = address;

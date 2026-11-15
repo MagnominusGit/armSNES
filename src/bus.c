@@ -32,6 +32,13 @@ static struct {
 	const u8* memory;
 } directReaders[4];
 static u32 directCount;
+// Fast mode's: as busDirectPages, with the pages of readers plain memory only nearly always.
+const u8* busFastPages[0x10000];
+static struct {
+	BusReader reader;
+	const u8* memory;
+} fastReaders[2];
+static u32 fastCount;
 static struct MixedPage* mixedPages;
 static u32 mixedCount;
 static BusReader readers[256];
@@ -106,6 +113,7 @@ void busReset(void) {
 	handlers = 1;
 	hookedCount = 0;
 	directCount = 0;
+	fastCount = 0;
 }
 
 void busDirect(BusReader reader, const u8* memory) {
@@ -114,6 +122,30 @@ void busDirect(BusReader reader, const u8* memory) {
 		directReaders[directCount].memory = memory;
 		++directCount;
 	}
+}
+
+void busDirectFast(BusReader reader, const u8* memory) {
+	if (fastCount < sizeof(fastReaders) / sizeof(fastReaders[0])) {
+		fastReaders[fastCount].reader = reader;
+		fastReaders[fastCount].memory = memory;
+		++fastCount;
+	}
+}
+
+static const u8* directFor(const struct Page* page);
+
+// The interrupt vectors' page is always read through its reader.
+static const u8* fastFor(u32 at, const struct Page* page) {
+	const u8* direct = directFor(page);
+	if (direct || page->mixed || at == 0x00ff) {
+		return direct;
+	}
+	for (u32 i = 0; i < fastCount; ++i) {
+		if (readers[page->id] == fastReaders[i].reader) {
+			return fastReaders[i].memory + page->base;
+		}
+	}
+	return NULL;
 }
 
 static const u8* directFor(const struct Page* page) {
@@ -224,6 +256,7 @@ void busFinish(void) {
 	target = NULL;
 	for (u32 page = 0; page < 0x10000; ++page) {
 		busDirectPages[page] = directFor(&pages[page]);
+		busFastPages[page] = fastFor(page, &pages[page]);
 	}
 	cheatHook();
 }
@@ -272,6 +305,7 @@ void busCheat(u32 page) {
 	hooked[hookedCount].page = page;
 	hooked[hookedCount].was = pages[page];
 	busDirectPages[page] = NULL;
+	busFastPages[page] = NULL;
 	++hookedCount;
 	readers[CHEAT_HANDLER] = readCheat;
 	pages[page] = (struct Page) { .id = CHEAT_HANDLER, .mixed = false, .base = page << 8 };
@@ -282,6 +316,7 @@ void busCheatsOff(void) {
 		--hookedCount;
 		pages[hooked[hookedCount].page] = hooked[hookedCount].was;
 		busDirectPages[hooked[hookedCount].page] = directFor(&hooked[hookedCount].was);
+		busFastPages[hooked[hookedCount].page] = fastFor(hooked[hookedCount].page, &hooked[hookedCount].was);
 	}
 }
 

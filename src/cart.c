@@ -850,6 +850,9 @@ void cartMap(void) {
 			busMap(gsuReadIO, gsuWriteIO, map->address, map->size, map->base, map->mask);
 			break;
 		case PART_PROCESSOR_GSU_MEMORY_ROM_PROGRAM:
+			// While the GSU has the ROM, the S-CPU reads its vectors from a table, and games run it
+			// from RAM meanwhile.
+			busDirectFast(gsuReadRomCPU, cart.rom);
 			busMap(gsuReadRomCPU, gsuWriteRomCPU, map->address, map->size ? map->size : cart.romSize, map->base, map->mask);
 			break;
 		case PART_PROCESSOR_GSU_MEMORY_RAM_SAVE:

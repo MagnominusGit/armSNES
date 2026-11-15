@@ -356,6 +356,7 @@ static void syncFromCpu(void) {
 // A frame starts knowing no loop, as a state loaded at a frame's end does.
 void sa1FrameStart(void) {
 	loop.valid = false;
+	loop.last = ~0u;
 }
 
 // Fast mode: a read by the S-CPU needn't bring an SA-1 waiting in a loop up to it, while its timer

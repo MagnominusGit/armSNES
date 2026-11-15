@@ -517,6 +517,7 @@ static void readOptions(void) {
 		systemBalanced = balanced;
 		systemFast = fast;
 		systemFastThreaded = true;
+		systemFrameAtTop = fast;
 		cpuFastReplan();
 	}
 	struct retro_variable variable = { "armsnes_power_on_ram", NULL };

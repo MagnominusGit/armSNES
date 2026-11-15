@@ -12,6 +12,7 @@ bool systemClearPowerOn;
 bool systemBalanced;
 bool systemFast;
 bool systemFastThreaded;
+bool systemFrameAtTop;
 
 // ares's generator (PCG), on its low-entropy setting, or ares's no-entropy setting: everything
 // starts at 0.

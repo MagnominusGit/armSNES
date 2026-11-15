@@ -85,6 +85,9 @@ extern bool systemBalanced;
 extern bool systemFast;
 // Fast mode's lines drawn on a thread of their own: the same picture, on another core.
 extern bool systemFastThreaded;
+// A frame ends as its last line starts rather than at line 240, so a render thread finishes the picture
+// during vblank. Where a frame ends changes nothing the game sees.
+extern bool systemFrameAtTop;
 // Balanced mode works out again what comes next on the line (after a state is loaded or the mode set).
 void cpuFastReplan(void);
 // Fast mode: a frame starts knowing no loop the S-CPU waits in, as a state loaded at a frame's end does.

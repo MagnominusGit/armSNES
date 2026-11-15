@@ -1148,7 +1148,21 @@ static u32 vramWrites;
 // Fast mode: VRAM or CGRAM was written while the render thread's copies weren't told.
 static bool fastStale = true;
 
+// A frame finished at line 240 that is given out as its last line starts (systemFrameAtTop). No line
+// waits to be drawn then, so nothing outside the state is needed to go on from there.
+static bool framePending;
+
+static void frameOut(void) {
+	// The next frame starts on a black canvas, so lines it doesn't draw stay black.
+	fastPpuFence();
+	videoFrame(ppuCanvas);
+	memset(ppuCanvas, 0, ppu.drawnTo * sizeof(u32));
+	ppu.drawnTo = 0;
+	systemFrameEvent();
+}
+
 void ppuLoaded(void) {
+	framePending = false;
 	fastPpuFence();
 	fastStale = true;
 	++vramWrites;
@@ -1791,6 +1805,10 @@ void ppuMap(void) {
 
 // What a line starts with, at H = 0.
 static void lineStart(void) {
+	if (framePending && VCOUNTER == ppu.counter.vperiod - 1) {
+		framePending = false;
+		frameOut();
+	}
 	ppu.blankFrom = BLANK_NONE;
 	if (VCOUNTER == 0) {
 		ppu.state.interlace = ppu.io.interlace;
@@ -1808,12 +1826,11 @@ static void lineStart(void) {
 	dacScanline();
 
 	if (VCOUNTER == 240) {
-		// The frame is done. The next one starts on a black canvas, so lines it doesn't draw stay black.
-		fastPpuFence();
-		videoFrame(ppuCanvas);
-		memset(ppuCanvas, 0, ppu.drawnTo * sizeof(u32));
-		ppu.drawnTo = 0;
-		systemFrameEvent();
+		if (systemFrameAtTop) {
+			framePending = true;
+		} else {
+			frameOut();
+		}
 	}
 }
 

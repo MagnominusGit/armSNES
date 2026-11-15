@@ -343,6 +343,8 @@ int main(int argc, char** argv) {
 	systemFast = fastWanted;
 	// FASTTHREAD=0: Fast mode's lines drawn on the emulation's own thread.
 	systemFastThreaded = !getenv("FASTTHREAD") || strcmp(getenv("FASTTHREAD"), "0");
+	// FRAMETOP=1: frames end as their last line starts, in every mode.
+	systemFrameAtTop = getenv("FRAMETOP") != NULL;
 	systemBalanced = getenv("BALANCED") != NULL || fastWanted;
 	// CHEAT=codes: cheat codes from the start.
 	if (getenv("CHEAT") && !cheatAdd(getenv("CHEAT"))) {

@@ -218,6 +218,7 @@ bool stateLoad(const void* data, size_t size) {
 	if (cart.msu1) {
 		msu1Reopen();
 	}
+	dspLoaded();
 	ppuLoaded();
 
 	sys.pal = pal;

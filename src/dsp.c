@@ -77,9 +77,14 @@ u8 dspRead(u8 address) {
 	return dsp.registers[address & 0x7f];
 }
 
+// The pages dspWillRead can say yes for, worked out again when what it looks at may have changed.
+static u8 readPages[32];
+static bool readPagesStale = true;
+
 void dspWrite(u8 address, u8 data) {
 	address &= 0x7f;
 	dsp.registers[address] = data;
+	readPagesStale = true;
 
 	switch (address) {
 	case 0x0c:
@@ -706,8 +711,36 @@ static void step(int phase) {
 
 // Whether the DSP may soon read this address of its RAM: the sample directory, each voice's sample
 // block and the next, and the blocks its directory entry starts and loops at.
+static void markPages(u16 from, u16 length) {
+	for (u32 page = from >> 8, last = page + ((from & 0xff) + length - 1) / 256; page <= last; ++page) {
+		readPages[page >> 3 & 31] |= 1 << (page & 7);
+	}
+}
+
+void dspLoaded(void) {
+	readPagesStale = true;
+}
+
 bool dspWillRead(u16 address) {
+	if (readPagesStale) {
+		readPagesStale = false;
+		memset(readPages, 0, sizeof(readPages));
+		markPages(dsp.brr._bank << 8, 0x400);
+		markPages(dsp.brr.bank << 8, 0x400);
+		for (int n = 0; n < 8; ++n) {
+			const struct DspVoice* v = &dsp.voice[n];
+			u16 entry = (dsp.brr._bank << 8) + (v->source << 2);
+			markPages(v->brrAddress, 18);
+			markPages(dsp.apuram[entry] | dsp.apuram[(u16) (entry + 1)] << 8, 9);
+			markPages(dsp.apuram[(u16) (entry + 2)] | dsp.apuram[(u16) (entry + 3)] << 8, 9);
+		}
+	}
+	if (!(readPages[address >> 11] >> (address >> 8 & 7) & 1)) {
+		return false;
+	}
 	if ((u16) (address - (dsp.brr._bank << 8)) < 0x400 || (u16) (address - (dsp.brr.bank << 8)) < 0x400) {
+		// A write here can change where a voice starts or loops.
+		readPagesStale = true;
 		return true;
 	}
 	for (int n = 0; n < 8; ++n) {
@@ -731,9 +764,11 @@ void dspRun(void) {
 		dsp.phase = (dsp.phase + 1) & 31;
 		threadStep(&dsp.th, 3 * 8);
 	} while (!(smp.th.clock < dsp.th.clock));
+	readPagesStale = true;
 }
 
 void dspPower(bool reset) {
+	readPagesStale = true;
 	threadFrequency(&dsp.th, sys.apuFrequency);
 	if (!reset) {
 		randomArray(dsp.apuram, sizeof(dsp.apuram));

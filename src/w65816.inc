@@ -30,8 +30,10 @@
 #define U R.u
 #define V R.v
 #define W R.w
-// Only the SA-1 does anything on these.
+// Only the SA-1 does anything on these, but for a taken branch an includer may look at.
+#ifndef idleBranch
 #define idleBranch()
+#endif
 #define idleJump()
 
 typedef u8 (*Alu8)(u8);

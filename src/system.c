@@ -231,6 +231,7 @@ void systemFrameEvent(void) {
 
 void systemRunFrame(void) {
 	cheatFrame();
+	cpuFrameStart();
 	if (cart.sa1) {
 		sa1FrameStart();
 	}

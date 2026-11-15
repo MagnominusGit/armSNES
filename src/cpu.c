@@ -21,6 +21,9 @@ static void lastCycle(void);
 static inline void step(u32 clocks);
 static inline void dmaEdge(void);
 
+// Fast mode looks at taken branches for loops the CPU waits in.
+static void fastBranch(void);
+#define idleBranch() fastBranch()
 #include "w65816.inc"
 
 // The other processors, brought up to the CPU's clock.
@@ -507,6 +510,27 @@ static inline u32 waitFor(u32 address) {
 	return 12;
 }
 
+// Fast mode: the S-CPU waiting in a loop. A turn of it that writes nothing and reads only memory
+// reads the same again until the next event: as many whole turns as end before it are taken in one.
+// The registers from A to the E flag, in the order the struct has them.
+#define WAIT_FROM offsetof(struct W65816, a)
+#define WAIT_SIZE (offsetof(struct W65816, e) + sizeof(bool) - WAIT_FROM)
+
+static struct {
+	bool valid;
+	u32 pc;
+	u8 regs[WAIT_SIZE];
+	u8 mdr;
+	u64 clock;
+	bool unsafe;
+} wait;
+// Where the instruction being run started.
+static u32 waitFrom;
+
+void cpuFrameStart(void) {
+	wait.valid = false;
+}
+
 // Fast mode: an access only moves the clock on. The IRQ lock, the DMA and the ALU are seen to between
 // instructions (fastBetween), as snes_faust does.
 static inline __attribute__((always_inline)) void stepFast(u32 clocks) {
@@ -543,6 +567,7 @@ static u8 read(u32 address) {
 			R.mar = address;
 			return R.mdr = memory[at & 0xff];
 		}
+		wait.unsafe = true;
 	}
 	cpu.status.clockCount = waitFor(address);
 	dmaEdge();
@@ -573,6 +598,7 @@ static u8 read(u32 address) {
 static void write(u32 address, u8 data) {
 	address &= 0xffffff;
 	if (fastAccess()) {
+		wait.unsafe = true;
 		stepFast(waitFor(address));
 		R.mar = address;
 		busWrite(address, R.mdr = data);
@@ -1167,6 +1193,51 @@ void cpuMap(void) {
 	busMap(readDMA, writeDMA, "00-3f,80-bf:4300-437f", 0, 0, 0);
 }
 
+// The turns of a loop found waiting, taken in one.
+static void fastSkipTurns(void) {
+	u64 turn = cpu.th.clock - wait.clock;
+	u32 h = cpu.counter.hcounter, limitH = fastNext;
+	if (!turn || limitH <= h) {
+		return;
+	}
+	u64 room = (u64) (limitH - h) * cpu.th.scalar;
+	// Not worth it for less than two turns.
+	if (room < 2 * turn) {
+		return;
+	}
+	u64 turns = room / turn;
+	u32 clocks = (u32) (turns * turn / cpu.th.scalar);
+	cpu.counterCpu += clocks;
+	cpu.counter.hcounter += clocks;
+	cpu.th.clock += turns * turn;
+}
+
+static void fastBranch(void) {
+	u32 pc = R.pc.d;
+	if (!fastAccess() || pc > waitFrom || waitFrom - pc > 12) {
+		return;
+	}
+	// A short jump back. A turn that wrote, or read what can change, starts over; after a clean one
+	// the registers are kept, and the same turn again with the same registers is waiting. Not with
+	// an SA-1 or GSU running beside it, whose work the wait can be for; nor with an H or V IRQ set,
+	// which a raster effect waits for.
+	if (wait.unsafe || cart.sa1 || cart.gsu || cpu.io.irqEnable) {
+		wait.valid = false;
+		wait.unsafe = false;
+		return;
+	}
+	const u8* regs = (const u8*) &R + WAIT_FROM;
+	if (wait.valid && pc == wait.pc && R.mdr == wait.mdr && !memcmp(regs, wait.regs, WAIT_SIZE) && !cpu.status.interruptPending &&
+	    !cpu.status.dmaActive && !cpu.status.dmaPending && !cpu.status.hdmaPending) {
+		fastSkipTurns();
+	}
+	wait.valid = true;
+	wait.pc = pc;
+	memcpy(wait.regs, regs, WAIT_SIZE);
+	wait.mdr = R.mdr;
+	wait.clock = cpu.th.clock;
+}
+
 // Fast mode: what an access would see to, once an instruction. A DMA starts at the second access edge.
 static void fastBetween(void) {
 	cpu.status.irqLock = 0;
@@ -1175,6 +1246,7 @@ static void fastBetween(void) {
 		dmaEdgeRun();
 		dmaEdge();
 	}
+	waitFrom = R.pc.d;
 }
 
 void cpuMain(void) {

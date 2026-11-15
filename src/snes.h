@@ -87,6 +87,8 @@ extern bool systemFast;
 extern bool systemFastThreaded;
 // Balanced mode works out again what comes next on the line (after a state is loaded or the mode set).
 void cpuFastReplan(void);
+// Fast mode: a frame starts knowing no loop the S-CPU waits in, as a state loaded at a frame's end does.
+void cpuFrameStart(void);
 
 void systemLoad(bool pal);
 void systemPower(bool reset);

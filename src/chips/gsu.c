@@ -223,7 +223,11 @@ dispatch:
 		gsu.state = gsu.opcode;
 		goto dispatch;
 
+#define GSU_CLOCK gsu.th.clock
+#define GSU_PIPELINE gsu.pipeline
 #include "gsu_ops.inc"
+#undef GSU_CLOCK
+#undef GSU_PIPELINE
 
 	// A clock step, a: the clocks. A pending ROM read or RAM write finishes when its time is up.
 	case SUB_STEP:
@@ -622,40 +626,116 @@ static inline __attribute__((always_inline)) void callBalanced(u32 sub, u32 a, u
 #undef CALL
 #define CALL(sub, va, vb, vc) callBalanced((sub), (va), (vb))
 
+// The subroutines that move the clock on find it in gsu.th.clock; the loop keeps it in clock.
+static inline __attribute__((always_inline)) void callLean(u32 sub, u32 a, u32 b, u64* clock) {
+	switch (sub) {
+	case SUB_STEP:
+		if (gsu.romcl | gsu.ramcl) {
+			stepBuffers(a);
+		}
+		*clock += gsu.th.scalar * a;
+		return;
+	case SUB_READ: readBalanced(a); return;
+	case SUB_WRITE: writeBalanced(a, b); return;
+	default:
+		gsu.th.clock = *clock;
+		callBalanced(sub, a, b);
+		*clock = gsu.th.clock;
+		return;
+	}
+}
+
 static void gsuRunBalanced(void) {
 	u32 n;
-	// Only the S-CPU gives and takes the ROM and the RAM.
+	// Only the S-CPU gives and takes the ROM and the RAM, and sets the clock speed; its clock stands
+	// still while the GSU runs.
 	if (!gsu.scmr.ron || !gsu.scmr.ran) {
 		gsuRunExact();
 		return;
 	}
+	const u64 until = cpu.th.clock;
+	const u64 scalar = gsu.th.scalar;
+	const u32 fetchClocks = gsu.clsr ? 1 : 2;
+	// The clock, R15 (also kept in gsu.r[15]), the pipeline, and the registers written by the
+	// instruction under way that matter at its end (R14 and R15).
+	u64 clock = gsu.th.clock;
+	u32 pc = gsu.r[15];
+	u8 pipe = gsu.pipeline;
+	// An R14 the S-CPU wrote is taken at the end of the first instruction; an R15 by its fetch.
+	u32 written = gsu.modified[14] ? 1u << 14 : 0;
+	gsu.modified[15] = false;
+#undef CALL
+#define CALL(sub, va, vb, vc) callLean((sub), (va), (vb), &clock)
+#define setR(n, value) (gsu.r[n] = (value), gsu.modified[n] = true, written |= 1u << (n))
+#define FETCH() \
+	do { \
+		u32 offset = (u16) (pc - gsu.cbr); \
+		if (offset < 512 && gsu.cacheValid[offset >> 4]) { \
+			if (gsu.romcl | gsu.ramcl) { \
+				stepBuffers(fetchClocks); \
+			} \
+			clock += scalar * fetchClocks; \
+			pipe = gsu.cache[offset]; \
+		} else { \
+			gsu.th.clock = clock; \
+			readOpcodeBalanced(pc); \
+			clock = gsu.th.clock; \
+			pipe = gsu.pipeline; \
+		} \
+	} while (0)
+#undef PIPE
+#define PIPE(target) \
+	do { \
+		gsu.pipeOut = pipe; \
+		pc = (u16) (pc + 1); \
+		gsu.r[15] = pc; \
+		FETCH(); \
+		target = gsu.pipeOut; \
+	} while (0)
 	for (;;) {
-		if (cpu.th.clock < gsu.th.clock) {
-			return;
+		if (until < clock) {
+			break;
 		}
 		if (FLAG(SFR_G) == 0) {
-			if (!gsu.romcl && !gsu.ramcl && gsu.th.clock <= cpu.th.clock) {
-				gsu.th.clock += (cpu.th.clock - gsu.th.clock) / (gsu.th.scalar * 6) * (gsu.th.scalar * 6);
+			if (!gsu.romcl && !gsu.ramcl && clock <= until) {
+				clock += (until - clock) / (scalar * 6) * (scalar * 6);
 			}
-			stepBalanced(6);
+			CALL(SUB_STEP, 6, 0, 0);
 			continue;
 		}
-		gsu.opcode = gsu.pipeline;
-		readOpcodeCached(gsu.r[15]);
+		gsu.opcode = pipe;
+		FETCH();
 		switch (gsu.opcode) {
+#define GSU_CLOCK clock
+#define GSU_PIPELINE pipe
 #include "gsu_ops.inc"
+#undef GSU_CLOCK
+#undef GSU_PIPELINE
 		}
 	next:
-		if (gsu.modified[14]) {
-			gsu.modified[14] = false;
-			updateROMBuffer();
-		}
-		if (gsu.modified[15]) {
-			gsu.modified[15] = false;
+		if (written & 0xc000) {
+			if (written & 0x4000) {
+				gsu.modified[14] = false;
+				updateROMBuffer();
+			}
+			if (written & 0x8000) {
+				gsu.modified[15] = false;
+				pc = gsu.r[15];
+			} else {
+				pc = (u16) (pc + 1);
+				gsu.r[15] = pc;
+			}
 		} else {
-			gsu.r[15]++;
+			pc = (u16) (pc + 1);
+			gsu.r[15] = pc;
 		}
+		written = 0;
 	}
+	gsu.th.clock = clock;
+	gsu.pipeline = pipe;
+	gsu.modified[15] = false;
+#undef setR
+#undef FETCH
 }
 
 void gsuRun(void) {

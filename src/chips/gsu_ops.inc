@@ -12,8 +12,8 @@
 			cpu.r.irq = 1;
 		}
 		SET_FLAG(SFR_G, 0);
-		stoppedAt = gsu.th.clock < stoppedAt ? gsu.th.clock : stoppedAt;
-		gsu.pipeline = 0x01;
+		stoppedAt = GSU_CLOCK < stoppedAt ? GSU_CLOCK : stoppedAt;
+		GSU_PIPELINE = 0x01;
 		regsReset();
 		goto next;
 

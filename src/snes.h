@@ -152,6 +152,8 @@ extern u64 smpLimit;
 // smpCanThread allows. Post has it run up to clock, then take a write to a port if write is set;
 // Drain waits for all it was given to be done; Stop ends the thread.
 extern bool smpThreaded;
+// Whether the frame may have the thread (smpThreaded can be put off for a while within it).
+extern bool smpThreadable;
 bool smpCanThread(void);
 void smpPost(u64 clock, bool write, u32 port, u8 data);
 void smpDrain(void);

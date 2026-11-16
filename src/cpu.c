@@ -544,6 +544,12 @@ static struct {
 	bool on;
 	struct SmpPortWrite write;
 } apuHeld;
+// Fast mode: reads of the APU's ports that come close together have the SMP run on this thread, as
+// waiting for the APU's thread takes longer than the little it has to do between them.
+static struct {
+	u64 last;
+	u32 close;
+} apuPace;
 // Where the instruction being run started.
 static u32 waitFrom;
 
@@ -553,6 +559,7 @@ void cpuFrameStart(void) {
 	wait.hvbjoy = false;
 	wait.apu = false;
 	apuHeld.on = false;
+	apuPace.close = 0;
 }
 
 // Fast mode: an access only moves the clock on. The IRQ lock, the DMA and the ALU are seen to between
@@ -974,6 +981,17 @@ static u8 readAPU(u32 address, u8 data) {
 			return apuHeld.write.after[address & 3];
 		}
 		apuHeld.on = false;
+	}
+	if (smpThreadable) {
+		u64 since = cpu.th.clock - apuPace.last;
+		apuPace.last = cpu.th.clock;
+		if (since >= (u64) 1364 * cpu.th.scalar) {
+			apuPace.close = 0;
+			smpThreaded = true;
+		} else if (++apuPace.close == 4) {
+			smpDrain();
+			smpThreaded = false;
+		}
 	}
 	syncSmp();
 	smpDrain();

@@ -244,7 +244,7 @@ void systemRunFrame(void) {
 		sa1FrameStart();
 	}
 	// The MSU-1 looks at the DSP as it plays.
-	smpThreaded = systemFast && systemFastThreaded && !cart.msu1 && smpCanThread();
+	smpThreaded = smpThreadable = systemFast && systemFastThreaded && !cart.msu1 && smpCanThread();
 	sys.frameEvent = false;
 	while (!sys.frameEvent) {
 		cpuMain();

@@ -1088,7 +1088,7 @@ static pthread_t apuThread;
 static pthread_mutex_t apuLock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t apuWake = PTHREAD_COND_INITIALIZER;
 static bool apuStarted, apuSleeping, apuStopping;
-bool smpThreaded;
+bool smpThreaded, smpThreadable;
 
 static void smpRunToPortWriteHere(u64 clock) {
 	memcpy(smpPortWrite.before, smp.toCpu, 4);

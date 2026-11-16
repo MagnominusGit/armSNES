@@ -199,6 +199,13 @@ enum {
 
 // Exact: the GSU can stop at any clock step. In Balanced mode it leaves between instructions once it
 // has the ROM and the RAM, for the Balanced loop.
+#define WAIT_STEPS() \
+	do { \
+		if (!gsu.romcl && !gsu.ramcl && gsu.th.clock <= cpu.th.clock) { \
+			gsu.th.clock += (cpu.th.clock - gsu.th.clock) / (gsu.th.scalar * 6) * (gsu.th.scalar * 6); \
+		} \
+	} while (0)
+
 static void gsuRunExact(void) {
 	u32 n;
 
@@ -211,9 +218,7 @@ dispatch:
 		if (FLAG(SFR_G) == 0) {
 			// Stopped, with no ROM read or RAM write under way, each step only moves the clock on:
 			// all but the last of them, up to the CPU, are taken in one.
-			if (!gsu.romcl && !gsu.ramcl && gsu.th.clock <= cpu.th.clock) {
-				gsu.th.clock += (cpu.th.clock - gsu.th.clock) / (gsu.th.scalar * 6) * (gsu.th.scalar * 6);
-			}
+			WAIT_STEPS();
 			STEP(6);
 			goto done;
 		}
@@ -253,11 +258,13 @@ dispatch:
 		RETURN();
 
 	// A read, a: the address. The result is in gsu.result. While the S-CPU has the bus, the GSU
-	// waits for it in steps of 6.
+	// waits for it in steps of 6: with no ROM read or RAM write under way, all but the last up to the
+	// CPU (which alone gives the bus back) are taken in one.
 	case SUB_READ:
 		FR.a &= 0xffffff;
 		if ((FR.a & 0xc00000) == 0x000000) {
 			while (!gsu.scmr.ron) {
+				WAIT_STEPS();
 				STEP(6);
 			}
 			gsu.result = romAt(((FR.a & 0x3f0000) >> 1) | (FR.a & 0x7fff));
@@ -265,6 +272,7 @@ dispatch:
 		}
 		if ((FR.a & 0xe00000) == 0x400000) {
 			while (!gsu.scmr.ron) {
+				WAIT_STEPS();
 				STEP(6);
 			}
 			gsu.result = romAt(FR.a);
@@ -272,6 +280,7 @@ dispatch:
 		}
 		if ((FR.a & 0xfe0000) == 0x700000) {
 			while (!gsu.scmr.ran) {
+				WAIT_STEPS();
 				STEP(6);
 			}
 			gsu.result = cart.ramSize ? cart.ram[FR.a & ramMask] : 0;
@@ -285,6 +294,7 @@ dispatch:
 		FR.a &= 0xffffff;
 		if ((FR.a & 0xfe0000) == 0x700000) {
 			while (!gsu.scmr.ran) {
+				WAIT_STEPS();
 				STEP(6);
 			}
 			if (cart.ramSize) {

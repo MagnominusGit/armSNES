@@ -156,14 +156,22 @@ extern bool smpThreaded;
 extern bool smpThreadable;
 bool smpCanThread(void);
 void smpPost(u64 clock, bool write, u32 port, u8 data);
+// As a post does it, on this thread (Balanced and Fast).
+void smpRunToWrite(u64 clock, bool write, u32 port, u8 data);
+// Balanced and Fast: a port as the S-CPU sees it at clock, which a write the SMP made later doesn't
+// reach yet; whether any such write is waiting; and all of them let through (as a frame starts, so a
+// state taken there holds none).
+u8 smpPortRead(u32 port, u64 clock);
+bool smpPortsPending(u64 clock);
+void smpPortsSettle(void);
 void smpDrain(void);
 void smpStop(void);
 // Fast mode: runs the SMP up to clock as a post does, but stops after the first instruction that writes
-// a port to the CPU. False if none did; else the clocks that instruction started and ended at, and the
-// ports before and after it.
+// a port to the CPU. False if none did; else the clocks of the write and of the instruction's end, and
+// the ports before it.
 struct SmpPortWrite {
 	u64 at, done;
-	u8 before[4], after[4];
+	u8 before[4];
 };
 bool smpRunToPortWrite(u64 clock, struct SmpPortWrite* write);
 

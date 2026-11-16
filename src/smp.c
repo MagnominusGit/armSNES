@@ -26,11 +26,20 @@ static const u8 iplrom[64] = {
 
 // The clock the SMP runs up to: the CPU's, when they were last brought together.
 u64 smpLimit;
-// smpRunToPortWrite: whether to stop, what it found, and where the instruction under way started (in
-// Fast mode).
+// smpRunToPortWrite: whether to stop, and what it found (in Fast mode).
 static bool smpStopAtPortWrite;
-static u64 smpInstructionAt;
 static struct SmpPortWrite smpPortWrite;
+// Balanced and Fast: each port to the S-CPU before its last write, and that write's clock. The SMP
+// runs whole instructions, so an S-CPU read can find it past a write the S-CPU shouldn't see yet.
+static u8 smpPortsBefore[4];
+static u64 smpPortsAt[4];
+// Balanced and Fast: a write to a port the S-CPU made, while the SMP runs up to its clock. An
+// instruction under way reads it once its clock is past the write's, as Exact steps them.
+static struct {
+	bool on;
+	u64 at;
+	u8 port, data;
+} smpWriting;
 
 void smpPower(bool reset) {
 	struct Thread th = smp.th;
@@ -157,6 +166,10 @@ static u8 readIO(u16 address) {
 	case 0xf5:
 	case 0xf6:
 	case 0xf7:
+		if (smpWriting.on && smpWriting.at < smp.th.clock) {
+			smp.fromCpu[smpWriting.port] = smpWriting.data;
+			smpWriting.on = false;
+		}
 		return smp.fromCpu[address & 3];
 	case 0xf8:
 		return smp.aux4;
@@ -232,9 +245,11 @@ static void writeIO(u16 address, u8 data) {
 	case 0xf5:
 	case 0xf6:
 	case 0xf7:
+		smpPortsBefore[address & 3] = smp.toCpu[address & 3];
+		smpPortsAt[address & 3] = smp.th.clock;
 		smp.toCpu[address & 3] = data;
 		if (smpStopAtPortWrite && smpPortWrite.at == ~0ull) {
-			smpPortWrite.at = smpInstructionAt;
+			smpPortWrite.at = smp.th.clock;
 			smpLimit = 0;
 		}
 		break;
@@ -1006,8 +1021,7 @@ static bool echoWritten(u16 address) {
 			dspRun(); \
 		} \
 		return; \
-	} \
-	smpInstructionAt = smp.th.clock;
+	}
 // Plain RAM (not the I/O registers or the IPL ROM's place) is read and written straight.
 #define PLAIN(address) ((u16) ((address) - 0x00f0) >= 0x10 && (address) < 0xffc0)
 #undef READ
@@ -1093,6 +1107,33 @@ static bool apuStarted, apuStopping;
 static _Alignas(64) bool apuSleeping;
 bool smpThreaded, smpThreadable;
 
+u8 smpPortRead(u32 port, u64 clock) {
+	return smpPortsAt[port] > clock ? smpPortsBefore[port] : smp.toCpu[port];
+}
+
+bool smpPortsPending(u64 clock) {
+	return smpPortsAt[0] > clock || smpPortsAt[1] > clock || smpPortsAt[2] > clock || smpPortsAt[3] > clock;
+}
+
+void smpPortsSettle(void) {
+	memset(smpPortsAt, 0, sizeof(smpPortsAt));
+}
+
+void smpRunToWrite(u64 clock, bool write, u32 port, u8 data) {
+	smpWriting.on = write;
+	smpWriting.at = clock;
+	smpWriting.port = port;
+	smpWriting.data = data;
+	smpLimit = clock;
+	if (smp.th.clock < smpLimit) {
+		smpRun();
+	}
+	if (smpWriting.on) {
+		smp.fromCpu[port] = data;
+		smpWriting.on = false;
+	}
+}
+
 static void smpRunToPortWriteHere(u64 clock) {
 	memcpy(smpPortWrite.before, smp.toCpu, 4);
 	smpStopAtPortWrite = true;
@@ -1103,7 +1144,6 @@ static void smpRunToPortWriteHere(u64 clock) {
 	}
 	smpStopAtPortWrite = false;
 	smpPortWrite.done = smp.th.clock;
-	memcpy(smpPortWrite.after, smp.toCpu, 4);
 }
 
 // A wait in a spin loop, without leaving the core.
@@ -1124,13 +1164,7 @@ static void* apuMain(void* unused) {
 			if (c->toPortWrite) {
 				smpRunToPortWriteHere(c->clock);
 			} else {
-				smpLimit = c->clock;
-				if (smp.th.clock < smpLimit) {
-					smpRun();
-				}
-			}
-			if (c->write) {
-				smp.fromCpu[c->port] = c->data;
+				smpRunToWrite(c->clock, c->write, c->port, c->data);
 			}
 			tail++;
 			__atomic_store_n(&apuTail, tail, __ATOMIC_RELEASE);
@@ -1196,13 +1230,7 @@ static void apuPost(struct ApuCommand command) {
 				smpRunToPortWriteHere(clock);
 				return;
 			}
-			smpLimit = clock;
-			if (smp.th.clock < smpLimit) {
-				smpRun();
-			}
-			if (write) {
-				smp.fromCpu[port] = data;
-			}
+			smpRunToWrite(clock, write, port, data);
 			return;
 		}
 	}

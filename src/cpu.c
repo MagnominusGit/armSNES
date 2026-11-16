@@ -563,13 +563,14 @@ static struct {
 	bool unsafe;
 	bool hvbjoy;  // the turn read $4212
 	bool apu;     // and an APU port
-	u8 apuRead;   // the ports it read (a bit each), and what it read last from each
+	u8 apuRead;   // the ports it read (a bit each), what it read last from each, and when
 	u8 apuSeen[4];
+	u64 apuLast;
 	bool quiet;   // no event in the turn before the one kept, whose DMA or interrupt it would have had
 } wait;
-// A write to the APU's ports the SMP was run past in a skip: reads before its instruction started get
-// the ports as they were, and ones before the next started (which no SMP instruction comes before)
-// as they are after it.
+// A write to the APU's ports the SMP was run past in a skip: reads before it get the ports as they were,
+// and ones before the next instruction started (which no SMP instruction comes before) as they are
+// then, each port's write seen from its clock on.
 static struct {
 	bool on;
 	struct SmpPortWrite write;
@@ -589,6 +590,7 @@ void cpuFrameStart(void) {
 	wait.apuRead = 0;
 	apuHeld.on = false;
 	apuPace.close = 0;
+	smpPortsSettle();
 }
 
 // Fast mode: an access only moves the clock on. The IRQ lock, the DMA and the ALU are seen to between
@@ -1009,6 +1011,7 @@ static void writeRAM(u32 address, u8 data) {
 static u8 apuSaw(u32 address, u8 data) {
 	wait.apuRead |= 1 << (address & 3);
 	wait.apuSeen[address & 3] = data;
+	wait.apuLast = cpu.th.clock;
 	return data;
 }
 
@@ -1019,7 +1022,7 @@ static u8 readAPU(u32 address, u8 data) {
 			return apuSaw(address, apuHeld.write.before[address & 3]);
 		}
 		if (cpu.th.clock <= apuHeld.write.done) {
-			return apuSaw(address, apuHeld.write.after[address & 3]);
+			return apuSaw(address, smpPortRead(address & 3, cpu.th.clock));
 		}
 		apuHeld.on = false;
 	}
@@ -1036,12 +1039,16 @@ static u8 readAPU(u32 address, u8 data) {
 	}
 	syncSmp();
 	smpDrain();
-	return apuSaw(address, smp.toCpu[address & 3]);
+	return apuSaw(address, systemBalanced ? smpPortRead(address & 3, cpu.th.clock) : smp.toCpu[address & 3]);
 }
 
 static void writeAPU(u32 address, u8 data) {
 	if (smpThreaded) {
 		smpPost(cpu.th.clock, true, address & 3, data);
+		return;
+	}
+	if (systemBalanced) {
+		smpRunToWrite(cpu.th.clock, true, address & 3, data);
 		return;
 	}
 	syncSmp();
@@ -1311,7 +1318,7 @@ void cpuMap(void) {
 }
 
 // The turns of a loop found waiting, taken in one.
-static void fastSkipTurns(bool hvbjoy, bool apu) {
+static void fastSkipTurns(bool hvbjoy, bool apu, u64 apuBack) {
 	u64 turn = cpu.th.clock - wait.clock;
 	u32 h = cpu.counter.hcounter, limitH = fastNext;
 	if (!turn || limitH <= h) {
@@ -1343,29 +1350,37 @@ static void fastSkipTurns(bool hvbjoy, bool apu) {
 	if (room < 2 * turn) {
 		return;
 	}
-	// The ports read the same up to the SMP's first write to them: the SMP is run to it (apuHeld).
+	// Whole turns that end before the limit: the turn the limit falls in is run, so it sees its event.
+	u64 turns = (room - 1) / turn;
+	// The ports read the same up to the SMP's first write to them: the SMP is run to it (apuHeld), but
+	// no further than the last turn taken reads them, so that it is where it would be after that read.
 	if (apu) {
 		// A write run to before is held to: past it, the next read sees it.
 		if (!apuHeld.on) {
 			// A port the SMP wrote after the turn read it (as it ran for a later read) reads otherwise
-			// now. With no write in the turn, the SMP has nothing to do since its last read.
+			// now, or will once the S-CPU's clock reaches the write. With no write in the turn, the SMP
+			// has nothing to do since its last read.
+			if (smpPortsPending(cpu.th.clock)) {
+				return;
+			}
 			for (u32 n = 0; n < 4; ++n) {
 				if (wait.apuRead >> n & 1 && wait.apuSeen[n] != smp.toCpu[n]) {
 					return;
 				}
 			}
-			apuHeld.on = smpRunToPortWrite(cpu.th.clock + room, &apuHeld.write);
+			apuHeld.on = smpRunToPortWrite(cpu.th.clock + turns * turn - apuBack, &apuHeld.write);
 		}
 		if (apuHeld.on) {
 			u64 at = apuHeld.write.at;
-			room = at > cpu.th.clock ? at - cpu.th.clock : 0;
+			if (at < cpu.th.clock + room) {
+				room = at > cpu.th.clock ? at - cpu.th.clock : 0;
+			}
 			if (room < 2 * turn) {
 				return;
 			}
+			turns = (room - 1) / turn;
 		}
 	}
-	// Whole turns that end before the limit: the turn the limit falls in is run, so it sees its event.
-	u64 turns = (room - 1) / turn;
 	u32 clocks = (u32) (turns * turn / cpu.th.scalar);
 	cpu.counterCpu += clocks;
 	cpu.counter.hcounter += clocks;
@@ -1389,7 +1404,7 @@ static void fastBranch(void) {
 	bool quiet = wait.catches == fastCatches;
 	if (wait.valid && wait.quiet && quiet && pc == wait.pc && R.mdr == wait.mdr && !memcmp(regs, wait.regs, WAIT_SIZE) && !cpu.status.interruptPending &&
 	    !cpu.status.dmaActive && !cpu.status.dmaPending && !cpu.status.hdmaPending) {
-		fastSkipTurns(hvbjoy, apu);
+		fastSkipTurns(hvbjoy, apu, cpu.th.clock - wait.apuLast);
 	}
 	wait.valid = true;
 	wait.pc = pc;

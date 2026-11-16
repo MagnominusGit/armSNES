@@ -270,6 +270,25 @@ static void joypadEdge(void) {
 	joypadCycle();
 }
 
+// Fast and Balanced poll the joypads at once (autoJoypadCounter 34), but $4212 shows the polling busy
+// as long as Exact takes: 33 cycles of 128 clocks from the first 256-clock edge at or after H 130 of the
+// first line below the picture (lines taken as 1364 clocks).
+static bool joypadBusyLines(void) {
+	return cpu.counter.vcounter >= ppu.state.vdisp && cpu.counter.vcounter <= ppu.state.vdisp + 4u;
+}
+
+static bool joypadBusyFast(void) {
+	if (!joypadBusyLines()) {
+		return false;
+	}
+	u32 since = (cpu.counter.vcounter - ppu.state.vdisp) * 1364 + cpu.counter.hcounter;
+	if (since < 130) {
+		return false;
+	}
+	u32 start = 130 + ((256 - ((cpu.counterCpu - (since - 130)) & 255)) & 255);
+	return since >= start && since < start + 33 * 128;
+}
+
 // One 128-clock cycle of the automatic polling, autoJoypadCounter saying which.
 static void joypadCycle(void) {
 	if (cpu.status.autoJoypadCounter == 0) {
@@ -1048,7 +1067,7 @@ static u8 readCPU(u32 address, u8 data) {
 		return (data & 0x7f) | timeup() << 7;
 	case 0x4212:
 		data &= ~0xc1;
-		data |= cpu.io.autoJoypadPoll && cpu.status.autoJoypadCounter < 33;
+		data |= cpu.io.autoJoypadPoll && (cpu.status.autoJoypadCounter < 33 || (cpu.status.autoJoypadCounter == 34 && joypadBusyFast()));
 		data |= (cpu.counter.hcounter <= 2 || cpu.counter.hcounter >= 1096) << 6;
 		data |= (cpu.counter.vcounter >= ppu.state.vdisp) << 7;
 		return data;
@@ -1302,7 +1321,7 @@ static void fastSkipTurns(bool hvbjoy, bool apu) {
 	// the V blank bit at the line's end, and the joypad bit as a read ends.
 	if (hvbjoy) {
 		u32 from = h - (u32) (turn / cpu.th.scalar);
-		if (from > h || from < 3 || (cpu.io.autoJoypadPoll && cpu.status.autoJoypadCounter < 33)) {
+		if (from > h || from < 3 || (cpu.io.autoJoypadPoll && (cpu.status.autoJoypadCounter < 33 || joypadBusyLines()))) {
 			return;
 		}
 		if (from < 1096) {

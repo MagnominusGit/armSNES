@@ -21,9 +21,18 @@ static void lastCycle(void);
 static inline void step(u32 clocks);
 static inline void dmaEdge(void);
 
-// Fast mode looks at taken branches for loops the CPU waits in.
+// Fast mode's accesses, unless a gun is plugged in: worked out once an instruction.
+static bool fastNow;
+// Where the instruction being run started.
+static u32 waitFrom;
+// Fast mode looks at taken branches back a little way for loops the CPU waits in.
 static void fastBranch(void);
-#define idleBranch() fastBranch()
+#define idleBranch() \
+	do { \
+		if (fastNow && R.pc.d <= waitFrom && waitFrom - R.pc.d <= 12) { \
+			fastBranch(); \
+		} \
+	} while (0)
 #include "w65816.inc"
 
 // The other processors, brought up to the CPU's clock.
@@ -550,8 +559,6 @@ static struct {
 	u64 last;
 	u32 close;
 } apuPace;
-// Where the instruction being run started.
-static u32 waitFrom;
 
 void cpuFrameStart(void) {
 	wait.valid = false;
@@ -572,9 +579,6 @@ static inline __attribute__((always_inline)) void stepFast(u32 clocks) {
 		fastCatch();
 	}
 }
-
-// Fast mode's accesses, unless a gun is plugged in: worked out once an instruction.
-static bool fastNow;
 
 static inline bool fastAccess(void) {
 	return fastNow;
@@ -650,6 +654,14 @@ static void write(u32 address, u8 data) {
 	address &= 0xffffff;
 	if (fastAccess()) {
 		wait.unsafe = true;
+		// WRAM is written in place: it takes 8 clocks, and starts no multiplication or division.
+		u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
+		if ((at & 0xfe0000) == 0x7e0000) {
+			stepFast(8);
+			R.mar = address;
+			cpu.wram[at & 0x1ffff] = R.mdr = data;
+			return;
+		}
 		stepFast(waitFor(address));
 		R.mar = address;
 		busWrite(address, R.mdr = data);
@@ -1326,9 +1338,6 @@ static void fastSkipTurns(bool hvbjoy, bool apu) {
 
 static void fastBranch(void) {
 	u32 pc = R.pc.d;
-	if (!fastAccess() || pc > waitFrom || waitFrom - pc > 12) {
-		return;
-	}
 	// A short jump back. A turn that wrote, or read what can change, starts over; after a clean one
 	// the registers are kept, and the same turn again with the same registers and no event inside
 	// it is waiting. Not with an SA-1 running beside it, whose work the wait can be for.
@@ -1355,7 +1364,7 @@ static void fastBranch(void) {
 }
 
 // Fast mode: what an access would see to, once an instruction. A DMA starts at the second access edge.
-static void fastBetween(void) {
+static inline __attribute__((always_inline)) void fastBetween(void) {
 	cpu.status.irqLock = 0;
 	if (cpu.status.dmaActive || cpu.status.dmaPending || cpu.status.hdmaPending) {
 		cpu.status.clockCount = 8;

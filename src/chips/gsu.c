@@ -17,6 +17,11 @@ struct Gsu gsu;
 
 enum { SFR_Z = 1, SFR_CY = 2, SFR_S = 3, SFR_OV = 4, SFR_G = 5, SFR_R = 6, SFR_ALT1 = 8, SFR_ALT2 = 9, SFR_B = 12, SFR_IRQ = 15 };
 
+// Fast mode's recompiled blocks are dropped when the code cache or the settings they were made for
+// change (gsu_jit.inc).
+static void gsuJitInvalidate(void);
+static void gsuJitDrop(void);
+
 #define FLAG(bit) (gsu.sfr >> (bit) & 1)
 #define SET_FLAG(bit, value) (gsu.sfr = (gsu.sfr & ~(1 << (bit))) | ((value) ? 1 << (bit) : 0))
 
@@ -56,6 +61,7 @@ static void setPOR(u8 data) {
 static void setCFGR(u8 data) {
 	gsu.cfgr.irq = data & 0x80;
 	gsu.cfgr.ms0 = data & 0x20;
+	gsuJitInvalidate();
 }
 
 // The ROM's size, rounded up to a power of two, less one; and the RAM's.
@@ -72,6 +78,7 @@ static u64 stoppedAt = ~0ull;
 
 static void flushCache(void) {
 	memset(gsu.cacheValid, 0, sizeof(gsu.cacheValid));
+	gsuJitInvalidate();
 }
 
 static u8 readCache(u16 address) {
@@ -81,6 +88,7 @@ static u8 readCache(u16 address) {
 static void writeCache(u16 address, u8 data) {
 	address = (address + gsu.cbr) & 511;
 	gsu.cache[address] = data;
+	gsuJitInvalidate();
 	if ((address & 15) == 15) {
 		gsu.cacheValid[address >> 4] = true;
 	}
@@ -318,6 +326,7 @@ dispatch:
 					FR.e++;
 				}
 				gsu.cacheValid[FR.c >> 4] = true;
+				gsuJitInvalidate();
 			} else {
 				STEP(gsu.clsr ? 1 : 2);
 			}
@@ -511,6 +520,7 @@ static __attribute__((noinline)) void readOpcodeBalanced(u32 address) {
 				from++;
 			}
 			gsu.cacheValid[offset >> 4] = true;
+			gsuJitInvalidate();
 		} else {
 			stepBalanced(gsu.clsr ? 1 : 2);
 		}
@@ -636,6 +646,8 @@ static inline __attribute__((always_inline)) void callBalanced(u32 sub, u32 a, u
 #undef CALL
 #define CALL(sub, va, vb, vc) callBalanced((sub), (va), (vb))
 
+#include "gsu_jit.inc"
+
 // The subroutines that move the clock on find it in gsu.th.clock; the loop keeps it in clock.
 static inline __attribute__((always_inline)) void callLean(u32 sub, u32 a, u32 b, u64* clock) {
 	switch (sub) {
@@ -712,6 +724,18 @@ static void gsuRunBalanced(void) {
 			}
 			CALL(SUB_STEP, 6, 0, 0);
 			continue;
+		}
+		// Fast mode: a recompiled block, when no prefix or written R14 is pending.
+		if (GSU_JIT && systemFast && gsuJitEnabled && !written && !gsu.sreg && !gsu.dreg &&
+		    !(gsu.sfr & (1 << SFR_B | 1 << SFR_ALT1 | 1 << SFR_ALT2))) {
+			gsu.th.clock = clock;
+			gsu.pipeline = pipe;
+			if (gsuJitRun(pc, pipe, until)) {
+				clock = gsu.th.clock;
+				pc = gsu.r[15];
+				pipe = gsu.pipeline;
+				continue;
+			}
 		}
 		gsu.opcode = pipe;
 		FETCH();
@@ -872,6 +896,7 @@ void gsuWriteIO(u32 address, u8 data) {
 		break;
 	case 0x3039:
 		gsu.clsr = data & 0x01;
+		gsuJitInvalidate();
 		break;
 	case 0x303a:
 		setSCMR(data);
@@ -907,7 +932,12 @@ void gsuWriteRamCPU(u32 address, u8 data) {
 	cart.ram[address] = data;
 }
 
+void gsuLoaded(void) {
+	gsuJitDrop();
+}
+
 void gsuPower(void) {
+	gsuJitDrop();
 	struct Thread th = gsu.th;
 	memset(&gsu, 0, sizeof(gsu));
 	gsu.th = th;

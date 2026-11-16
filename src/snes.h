@@ -1007,6 +1007,10 @@ struct Gsu {
 extern struct Gsu gsu;
 
 void gsuPower(void);
+// A state was loaded.
+void gsuLoaded(void);
+// Fast mode's GSU recompiler (on by default where there is one).
+extern bool gsuJitEnabled;
 // Fast mode: the GSU run up to clock (the S-CPU's clock), and the clock it stopped at in that time
 // (all ones if it didn't, or wasn't running).
 u64 gsuRunTo(u64 clock);

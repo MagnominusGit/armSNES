@@ -346,6 +346,10 @@ int main(int argc, char** argv) {
 	systemFastThreaded = !getenv("FASTTHREAD") || strcmp(getenv("FASTTHREAD"), "0");
 	// FRAMETOP=1: frames end as their last line starts, in every mode.
 	systemFrameAtTop = getenv("FRAMETOP") != NULL;
+	// GSUJIT=0: Fast mode's GSU without its recompiler.
+	if (getenv("GSUJIT")) {
+		gsuJitEnabled = atoi(getenv("GSUJIT")) != 0;
+	}
 	// FASTRENDER=n: n render threads.
 	if (getenv("FASTRENDER")) {
 		fastPpuThreads(atoi(getenv("FASTRENDER")));

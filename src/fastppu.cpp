@@ -70,11 +70,14 @@ uint16 VramCopy[THREADS][32768];
 uint16 CgramCopy[THREADS][256];
 uint64 Ring[RING];
 FastPpuLine Pool[POOL];
-uint32 RingHead, RingTail[THREADS];  // written by the main thread, by each render thread
-uint32 HeadLocal, TailSeen;  // the main thread's: where it has written to, the oldest tail it last saw
+// Each thread's writes on cache lines of their own, so the others' reads don't take them back and forth.
+alignas(64) uint32 RingHead;  // written by the main thread
+alignas(64) uint32 RingTail[THREADS];  // by each render thread
+alignas(64) uint32 HeadLocal, TailSeen;  // the main thread's: where it has written to, the oldest tail it last saw
+alignas(64) uint32 LinesGiven;
+alignas(64) uint32 LinesDone[THREADS];
 void (*Sink)(const uint32_t* line);
 FastPpuLine Scratch;
-uint32 LinesGiven, LinesDone[THREADS];
 pthread_t Thread[THREADS];
 unsigned Count, Wanted;  // the threads running, and asked for (0: by the cores there are)
 pthread_mutex_t Lock = PTHREAD_MUTEX_INITIALIZER;

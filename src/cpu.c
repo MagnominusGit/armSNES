@@ -544,6 +544,8 @@ static struct {
 	bool unsafe;
 	bool hvbjoy;  // the turn read $4212
 	bool apu;     // and an APU port
+	u8 apuRead;   // the ports it read (a bit each), and what it read last from each
+	u8 apuSeen[4];
 	bool quiet;   // no event in the turn before the one kept, whose DMA or interrupt it would have had
 } wait;
 // A write to the APU's ports the SMP was run past in a skip: reads before its instruction started get
@@ -565,6 +567,7 @@ void cpuFrameStart(void) {
 	wait.unsafe = false;
 	wait.hvbjoy = false;
 	wait.apu = false;
+	wait.apuRead = 0;
 	apuHeld.on = false;
 	apuPace.close = 0;
 }
@@ -983,14 +986,21 @@ static void writeRAM(u32 address, u8 data) {
 	cpu.wram[address] = data;
 }
 
+// What a turn of a waiting loop read from a port, for fastSkipTurns.
+static u8 apuSaw(u32 address, u8 data) {
+	wait.apuRead |= 1 << (address & 3);
+	wait.apuSeen[address & 3] = data;
+	return data;
+}
+
 static u8 readAPU(u32 address, u8 data) {
 	(void) data;
 	if (apuHeld.on) {
 		if (cpu.th.clock < apuHeld.write.at) {
-			return apuHeld.write.before[address & 3];
+			return apuSaw(address, apuHeld.write.before[address & 3]);
 		}
 		if (cpu.th.clock <= apuHeld.write.done) {
-			return apuHeld.write.after[address & 3];
+			return apuSaw(address, apuHeld.write.after[address & 3]);
 		}
 		apuHeld.on = false;
 	}
@@ -1007,7 +1017,7 @@ static u8 readAPU(u32 address, u8 data) {
 	}
 	syncSmp();
 	smpDrain();
-	return smp.toCpu[address & 3];
+	return apuSaw(address, smp.toCpu[address & 3]);
 }
 
 static void writeAPU(u32 address, u8 data) {
@@ -1318,6 +1328,13 @@ static void fastSkipTurns(bool hvbjoy, bool apu) {
 	if (apu) {
 		// A write run to before is held to: past it, the next read sees it.
 		if (!apuHeld.on) {
+			// A port the SMP wrote after the turn read it (as it ran for a later read) reads otherwise
+			// now. With no write in the turn, the SMP has nothing to do since its last read.
+			for (u32 n = 0; n < 4; ++n) {
+				if (wait.apuRead >> n & 1 && wait.apuSeen[n] != smp.toCpu[n]) {
+					return;
+				}
+			}
 			apuHeld.on = smpRunToPortWrite(cpu.th.clock + room, &apuHeld.write);
 		}
 		if (apuHeld.on) {
@@ -1346,6 +1363,7 @@ static void fastBranch(void) {
 	if (wait.unsafe || cart.sa1) {
 		wait.valid = false;
 		wait.unsafe = false;
+		wait.apuRead = 0;
 		return;
 	}
 	const u8* regs = (const u8*) &R + WAIT_FROM;
@@ -1361,6 +1379,7 @@ static void fastBranch(void) {
 	wait.clock = cpu.th.clock;
 	wait.catches = fastCatches;
 	wait.quiet = quiet;
+	wait.apuRead = 0;
 }
 
 // Fast mode: what an access would see to, once an instruction. A DMA starts at the second access edge.

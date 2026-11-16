@@ -41,6 +41,14 @@ static struct {
 	u8 port, data;
 } smpWriting;
 
+// The S-CPU's write, once the SMP's clock is past it.
+static void smpTakeWrite(void) {
+	if (smpWriting.on && smpWriting.at < smp.th.clock) {
+		smp.fromCpu[smpWriting.port] = smpWriting.data;
+		smpWriting.on = false;
+	}
+}
+
 void smpPower(bool reset) {
 	struct Thread th = smp.th;
 	memset(&smp, 0, sizeof(smp));
@@ -166,10 +174,7 @@ static u8 readIO(u16 address) {
 	case 0xf5:
 	case 0xf6:
 	case 0xf7:
-		if (smpWriting.on && smpWriting.at < smp.th.clock) {
-			smp.fromCpu[smpWriting.port] = smpWriting.data;
-			smpWriting.on = false;
-		}
+		smpTakeWrite();
 		return smp.fromCpu[address & 3];
 	case 0xf8:
 		return smp.aux4;
@@ -219,6 +224,8 @@ static void writeIO(u16 address, u8 data) {
 			smp.timer[2].stage2 = 0;
 			smp.timer[2].stage3 = 0;
 		}
+		// A write of the S-CPU's from before is cleared with the rest.
+		smpTakeWrite();
 		if (data & 0x10) {
 			smp.fromCpu[0] = 0x00;
 			smp.fromCpu[1] = 0x00;

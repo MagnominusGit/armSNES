@@ -26,6 +26,11 @@ static const u8 iplrom[64] = {
 
 // The clock the SMP runs up to: the CPU's, when they were last brought together.
 u64 smpLimit;
+// smpRunToPortWrite: whether to stop, where the instruction found started, and where the one under way
+// did (in Fast mode).
+static bool smpStopAtPortWrite;
+static u64 smpPortWriteAt, smpInstructionAt;
+static u8 smpPortsBefore[4];
 
 void smpPower(bool reset) {
 	struct Thread th = smp.th;
@@ -228,6 +233,10 @@ static void writeIO(u16 address, u8 data) {
 	case 0xf6:
 	case 0xf7:
 		smp.toCpu[address & 3] = data;
+		if (smpStopAtPortWrite && smpPortWriteAt == ~0ull) {
+			smpPortWriteAt = smpInstructionAt;
+			smpLimit = 0;
+		}
 		break;
 	case 0xf8:
 		smp.aux4 = data;
@@ -997,7 +1006,8 @@ static bool echoWritten(u16 address) {
 			dspRun(); \
 		} \
 		return; \
-	}
+	} \
+	smpInstructionAt = smp.th.clock;
 // Plain RAM (not the I/O registers or the IPL ROM's place) is read and written straight.
 #define PLAIN(address) ((u16) ((address) - 0x00f0) >= 0x10 && (address) < 0xffc0)
 #undef READ
@@ -1070,7 +1080,7 @@ bool smpCanThread(void) {
 enum { APU_RING = 1 << 12 };
 static struct ApuCommand {
 	u64 clock;
-	bool write;
+	bool write, toPortWrite;
 	u8 port, data;
 } apuRing[APU_RING];
 static u32 apuHead, apuTail;  // written by the CPU's thread, by the APU's
@@ -1079,6 +1089,17 @@ static pthread_mutex_t apuLock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t apuWake = PTHREAD_COND_INITIALIZER;
 static bool apuStarted, apuSleeping, apuStopping;
 bool smpThreaded;
+
+static void smpRunToPortWriteHere(u64 clock) {
+	memcpy(smpPortsBefore, smp.toCpu, 4);
+	smpStopAtPortWrite = true;
+	smpPortWriteAt = ~0ull;
+	smpLimit = clock;
+	if (smp.th.clock < smpLimit) {
+		smpRun();
+	}
+	smpStopAtPortWrite = false;
+}
 
 // A wait in a spin loop, without leaving the core.
 static inline void apuRelax(void) {
@@ -1095,9 +1116,13 @@ static void* apuMain(void* unused) {
 		u32 tail = apuTail;
 		while (tail != __atomic_load_n(&apuHead, __ATOMIC_ACQUIRE)) {
 			const struct ApuCommand* c = &apuRing[tail & (APU_RING - 1)];
-			smpLimit = c->clock;
-			if (smp.th.clock < smpLimit) {
-				smpRun();
+			if (c->toPortWrite) {
+				smpRunToPortWriteHere(c->clock);
+			} else {
+				smpLimit = c->clock;
+				if (smp.th.clock < smpLimit) {
+					smpRun();
+				}
 			}
 			if (c->write) {
 				smp.fromCpu[c->port] = c->data;
@@ -1137,10 +1162,35 @@ static void apuWakeIfSleeping(void) {
 	}
 }
 
+static void apuPost(struct ApuCommand command);
+
 void smpPost(u64 clock, bool write, u32 port, u8 data) {
+	apuPost((struct ApuCommand) { clock, write, false, (u8) port, data });
+}
+
+u64 smpRunToPortWrite(u64 clock, u8 before[4]) {
+	if (smpThreaded) {
+		apuPost((struct ApuCommand) { clock, false, true, 0, 0 });
+		smpDrain();
+	} else {
+		smpRunToPortWriteHere(clock);
+	}
+	memcpy(before, smpPortsBefore, 4);
+	return smpPortWriteAt;
+}
+
+static void apuPost(struct ApuCommand command) {
+	u64 clock = command.clock;
+	bool write = command.write;
+	u32 port = command.port;
+	u8 data = command.data;
 	if (!apuStarted) {
 		apuStarted = pthread_create(&apuThread, NULL, apuMain, NULL) == 0;
 		if (!apuStarted) {
+			if (command.toPortWrite) {
+				smpRunToPortWriteHere(clock);
+				return;
+			}
 			smpLimit = clock;
 			if (smp.th.clock < smpLimit) {
 				smpRun();
@@ -1155,7 +1205,7 @@ void smpPost(u64 clock, bool write, u32 port, u8 data) {
 		apuWakeIfSleeping();
 		sched_yield();
 	}
-	apuRing[apuHead & (APU_RING - 1)] = (struct ApuCommand) { clock, write, (u8) port, data };
+	apuRing[apuHead & (APU_RING - 1)] = command;
 	__atomic_store_n(&apuHead, apuHead + 1, __ATOMIC_SEQ_CST);
 	apuWakeIfSleeping();
 }

@@ -156,6 +156,10 @@ bool smpCanThread(void);
 void smpPost(u64 clock, bool write, u32 port, u8 data);
 void smpDrain(void);
 void smpStop(void);
+// Fast mode: runs the SMP up to clock as a post does, but stops after the first instruction that writes
+// a port to the CPU. Returns the clock that instruction started at (~0 if none), with the ports as
+// they were before it in before.
+u64 smpRunToPortWrite(u64 clock, u8 before[4]);
 
 // --- S-DSP ---
 

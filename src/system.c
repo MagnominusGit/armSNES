@@ -144,6 +144,8 @@ void systemPower(bool reset) {
 // The PPU finished a frame. The clocks all drop by the same amount, so they never overflow.
 void systemFrameEvent(void) {
 	smpDrain();
+	// The clocks a waiting loop's skip keeps are about to drop.
+	cpuFrameStart();
 	u64 minimum = cpu.th.clock - 0;
 	if (smp.th.clock - 1 < minimum) {
 		minimum = smp.th.clock - 1;

@@ -406,7 +406,7 @@ void retro_deinit(void) {
 void retro_get_system_info(struct retro_system_info* info) {
 	memset(info, 0, sizeof(*info));
 	info->library_name = "armSNES";
-	info->library_version = "0.1";
+	info->library_version = "0.1a";
 	info->valid_extensions = "sfc|smc|bs|st|gb|gbc";
 	info->need_fullpath = false;
 	info->block_extract = false;

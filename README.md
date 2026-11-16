@@ -5,8 +5,7 @@ A Super Nintendo core in C for ARM and x86 handhelds, ported from [ares](https:/
 It is early work. What is here runs games on plain cartridge boards (LoROM, HiROM and their extended
 forms, with or without save RAM), and on boards with an NEC DSP (DSP-1 to DSP-4, ST010, ST011), an
 SA-1, a Super FX, an S-DD1, an OBC1, a Cx4, an SPC7110 or an ST018, and with the Epson or Sharp
-real-time clock. It gives the same picture and sound as ares's most accurate renderer, frame for frame
-and sample for sample. Games with a DSP or a Cx4 need its firmware (`dsp1.rom`, `dsp1b.rom`,
+real-time clock. Games with a DSP or a Cx4 need its firmware (`dsp1.rom`, `dsp1b.rom`,
 `st010.rom`, `cx4.rom`, `st018.rom` and so on, or the `.program.rom` and `.data.rom` halves) in the
 frontend's system folder, unless the dump carries it.
 
@@ -15,7 +14,13 @@ It also takes BS-X memory packs (`.bs`, with `BS-X.bin`), Sufami Turbo cartridge
 `sgb1.boot.rom`), each with those files in the system folder, and the MSU-1 (`game.msu` and
 `game-1.pcm` on beside the game). The Super Game Boy's Game Boy is Gambatte, as armGBA has it.
 
-It builds as a libretro core with saved states; the standalone app comes later. The plan is in
+It has three modes, set with the core's Mode option. Exact gives the same picture and sound as ares's
+most accurate renderer, frame for frame and sample for sample. Balanced keeps nearly all of that at
+much less cost. Fast, the default, is quicker again; it may differ from Exact only in timing too small
+to see or hear. A saved state from any mode loads in the others.
+
+Besides the controller, it takes the SNES Mouse, the Super Scope, the Justifier, the multitap and the
+Satellaview receiver. It builds as a libretro core with saved states; the standalone app comes later. The plan is in
 [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Build

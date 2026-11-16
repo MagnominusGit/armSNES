@@ -14,7 +14,7 @@
 // A state is taken between frames. The canvas is usually clear then, but not after a DMA that ran on
 // into the next frame.
 
-enum { STATE_MAGIC = 0x534e5341, STATE_VERSION = 13 };
+enum { STATE_MAGIC = 0x534e5341, STATE_VERSION = 14 };
 
 struct StateHeader {
 	u32 magic;
@@ -180,10 +180,14 @@ bool stateLoad(const void* data, size_t size) {
 	}
 	memcpy(&header, data, sizeof(header));
 
+	// Version 13 is this one without ppu.framePending, the PPU's last field.
 	u32 sizes[23];
 	layout(sizes);
-	if (header.magic != STATE_MAGIC || header.version != STATE_VERSION || memcmp(header.sizes, sizes, sizeof(sizes)) ||
-	    header.ramSize != cart.ramSize || header.extraSize != extraSize() || size < stateSize()) {
+	const bool v13 = header.version == 13;
+	const size_t ppuSize = v13 ? offsetof(struct Ppu, framePending) : sizeof(ppu);
+	sizes[4] = (u32) ppuSize;
+	if (header.magic != STATE_MAGIC || (header.version != STATE_VERSION && !v13) || memcmp(header.sizes, sizes, sizeof(sizes)) ||
+	    header.ramSize != cart.ramSize || header.extraSize != extraSize() || size < stateSize() - (sizeof(ppu) - ppuSize)) {
 		return false;
 	}
 
@@ -195,7 +199,13 @@ bool stateLoad(const void* data, size_t size) {
 	GET(cpu);
 	GET(smp);
 	GET(dsp);
-	GET(ppu);
+	memcpy(&ppu, in, ppuSize);
+	in += ppuSize;
+	if (v13) {
+		// The frame is waiting if this one passed line 240 without being given out.
+		ppu.framePending = systemFrameAtTop && ppu.counter.vcounter >= 240 && ppu.counter.vcounter < ppu.counter.vperiod - 1u &&
+			ppu.drawnTo > 0;
+	}
 	GET(input);
 	GET(necdsp);
 	GET(sa1);

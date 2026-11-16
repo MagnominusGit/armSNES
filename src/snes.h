@@ -815,6 +815,9 @@ struct Ppu {
 		u16 address;
 		u8 sprite;
 	} fetch;
+	// A frame finished at line 240 that is given out as its last line starts (systemFrameAtTop). Last,
+	// so that a state from before it was kept (version 13) holds all the fields ahead of it.
+	bool framePending;
 };
 extern struct Ppu ppu;
 // The frame being drawn, CANVAS_WIDTH x CANVAS_HEIGHT: each pixel is four bits of brightness over a

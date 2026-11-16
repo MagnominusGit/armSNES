@@ -162,6 +162,16 @@ static inline void irqPoll(void) {
 	}
 }
 
+static void fastIrqSettle(void);
+
+static void irqTimesWritten(void) {
+	if (systemBalanced) {
+		fastIrqSettle();
+	} else {
+		irqPoll();
+	}
+}
+
 static void nmitimenUpdate(u8 data) {
 	cpu.io.hirqEnable = data & 0x10;
 	cpu.io.virqEnable = data & 0x20;
@@ -176,6 +186,9 @@ static void nmitimenUpdate(u8 data) {
 
 	if (raiseTo(&cpu.io.nmiEnable, data & 0x80) && cpu.status.nmiLine) {
 		cpu.status.nmiTransition = 1;
+	}
+	if (systemBalanced) {
+		fastIrqSettle();
 	}
 
 	cpu.status.irqLock = 1;
@@ -219,8 +232,16 @@ static inline bool irqTest(void) {
 // Interrupts are looked for a cycle before an instruction ends, as the 65816's pipeline does. After
 // DMA or a write to $4200 they have to wait: that is irqLock.
 static void lastCycle(void) {
+	// The IRQ is a level: Exact's polls find it again every few clocks while it stays up, so one
+	// looked for while I was set isn't lost. Balanced and Fast poll only here.
+	if (systemBalanced && cpu.status.irqLine && cpu.io.irqEnable) {
+		cpu.status.irqTransition = 1;
+	}
+	// Balanced and Fast raise the NMI as the first line below the picture starts; Exact's polls see it
+	// from H 6 on.
+	bool nmiYet = !systemBalanced || cpu.counter.vcounter != ppu.state.vdisp || cpu.counter.hcounter >= 6;
 	if (!cpu.status.irqLock) {
-		if (nmiTest()) {
+		if (nmiYet && nmiTest()) {
 			cpu.status.nmiPending = 1;
 			cpu.status.interruptPending = 1;
 		}
@@ -346,7 +367,7 @@ static u32 fastNext;
 
 // The IRQ's level where the counters are. With an H position the level stands for "taken on this
 // line"; the line's end clears it.
-static void fastIrq(void) {
+static bool fastIrqLevel(void) {
 	bool valid = false;
 	if (cpu.io.irqEnable) {
 		u32 v = cpu.counter.vcounter, h = cpu.counter.hcounter;
@@ -359,10 +380,21 @@ static void fastIrq(void) {
 			valid = !cpu.io.virqEnable || (v ? v - 1 : cpu.counter.lastVperiod - 1) == cpu.io.vtime;
 		}
 	}
-	if (raiseTo(&cpu.status.irqValid, valid)) {
+	return valid;
+}
+
+static void fastIrq(void) {
+	if (raiseTo(&cpu.status.irqValid, fastIrqLevel())) {
 		cpu.status.irqLine = 1;
 		cpu.status.irqTransition = 1;
 	}
+}
+
+// Balanced and Fast: new IRQ times or enables take the level where the counters are without raising it,
+// as a place this line has passed doesn't come again; one still ahead is planned for.
+static void fastIrqSettle(void) {
+	cpu.status.irqValid = fastIrqLevel();
+	cpuFastReplan();
 }
 
 static void fastPlan(void) {
@@ -1217,21 +1249,21 @@ static void writeCPU(u32 address, u8 data) {
 		cpu.io.htime = ((cpu.io.htime >> 2) - 1) & 0xfff;
 		cpu.io.htime = (cpu.io.htime & 0xf00) | data;
 		cpu.io.htime = ((cpu.io.htime + 1) << 2) & 0xfff;
-		irqPoll();
+		irqTimesWritten();
 		return;
 	case 0x4208:
 		cpu.io.htime = ((cpu.io.htime >> 2) - 1) & 0xfff;
 		cpu.io.htime = (cpu.io.htime & 0xeff) | (data & 1) << 8;
 		cpu.io.htime = ((cpu.io.htime + 1) << 2) & 0xfff;
-		irqPoll();
+		irqTimesWritten();
 		return;
 	case 0x4209:
 		cpu.io.vtime = (cpu.io.vtime & 0x100) | data;
-		irqPoll();
+		irqTimesWritten();
 		return;
 	case 0x420a:
 		cpu.io.vtime = (cpu.io.vtime & 0x0ff) | (data & 1) << 8;
-		irqPoll();
+		irqTimesWritten();
 		return;
 	case 0x420b:
 		for (int n = 0; n < 8; ++n) {

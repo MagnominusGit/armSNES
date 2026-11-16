@@ -725,6 +725,10 @@ static void write(u32 address, u8 data) {
 		while (cpu.alu.mpyctr || cpu.alu.divctr) {
 			aluEdge();
 		}
+		// A DMA starts at the access edges that follow, as in Balanced mode.
+		if (cpu.status.dmaPending) {
+			fastNow = false;
+		}
 		return;
 	}
 	aluEdge();
@@ -1460,7 +1464,7 @@ static inline __attribute__((always_inline)) void fastBetween(void) {
 }
 
 void cpuMain(void) {
-	fastNow = systemFast && !inputGuns;
+	fastNow = systemFast && !inputGuns && !cpu.status.dmaPending;
 	if (fastAccess()) {
 		fastBetween();
 	}

@@ -537,11 +537,12 @@ static struct {
 	bool apu;     // and an APU port
 	bool quiet;   // no event in the turn before the one kept, whose DMA or interrupt it would have had
 } wait;
-// The APU's ports as they were before a write the SMP was run past in a skip, for reads before it.
+// A write to the APU's ports the SMP was run past in a skip: reads before its instruction started get
+// the ports as they were, and ones before the next started (which no SMP instruction comes before)
+// as they are after it.
 static struct {
 	bool on;
-	u64 until;
-	u8 ports[4];
+	struct SmpPortWrite write;
 } apuHeld;
 // Where the instruction being run started.
 static u32 waitFrom;
@@ -966,8 +967,11 @@ static void writeRAM(u32 address, u8 data) {
 static u8 readAPU(u32 address, u8 data) {
 	(void) data;
 	if (apuHeld.on) {
-		if (cpu.th.clock < apuHeld.until) {
-			return apuHeld.ports[address & 3];
+		if (cpu.th.clock < apuHeld.write.at) {
+			return apuHeld.write.before[address & 3];
+		}
+		if (cpu.th.clock <= apuHeld.write.done) {
+			return apuHeld.write.after[address & 3];
 		}
 		apuHeld.on = false;
 	}
@@ -1280,14 +1284,14 @@ static void fastSkipTurns(bool hvbjoy, bool apu) {
 	if (room < 2 * turn) {
 		return;
 	}
-	// The ports read the same up to the SMP's first write to them: the SMP is run to it, and reads
-	// before the clock its instruction started at are given the ports as they were.
+	// The ports read the same up to the SMP's first write to them: the SMP is run to it (apuHeld).
 	if (apu) {
-		// A write run to before and not read yet is held to: past it, the next read sees it.
-		u64 at = apuHeld.on ? apuHeld.until : smpRunToPortWrite(cpu.th.clock + room, apuHeld.ports);
-		if (at != ~0ull) {
-			apuHeld.on = true;
-			apuHeld.until = at;
+		// A write run to before is held to: past it, the next read sees it.
+		if (!apuHeld.on) {
+			apuHeld.on = smpRunToPortWrite(cpu.th.clock + room, &apuHeld.write);
+		}
+		if (apuHeld.on) {
+			u64 at = apuHeld.write.at;
 			room = at > cpu.th.clock ? at - cpu.th.clock : 0;
 			if (room < 2 * turn) {
 				return;

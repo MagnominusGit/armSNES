@@ -26,11 +26,11 @@ static const u8 iplrom[64] = {
 
 // The clock the SMP runs up to: the CPU's, when they were last brought together.
 u64 smpLimit;
-// smpRunToPortWrite: whether to stop, where the instruction found started, and where the one under way
-// did (in Fast mode).
+// smpRunToPortWrite: whether to stop, what it found, and where the instruction under way started (in
+// Fast mode).
 static bool smpStopAtPortWrite;
-static u64 smpPortWriteAt, smpInstructionAt;
-static u8 smpPortsBefore[4];
+static u64 smpInstructionAt;
+static struct SmpPortWrite smpPortWrite;
 
 void smpPower(bool reset) {
 	struct Thread th = smp.th;
@@ -233,8 +233,8 @@ static void writeIO(u16 address, u8 data) {
 	case 0xf6:
 	case 0xf7:
 		smp.toCpu[address & 3] = data;
-		if (smpStopAtPortWrite && smpPortWriteAt == ~0ull) {
-			smpPortWriteAt = smpInstructionAt;
+		if (smpStopAtPortWrite && smpPortWrite.at == ~0ull) {
+			smpPortWrite.at = smpInstructionAt;
 			smpLimit = 0;
 		}
 		break;
@@ -1091,14 +1091,16 @@ static bool apuStarted, apuSleeping, apuStopping;
 bool smpThreaded;
 
 static void smpRunToPortWriteHere(u64 clock) {
-	memcpy(smpPortsBefore, smp.toCpu, 4);
+	memcpy(smpPortWrite.before, smp.toCpu, 4);
 	smpStopAtPortWrite = true;
-	smpPortWriteAt = ~0ull;
+	smpPortWrite.at = ~0ull;
 	smpLimit = clock;
 	if (smp.th.clock < smpLimit) {
 		smpRun();
 	}
 	smpStopAtPortWrite = false;
+	smpPortWrite.done = smp.th.clock;
+	memcpy(smpPortWrite.after, smp.toCpu, 4);
 }
 
 // A wait in a spin loop, without leaving the core.
@@ -1168,15 +1170,15 @@ void smpPost(u64 clock, bool write, u32 port, u8 data) {
 	apuPost((struct ApuCommand) { clock, write, false, (u8) port, data });
 }
 
-u64 smpRunToPortWrite(u64 clock, u8 before[4]) {
+bool smpRunToPortWrite(u64 clock, struct SmpPortWrite* write) {
 	if (smpThreaded) {
 		apuPost((struct ApuCommand) { clock, false, true, 0, 0 });
 		smpDrain();
 	} else {
 		smpRunToPortWriteHere(clock);
 	}
-	memcpy(before, smpPortsBefore, 4);
-	return smpPortWriteAt;
+	*write = smpPortWrite;
+	return smpPortWrite.at != ~0ull;
 }
 
 static void apuPost(struct ApuCommand command) {

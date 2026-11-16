@@ -1295,12 +1295,14 @@ dispatch:
 		if (R.wai || R.stp || sa1.io.sa1_rdyb || sa1.io.sa1_resb || sa1.status.interruptPending) {
 			loop.valid = false;
 		}
+		// A waiting SA-1 idles until an interrupt is looked for and found, then idles once more: a step
+		// at a time, so that Balanced mode, which stops only here, can leave it for the S-CPU.
 		if (R.wai) {
-			while (R.wai) {
-				lastCycle();
+			lastCycle();
+			IDLE();
+			if (!R.wai) {
 				IDLE();
 			}
-			IDLE();
 			goto done;
 		}
 		if (R.stp) {

@@ -286,8 +286,22 @@ void inputPollGun(int gun, int* x, int* y, u8* buttons) {
 	*buttons = gunButtons[gun];
 }
 
+// L2 or R2 held on the first pad fast-forwards at the frontend's top speed.
+static bool fastForwardHeld;
+
+static void setFastForward(bool on) {
+	fastForwardHeld = on;
+	struct retro_fastforwarding_override override = { .ratio = -1.0f, .fastforward = on, .notification = true, .inhibit_toggle = on };
+	environment(RETRO_ENVIRONMENT_SET_FASTFORWARDING_OVERRIDE, &override);
+}
+
 static void readPads(void) {
 	inputPollFrontend();
+	bool fastForward = inputState(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2) ||
+	                   inputState(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2);
+	if (fastForward != fastForwardHeld) {
+		setFastForward(fastForward);
+	}
 	for (unsigned port = 0; port < 5; ++port) {
 		u16 buttons = 0;
 		if (bitmasks) {
@@ -664,6 +678,8 @@ bool retro_load_game(const struct retro_game_info* info) {
 	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Select" }, \
 	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Start" }
 		PAD(0),
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, "Fast-Forward" },
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Fast-Forward" },
 		PAD(1),
 		PAD(2),
 		PAD(3),
@@ -693,6 +709,9 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info* info, 
 }
 
 void retro_unload_game(void) {
+	if (fastForwardHeld) {
+		setFastForward(false);
+	}
 	fastPpuStop();
 	smpStop();
 	loaded = false;

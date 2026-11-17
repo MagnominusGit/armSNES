@@ -286,7 +286,16 @@ void inputPollGun(int gun, int* x, int* y, u8* buttons) {
 	*buttons = gunButtons[gun];
 }
 
-// L2 or R2 held on the first pad fast-forwards at the frontend's top speed.
+// Netplay, once it has saved or loaded a state of this game: then L2 and R2 don't fast-forward, as the
+// other players would have to wait.
+static bool netplaySeen;
+
+static void checkNetplay(void) {
+	int context = RETRO_SAVESTATE_CONTEXT_NORMAL;
+	netplaySeen |= environment(RETRO_ENVIRONMENT_GET_SAVESTATE_CONTEXT, &context) && context == RETRO_SAVESTATE_CONTEXT_ROLLBACK_NETPLAY;
+}
+
+// L2 or R2 held on the first pad fast-forwards at the frontend's top speed, outside netplay.
 static bool fastForwardHeld;
 
 static void setFastForward(bool on) {
@@ -297,8 +306,8 @@ static void setFastForward(bool on) {
 
 static void readPads(void) {
 	inputPollFrontend();
-	bool fastForward = inputState(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2) ||
-	                   inputState(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2);
+	bool fastForward = !netplaySeen && (inputState(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2) ||
+	                                    inputState(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2));
 	if (fastForward != fastForwardHeld) {
 		setFastForward(fastForward);
 	}
@@ -542,10 +551,12 @@ size_t retro_serialize_size(void) {
 }
 
 bool retro_serialize(void* data, size_t size) {
+	checkNetplay();
 	return loaded && stateSave(data, size);
 }
 
 bool retro_unserialize(const void* data, size_t size) {
+	checkNetplay();
 	return loaded && stateLoad(data, size);
 }
 
@@ -583,6 +594,7 @@ static void readOptions(void) {
 }
 
 bool retro_load_game(const struct retro_game_info* info) {
+	netplaySeen = false;
 	if (!info || !info->data) {
 		return false;
 	}

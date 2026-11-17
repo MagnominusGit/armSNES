@@ -123,7 +123,7 @@ void* RenderThread(void* arg)
    __atomic_store_n(&RingTail[id], tail, __ATOMIC_RELEASE);
   }
 
-  for(unsigned spin = 0; spin < 2000 && tail == __atomic_load_n(&RingHead, __ATOMIC_ACQUIRE); spin++)
+  for(unsigned spin = 0; spin < 20 && tail == __atomic_load_n(&RingHead, __ATOMIC_ACQUIRE); spin++)
    sched_yield();
 
   // Sleeping is set before the ring is looked at again, and Publish looks at Sleeping after it adds

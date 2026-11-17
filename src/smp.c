@@ -1178,10 +1178,10 @@ static void* apuMain(void* unused) {
 		}
 		// The CPU waits on the thread when it reads a port: a new command is looked for at once for a
 		// while before the thread gives way.
-		for (u32 spin = 0; spin < 20000 && tail == __atomic_load_n(&apuHead, __ATOMIC_ACQUIRE); spin++) {
+		for (u32 spin = 0; spin < 5000 && tail == __atomic_load_n(&apuHead, __ATOMIC_ACQUIRE); spin++) {
 			apuRelax();
 		}
-		for (u32 spin = 0; spin < 2000 && tail == __atomic_load_n(&apuHead, __ATOMIC_ACQUIRE); spin++) {
+		for (u32 spin = 0; spin < 20 && tail == __atomic_load_n(&apuHead, __ATOMIC_ACQUIRE); spin++) {
 			sched_yield();
 		}
 		// Sleeping is set before the ring is looked at again, and smpPost looks at it after it adds to

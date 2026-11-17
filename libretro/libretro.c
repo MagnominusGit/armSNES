@@ -27,7 +27,8 @@ static bool bitmasks;
 // The picture, in RGB565: up to 512 pixels by 239 lines, or twice the lines when interlaced.
 enum { OUTPUT_WIDTH = 512, OUTPUT_HEIGHT = 478 };
 static u16 output[OUTPUT_WIDTH * OUTPUT_HEIGHT];
-static unsigned outputHeight = 224;
+static unsigned outputWidth = 256, outputHeight = 224;
+static bool crosshair = true;
 static bool outputReady;
 
 // A pixel of the canvas, four bits of brightness over 15 bits of color, as RGB565. Brightness 0 isn't
@@ -56,7 +57,7 @@ static inline u16 rgb565Bright(u32 pixel) {
 	return (pixel << 11 & 0xf800) | (pixel << 1 & 0x07c0) | (pixel >> 4 & 0x0020) | (pixel >> 10 & 0x001f);
 }
 
-static void convertRow(const u32* from, u16* to) {
+static void convertWide(const u32* from, u16* to) {
 	u32 dim = 0, mixed = 0;
 	for (u32 n = 0; n < OUTPUT_WIDTH; ++n) {
 		dim |= ~from[n] & 0x78000;
@@ -75,6 +76,34 @@ static void convertRow(const u32* from, u16* to) {
 	}
 }
 
+// A row with no pixel of its own (no hi-res) is written at half the width; it is widened only if
+// another row of the frame needs the full width.
+static bool rowWide[OUTPUT_HEIGHT];
+
+static void convertRow(const u32* from, u16* to, bool* wide) {
+	u32 dim = 0, mixed = 0, pairs = 0;
+	for (u32 n = 0; n < OUTPUT_WIDTH / 2; ++n) {
+		u32 pixel = from[2 * n];
+		dim |= ~pixel & 0x78000;
+		mixed |= pixel ^ from[0];
+		pairs |= pixel ^ from[2 * n + 1];
+		to[n] = rgb565Bright(pixel);
+	}
+	*wide = pairs != 0;
+	if (pairs) {
+		convertWide(from, to);
+	} else if (dim && !mixed) {
+		u16 color = rgb565(from[0]);
+		for (u32 n = 0; n < OUTPUT_WIDTH / 2; ++n) {
+			to[n] = color;
+		}
+	} else if (dim) {
+		for (u32 n = 0; n < OUTPUT_WIDTH / 2; ++n) {
+			to[n] = rgb565(from[2 * n]);
+		}
+	}
+}
+
 // Fast mode's render thread converts each line it draws as it goes, for the last frame's crop, and
 // marks its row with the frame's stamp; videoFrame converts the others.
 static u32 cropX = 26, cropY = 9, cropHeight = 224;
@@ -84,7 +113,7 @@ static u32 stamp = 1;
 static void lineDrawn(const u32* line) {
 	u32 row = (u32) (line - ppuCanvas) / CANVAS_WIDTH;
 	if (row - cropY < cropHeight && line == &ppuCanvas[row * CANVAS_WIDTH + cropX]) {
-		convertRow(line, &output[(row - cropY) * OUTPUT_WIDTH]);
+		convertRow(line, &output[(row - cropY) * OUTPUT_WIDTH], &rowWide[row - cropY]);
 		rowStamp[row] = stamp;
 	}
 }
@@ -114,9 +143,22 @@ void videoFrame(const u32* canvas) {
 	bool sameCrop = canvas == ppuCanvas && x == cropX && y == cropY && h == cropHeight;
 	for (u32 row = 0; row < h; ++row) {
 		if (!sameCrop || rowStamp[y + row] != stamp) {
-			convertRow(&canvas[(y + row) * CANVAS_WIDTH + x], &output[row * OUTPUT_WIDTH]);
+			convertRow(&canvas[(y + row) * CANVAS_WIDTH + x], &output[row * OUTPUT_WIDTH], &rowWide[row]);
 		}
 	}
+	bool wide = inputGuns && crosshair;
+	for (u32 row = 0; row < h; ++row) {
+		wide |= rowWide[row];
+	}
+	if (wide) {
+		for (u32 row = 0; row < h; ++row) {
+			u16* to = &output[row * OUTPUT_WIDTH];
+			for (u32 n = OUTPUT_WIDTH / 2; !rowWide[row] && n--;) {
+				to[2 * n] = to[2 * n + 1] = to[n];
+			}
+		}
+	}
+	outputWidth = wide ? OUTPUT_WIDTH : OUTPUT_WIDTH / 2;
 	cropX = x;
 	cropY = y;
 	cropHeight = h;
@@ -216,7 +258,6 @@ static bool mouseLeft[2], mouseRight[2];
 // Where each gun points, in the picture's 256 columns and its rows, or below 0 when off it.
 static int gunX[2], gunY[2];
 static u8 gunButtons[2];
-static bool crosshair = true;
 
 enum {
 	DEVICE_LR_MULTITAP = RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 0),
@@ -414,7 +455,7 @@ void retro_get_system_info(struct retro_system_info* info) {
 
 void retro_get_system_av_info(struct retro_system_av_info* info) {
 	memset(info, 0, sizeof(*info));
-	info->geometry.base_width = OUTPUT_WIDTH;
+	info->geometry.base_width = OUTPUT_WIDTH / 2;
 	info->geometry.base_height = sys.pal ? 239 : 224;
 	info->geometry.max_width = OUTPUT_WIDTH;
 	info->geometry.max_height = OUTPUT_HEIGHT;
@@ -470,9 +511,9 @@ void retro_run(void) {
 		if (inputGuns && crosshair) {
 			drawCrosshairs();
 		}
-		videoRefresh(output, OUTPUT_WIDTH, outputHeight, OUTPUT_WIDTH * sizeof(u16));
+		videoRefresh(output, outputWidth, outputHeight, OUTPUT_WIDTH * sizeof(u16));
 	} else {
-		videoRefresh(NULL, OUTPUT_WIDTH, outputHeight, OUTPUT_WIDTH * sizeof(u16));
+		videoRefresh(NULL, outputWidth, outputHeight, OUTPUT_WIDTH * sizeof(u16));
 	}
 	if (soundCount) {
 		audioBatch(sound, soundCount);

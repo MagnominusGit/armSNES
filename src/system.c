@@ -94,9 +94,9 @@ void systemLoad(bool pal) {
 	ppuMap();
 	cartMap();
 	busFinish();
-	// Fast mode: a Super FX or an SA-1 keeps the CPU's thread busiest, and a second render thread
-	// slows it down more than it helps; otherwise two draw the lines.
-	fastPpuThreads(cart.gsu || cart.sa1 ? 1 : 0);
+	// Fast mode: an SA-1 keeps the CPU's thread busiest, and a second render thread slows it down more
+	// than it helps; otherwise two draw the lines.
+	fastPpuThreads(cart.sa1 ? 1 : 0);
 }
 
 // The MSU-1's clock comes after the other chips'.

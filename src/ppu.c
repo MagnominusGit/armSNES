@@ -1807,18 +1807,23 @@ u64 ppuVramDmaUntil(void) {
 	return ppu.th.clock;
 }
 
-// Count bytes, each to $2118 or $2119 (high), as the writes would land them; the render thread takes
-// all of VRAM again before its next line, rather than each word.
+// Count bytes, each to $2118 or $2119 (high), as writeVRAM would land them.
 void ppuVramDma(const u8* data, const u8* high, u32 count) {
+	bool threaded = systemFast && systemPictureThread;
 	for (u32 n = 0; n < count; ++n) {
 		u16* word = vramAt(addressVRAM());
 		*word = high[n] ? (*word & 0x00ff) | data[n] << 8 : (*word & 0xff00) | data[n];
 		++vramWrites;
+		if (threaded) {
+			fastPpuVram(addressVRAM() & ppu.vramMask, *word);
+		}
 		if (ppu.io.vramIncrementMode == high[n]) {
 			ppu.io.vramAddress += ppu.io.vramIncrementSize;
 		}
 	}
-	fastStale = true;
+	if (!threaded) {
+		fastStale = true;
+	}
 }
 
 // The line

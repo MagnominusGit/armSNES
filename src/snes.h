@@ -464,7 +464,11 @@ u32 busMirrorOver(u32 address, u32 size);
 // An address in a memory of size bytes; one past its end is mirrored down as the hardware's
 // address lines would have it.
 static inline u32 busMirror(u32 address, u32 size) {
-	return address < size ? address : busMirrorOver(address, size);
+	if (address < size) {
+		return address;
+	}
+	// A size that is a power of two mirrors as a mask.
+	return size && !(size & (size - 1)) ? address & (size - 1) : busMirrorOver(address, size);
 }
 u32 busReduce(u32 address, u32 mask);
 

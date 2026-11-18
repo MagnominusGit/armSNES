@@ -751,10 +751,15 @@ void dspLoaded(void) {
 
 // dspWillRead's look at what is on a page it may read.
 bool dspWillReadOnPage(u16 address) {
-	if ((u16) (address - (dsp.brr._bank << 8)) < 0x400 || (u16) (address - (dsp.brr.bank << 8)) < 0x400) {
-		// A write here can change where a voice starts or loops.
-		dspPagesStale = true;
-		return true;
+	for (int n = 0; n < 8; ++n) {
+		// A write to a voice's entry in the directory can change where it starts or loops; the others are
+		// read only once a voice's source is set to them, which marks the pages again.
+		const struct DspVoice* v = &dsp.voice[n];
+		if ((u16) (address - ((dsp.brr._bank << 8) + (v->source << 2))) < 4 ||
+		    (u16) (address - ((dsp.brr.bank << 8) + (v->source << 2))) < 4) {
+			dspPagesStale = true;
+			return true;
+		}
 	}
 	for (int n = 0; n < 8; ++n) {
 		const struct DspVoice* v = &dsp.voice[n];

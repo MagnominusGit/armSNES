@@ -1533,6 +1533,11 @@ static u8 jitLines(u32 offset) {
 	return mask == all ? 0xff : (u8) mask;
 }
 
+// An instruction the interpreter runs outside the cache: no block comes next for an exit to chain to.
+static inline void gsuJitPass(void) {
+	jitLastSlot = NULL;
+}
+
 // Runs a block for R15 and the pipeline, if there is one or can be; false if not.
 static bool gsuJitRun(u32 pc, u8 pipe, u64 until) {
 	struct JitSlot* last = jitLastSlot;
@@ -1589,6 +1594,8 @@ static bool gsuJitRun(u32 pc, u8 pipe, u64 until) {
 #else
 #define GSU_JIT 0
 static void gsuJitInvalidate(void) {
+}
+static inline void gsuJitPass(void) {
 }
 static void gsuJitDrop(void) {
 }

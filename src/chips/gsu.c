@@ -731,9 +731,11 @@ static void gsuRunBalanced(void) {
 			CALL(SUB_STEP, 6, 0, 0);
 			continue;
 		}
-		// Fast mode: a recompiled block, when no prefix or written R14 is pending.
-		if (GSU_JIT && systemFast && gsuJitEnabled && !written && !gsu.sreg && !gsu.dreg &&
-		    !(gsu.sfr & (1 << SFR_B | 1 << SFR_ALT1 | 1 << SFR_ALT2))) {
+		// Fast mode: a recompiled block, when no prefix or written R14 is pending and R15 is in the cache.
+		if ((u16) (pc - gsu.cbr) >= 512) {
+			gsuJitPass();
+		} else if (GSU_JIT && systemFast && gsuJitEnabled && !written && !gsu.sreg && !gsu.dreg &&
+		           !(gsu.sfr & (1 << SFR_B | 1 << SFR_ALT1 | 1 << SFR_ALT2))) {
 			gsu.th.clock = clock;
 			gsu.pipeline = pipe;
 			if (gsuJitRun(pc, pipe, until)) {

@@ -1352,8 +1352,9 @@ u8 sa1FastRead(u32 address) {
 	return R.dr;
 }
 
-// Fast mode: the SA-1 run ahead of the S-CPU, which waits in a loop reading the I-RAM bytes watch
-// says, until it writes one of them or a register (which can interrupt the S-CPU): where that was.
+// Fast mode: the SA-1 run ahead of the S-CPU, which waits in a loop reading the bytes watch says
+// (sa1WatchCPU), until it writes one of them or a register (which can interrupt the S-CPU): where that
+// was.
 static struct {
 	bool on;
 	const u32* watch;
@@ -1376,12 +1377,53 @@ u64 sa1RunTo(u64 clock, const u32* watch, u32 count) {
 	return ahead.at;
 }
 
+// A byte of the I-RAM or the BW-RAM, as sa1RunTo watches it: the I-RAM's offset, or the BW-RAM's with
+// the top bit set.
+enum { WATCH_BWRAM = 0x80000000u, WATCH_NONE = ~0u };
+
+static u32 watchBwram(u32 offset) {
+	return cart.ramSize ? WATCH_BWRAM | busMirror(offset & 0xffffff, cart.ramSize) : WATCH_NONE;
+}
+
+// The byte an S-CPU read of address is, if the SA-1 can change it (not while a character conversion
+// makes what BW-RAM reads).
+u32 sa1WatchCPU(u32 address) {
+	if ((address & 0x40f800) == 0x003000) {
+		return address & 0x7ff;
+	}
+	if (sa1.bwramDma) {
+		return WATCH_NONE;
+	}
+	if ((address & 0x40e000) == 0x006000) {
+		return watchBwram(sa1.io.sbm * 0x2000 + (address & 0x1fff));
+	}
+	if ((address & 0xf00000) == 0x400000) {
+		return watchBwram(address);
+	}
+	return WATCH_NONE;
+}
+
 static void aheadWrite(u32 address) {
+	// A register, or a BW-RAM bitmap, stops it at once.
 	bool stop = (address & 0x40fe00) == 0x002200;
+	u32 byte = WATCH_NONE;
 	if ((address & 0x40f800) == 0x000000 || (address & 0x40f800) == 0x003000) {
-		for (u32 n = 0; n < ahead.count; ++n) {
-			stop |= (address & 0x7ff) == ahead.watch[n];
+		byte = address & 0x7ff;
+	} else if ((address & 0x40e000) == 0x006000) {
+		if (sa1.io.sw46) {
+			stop = true;
+		} else {
+			byte = watchBwram((sa1.io.cbm & 0x1f) * 0x2000 + (address & 0x1fff));
 		}
+	} else if ((address & 0xe00000) == 0x400000) {
+		if (address >> 21 & 1) {
+			stop = true;
+		} else {
+			byte = watchBwram(address);
+		}
+	}
+	for (u32 n = 0; n < ahead.count; ++n) {
+		stop |= byte != WATCH_NONE && byte == ahead.watch[n];
 	}
 	if (stop && ahead.at == ~0ull) {
 		ahead.at = sa1.th.clock;

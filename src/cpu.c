@@ -56,9 +56,11 @@ static inline void fastCatchUp(void) {
 static u32 waitFrom;
 // Fast mode looks at taken branches back a little way for loops the CPU waits in.
 static void fastBranch(void);
+static bool fastBranchLong(void);
+// A BRL (0x82) back further can close a loop too: it is rare in loops that do work.
 #define idleBranch() \
 	do { \
-		if (fastNow && R.pc.d <= waitFrom && waitFrom - R.pc.d <= 12) { \
+		if (fastNow && R.pc.d <= waitFrom && (waitFrom - R.pc.d <= 12 || (waitFrom - R.pc.d <= 0x400 && fastBranchLong()))) { \
 			fastBranch(); \
 		} \
 	} while (0)
@@ -652,7 +654,7 @@ static struct {
 	u8 apuSeen[4];
 	u64 apuLast;
 	bool quiet;   // no event in the turn before the one kept, whose DMA or interrupt it would have had
-	u8 sa1Count;  // the SA-1's I-RAM bytes the turn read
+	u8 sa1Count;  // the SA-1's I-RAM and BW-RAM bytes the turn read (sa1WatchCPU)
 	u32 sa1Read[2];
 } wait;
 // A write to the APU's ports the SMP was run past in a skip: reads before it get the ports as they were,
@@ -741,9 +743,9 @@ static __attribute__((noinline)) u8 readSlow(u32 address) {
 			wait.hvbjoy = true;
 		} else if ((address & 0x40ffc0) == 0x2140) {
 			wait.apu = true;
-		} else if (cart.sa1 && (address & 0x40f800) == 0x003000 && wait.sa1Count < 2) {
-			// The SA-1's I-RAM changes only as the SA-1 writes it, which a skip stops at.
-			wait.sa1Read[wait.sa1Count++] = address & 0x7ff;
+		} else if (cart.sa1 && wait.sa1Count < 2 && sa1WatchCPU(address) != ~0u) {
+			// The SA-1's I-RAM and BW-RAM change only as the SA-1 writes them, which a skip stops at.
+			wait.sa1Read[wait.sa1Count++] = sa1WatchCPU(address);
 		} else if (!cart.gsu || (address & 0x40fffe) != 0x3030) {
 			wait.unsafe = true;
 		}
@@ -1683,6 +1685,10 @@ static bool fastVblankLoop(u32 branch) {
 	int op = fastPeek(branch), read = fastPeek(branch - 3);
 	return (op == 0x10 || op == 0x30) && fastPeek(branch + 1) == 0xfb && (read == 0x2c || read == 0xad) && fastPeek(branch - 2) == 0x12 &&
 	       fastPeek(branch - 1) == 0x42;
+}
+
+static bool fastBranchLong(void) {
+	return fastPeek(waitFrom) == 0x82;
 }
 
 static void fastBranch(void) {

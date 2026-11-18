@@ -408,6 +408,8 @@ void cpuPower(bool reset);
 void cpuMap(void);
 // One instruction, an interrupt's entry, or one cycle of a waiting or stopped CPU.
 void cpuMain(void);
+// Fast mode: cpuMain until the frame ends.
+void cpuRunFast(void);
 
 void counterReset(struct Counter* counter);
 static inline u32 counterVcounterAt(const struct Counter* counter, u32 offset) {

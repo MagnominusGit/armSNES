@@ -308,6 +308,14 @@ void busCheat(u32 page) {
 	hooked[hookedCount].was = pages[page];
 	busDirectPages[page] = NULL;
 	busFastPages[page] = NULL;
+	// Fast mode reads the low RAM's mirrors through their own pages: they go to the cheats too.
+	if ((page & 0xffe0) == 0x7e00) {
+		for (u32 bank = 0; bank < 0x100; ++bank) {
+			if (!(bank & 0x40)) {
+				busFastPages[bank << 8 | (page & 0x1f)] = NULL;
+			}
+		}
+	}
 	++hookedCount;
 	readers[CHEAT_HANDLER] = readCheat;
 	pages[page] = (struct Page) { .id = CHEAT_HANDLER, .mixed = false, .base = page << 8 };
@@ -319,6 +327,14 @@ void busCheatsOff(void) {
 		pages[hooked[hookedCount].page] = hooked[hookedCount].was;
 		busDirectPages[hooked[hookedCount].page] = directFor(&hooked[hookedCount].was);
 		busFastPages[hooked[hookedCount].page] = fastFor(hooked[hookedCount].page, &hooked[hookedCount].was);
+		if ((hooked[hookedCount].page & 0xffe0) == 0x7e00) {
+			for (u32 bank = 0; bank < 0x100; ++bank) {
+				if (!(bank & 0x40)) {
+					u32 mirror = bank << 8 | (hooked[hookedCount].page & 0x1f);
+					busFastPages[mirror] = fastFor(mirror, &pages[mirror]);
+				}
+			}
+		}
 	}
 }
 

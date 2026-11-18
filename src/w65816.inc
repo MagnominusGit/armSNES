@@ -106,7 +106,7 @@ static inline void idle6(u16 address) {
 	}
 }
 
-static inline u8 fetch(void) {
+static inline __attribute__((always_inline)) u8 fetch(void) {
 	u32 address = PC.b << 16 | PC.w;
 	PC.w++;
 	return read(address);

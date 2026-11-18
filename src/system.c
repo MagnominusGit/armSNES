@@ -247,8 +247,12 @@ void systemRunFrame(void) {
 	// The MSU-1 looks at the DSP as it plays.
 	smpThreaded = smpThreadable = systemFast && systemSoundThread && !cart.msu1 && smpCanThread();
 	sys.frameEvent = false;
-	while (!sys.frameEvent) {
-		cpuMain();
+	if (systemFast && !inputGuns) {
+		cpuRunFast();
+	} else {
+		while (!sys.frameEvent) {
+			cpuMain();
+		}
 	}
 	smpDrain();
 }

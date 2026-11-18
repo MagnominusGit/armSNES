@@ -16,13 +16,42 @@ struct Cpu cpu;
 
 static u8 read(u32 address);
 static void write(u32 address, u8 data);
-static void idle(void);
+static inline void idle(void);
 static inline void lastCycle(void);
 static inline void step(u32 clocks);
 static inline void dmaEdge(void);
 
 // Fast mode's accesses, unless a gun is plugged in: worked out once an instruction.
 static bool fastNow;
+// Balanced and Fast: where on this line the next of the counters' events is (0: to be worked out).
+static u32 fastNext;
+static void fastCatch(void);
+static void fastWaitChoose(void);
+
+// Fast mode: the clocks the accesses to plain memory took, which the counters and the clock get when
+// something looks at them (fastSettle). What the counters bring about is seen to between
+// instructions, or before an access that isn't to plain memory (fastCatchUp).
+static u32 fastPending;
+
+static inline void fastSettle(void) {
+	u32 clocks = fastPending;
+	if (clocks) {
+		fastPending = 0;
+		cpu.counterCpu += clocks;
+		cpu.counter.hcounter += clocks;
+		cpu.th.clock += cpu.th.scalar * clocks;
+	}
+}
+
+static inline void fastCatchUp(void) {
+	if (!fastNow) {
+		return;
+	}
+	fastSettle();
+	if (cpu.counter.hcounter >= fastNext) {
+		fastCatch();
+	}
+}
 // Where the instruction being run started.
 static u32 waitFrom;
 // Fast mode looks at taken branches back a little way for loops the CPU waits in.
@@ -232,6 +261,7 @@ static inline bool irqTest(void) {
 // Interrupts are looked for a cycle before an instruction ends, as the 65816's pipeline does. After
 // DMA or a write to $4200 they have to wait: that is irqLock.
 static void lastCycleLook(void) {
+	fastCatchUp();
 	// The IRQ is a level: Exact's polls find it again every few clocks while it stays up, so one
 	// looked for while I was set isn't lost. Balanced and Fast poll only here.
 	if (systemBalanced && cpu.status.irqLine && cpu.io.irqEnable) {
@@ -368,9 +398,6 @@ static bool hdmaActive(void);
 // --- Balanced mode: the clock moves a bus access at a time, and what the counters bring about (the line's
 // end, the interrupts, HDMA, the DRAM refresh, the automatic joypad polling) is looked at only when
 // the access passed the place on the line where the next of them happens. ---
-
-// Where on this line the next of them is (0: to be worked out).
-static u32 fastNext;
 
 // The IRQ's level where the counters are. With an H position the level stands for "taken on this
 // line"; the line's end clears it.
@@ -569,10 +596,10 @@ static void stepExact(u32 clocks) {
 
 // Memory
 
-static inline u32 waitFor(u32 address) {
+static inline u32 waitForSpeed(u32 address, u32 romSpeed) {
 	// 00-3f,80-bf:8000-ffff; 40-7f,c0-ff:0000-ffff
 	if (address & 0x408000) {
-		return address & 0x800000 ? cpu.io.romSpeed : 8;
+		return address & 0x800000 ? romSpeed : 8;
 	}
 	// 00-3f,80-bf:0000-1fff,6000-7fff
 	if ((address + 0x6000) & 0x4000) {
@@ -584,6 +611,25 @@ static inline u32 waitFor(u32 address) {
 	}
 	// 00-3f,80-bf:4000-41ff
 	return 12;
+}
+
+static inline u32 waitFor(u32 address) {
+	return waitForSpeed(address, cpu.io.romSpeed);
+}
+
+// Fast mode: each page's access time, for either ROM speed, and the one there is now.
+static u8 fastWaits[2][0x10000];
+static const u8* fastWait = fastWaits[1];
+
+static void fastWaitsInit(void) {
+	for (u32 page = 0; page < 0x10000; ++page) {
+		fastWaits[0][page] = (u8) waitForSpeed(page << 8, 6);
+		fastWaits[1][page] = (u8) waitForSpeed(page << 8, 8);
+	}
+}
+
+static void fastWaitChoose(void) {
+	fastWait = fastWaits[cpu.io.romSpeed == 6 ? 0 : 1];
 }
 
 // Fast mode: the S-CPU waiting in a loop. A turn of it that writes nothing and reads only memory
@@ -625,6 +671,7 @@ void cpuFrameStart(void) {
 	wait.valid = false;
 	wait.catches = fastCatches;
 	fastPlan();
+	fastWaitChoose();
 	wait.unsafe = false;
 	wait.hvbjoy = false;
 	wait.apu = false;
@@ -634,9 +681,15 @@ void cpuFrameStart(void) {
 	smpPortsSettle();
 }
 
-// Fast mode: an access only moves the clock on. The IRQ lock, the DMA and the ALU are seen to between
-// instructions (fastBetween), as snes_faust does.
+// Fast mode: an access to plain memory only moves the clock on. The IRQ lock, the DMA and the ALU are
+// seen to between instructions (fastBetween), as snes_faust does.
 static inline __attribute__((always_inline)) void stepFast(u32 clocks) {
+	fastPending += clocks;
+}
+
+// One that isn't brings everything up to where it ends.
+static inline void stepFastNow(u32 clocks) {
+	fastCatchUp();
 	cpu.counterCpu += clocks;
 	cpu.counter.hcounter += clocks;
 	threadStep(&cpu.th, clocks);
@@ -649,7 +702,7 @@ static inline bool fastAccess(void) {
 	return fastNow;
 }
 
-static void idle(void) {
+static inline __attribute__((always_inline)) void idle(void) {
 	if (fastAccess()) {
 		stepFast(6);
 		return;
@@ -666,18 +719,18 @@ static u8 readSlow(u32 address);
 static inline __attribute__((always_inline)) u8 read(u32 address) {
 	address &= 0xffffff;
 	if (fastAccess()) {
-		u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
-		const u8* memory = busFastPages[at >> 8];
+		const u8* memory = busFastPages[address >> 8];
 		if (memory) {
-			stepFast(waitFor(address));
+			stepFast(fastWait[address >> 8]);
 			R.mar = address;
-			return R.mdr = memory[at & 0xff];
+			return R.mdr = memory[address & 0xff];
 		}
 	}
 	return readSlow(address);
 }
 
 static __attribute__((noinline)) u8 readSlow(u32 address) {
+	fastCatchUp();
 	if (fastAccess()) {
 		// The GSU's status changes only as the GSU stops, which a skip stops at; $4212 and the APU's
 		// ports only where fastSkipTurns keeps them from.
@@ -727,7 +780,7 @@ static void write(u32 address, u8 data) {
 			cpu.wram[at & 0x1ffff] = R.mdr = data;
 			return;
 		}
-		stepFast(waitFor(address));
+		stepFastNow(waitFor(address));
 		R.mar = address;
 		busWrite(address, R.mdr = data);
 		// A multiplication or division has its result at once.
@@ -1351,6 +1404,7 @@ static void writeCPU(u32 address, u8 data) {
 		return;
 	case 0x420d:
 		cpu.io.romSpeed = data & 1 ? 6 : 8;
+		fastWaitChoose();
 		return;
 	}
 }
@@ -1511,6 +1565,7 @@ static bool hdmaKeepsMemory(void) {
 // to the next one are taken with the one it falls in, the event seen to, and so on until one can end the
 // wait or the GSU stops. So does one only $4212's V blank bit decides (vblank), up to where that changes.
 static void fastSkipTurns(u64 turn, bool hvbjoy, bool apu, u64 apuBack, bool vblank) {
+	fastCatchUp();
 	if (!fastSkipOnce(turn, hvbjoy, apu, apuBack) || hvbjoy || apu) {
 		return;
 	}
@@ -1561,6 +1616,7 @@ static bool fastVblankLoop(u32 branch) {
 }
 
 static void fastBranch(void) {
+	fastCatchUp();
 	u32 pc = R.pc.d;
 	// A short jump back. A turn that wrote, or read what can change, starts over; after a clean one
 	// the registers are kept, and the same turn again with the same registers and no event inside
@@ -1594,6 +1650,7 @@ static void fastBranch(void) {
 static inline __attribute__((always_inline)) void fastBetween(void) {
 	cpu.status.irqLock = 0;
 	if (cpu.status.dmaActive || cpu.status.dmaPending || cpu.status.hdmaPending) {
+		fastSettle();
 		cpu.status.clockCount = 8;
 		dmaEdgeRun();
 		dmaEdge();
@@ -1601,9 +1658,36 @@ static inline __attribute__((always_inline)) void fastBetween(void) {
 	waitFrom = R.pc.d;
 }
 
+// Fast mode: instructions one after another as cpuMain runs them, looking only at what can change how
+// the next one starts (the counters' next event, an interrupt, DMA or HDMA, WAI or STP), which is
+// cpuMain's to see to.
+_Static_assert(offsetof(struct Cpu, status.hdmaPending) - offsetof(struct Cpu, status.interruptPending) == 3, "flags apart");
+_Static_assert(offsetof(struct W65816, stp) - offsetof(struct W65816, wai) == 1, "flags apart");
+
+void cpuRunFast(void) {
+	while (!sys.frameEvent) {
+		u32 starting;
+		u16 halted;
+		memcpy(&starting, &cpu.status.interruptPending, sizeof(starting));
+		memcpy(&halted, &R.wai, sizeof(halted));
+		if (starting || halted || cpu.counter.hcounter + fastPending >= fastNext) {
+			cpuMain();
+			continue;
+		}
+		fastNow = true;
+		cpu.status.irqLock = 0;
+		waitFrom = R.pc.d;
+		instruction();
+	}
+	fastSettle();
+}
+
 void cpuMain(void) {
 	fastNow = systemFast && !inputGuns && !cpu.status.dmaPending;
 	if (fastAccess()) {
+		if (cpu.counter.hcounter + fastPending >= fastNext) {
+			fastCatchUp();
+		}
 		fastBetween();
 	}
 	// A waiting CPU idles until an interrupt is looked for and found, then idles once more. A stopped
@@ -1647,6 +1731,7 @@ void cpuMain(void) {
 
 	if (cpu.status.resetPending) {
 		cpu.status.resetPending = 0;
+		fastSettle();
 		step(132);
 		R.vector = 0xfffc;
 		interrupt();
@@ -1657,6 +1742,7 @@ void cpuMain(void) {
 }
 
 void cpuPower(bool reset) {
+	fastWaitsInit();
 	w65816Power();
 	threadFrequency(&cpu.th, sys.cpuFrequency);
 	counterReset(&cpu.counter);
@@ -1696,6 +1782,7 @@ void cpuPower(bool reset) {
 	cpu.io.htime = (0x1ff + 1) << 2;
 	cpu.io.vtime = 0x1ff;
 	cpu.io.romSpeed = 8;
+	fastWaitChoose();
 	cpu.io.version = 2;
 
 	memset(&cpu.alu, 0, sizeof(cpu.alu));

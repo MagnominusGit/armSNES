@@ -623,6 +623,8 @@ static struct {
 
 void cpuFrameStart(void) {
 	wait.valid = false;
+	wait.catches = fastCatches;
+	fastPlan();
 	wait.unsafe = false;
 	wait.hvbjoy = false;
 	wait.apu = false;
@@ -1418,23 +1420,30 @@ void cpuMap(void) {
 	busMap(readDMA, writeDMA, "00-3f,80-bf:4300-437f", 0, 0, 0);
 }
 
-// The turns of a loop found waiting, taken in one.
-static void fastSkipTurns(bool hvbjoy, bool apu, u64 apuBack) {
-	u64 turn = cpu.th.clock - wait.clock;
+static void fastTakeTurns(u64 turns, u64 turn) {
+	u32 clocks = (u32) (turns * turn / cpu.th.scalar);
+	cpu.counterCpu += clocks;
+	cpu.counter.hcounter += clocks;
+	cpu.th.clock += turns * turn;
+}
+
+// The turns of a loop found waiting, taken in one. True when they end at the counters' next event.
+static bool fastSkipOnce(u64 turn, bool hvbjoy, bool apu, u64 apuBack) {
 	u32 h = cpu.counter.hcounter, limitH = fastNext;
 	if (!turn || limitH <= h) {
-		return;
+		return false;
 	}
+	bool toEvent = true;
 	// $4212 read the same in the turn kept and the ones taken: its H blank bit changes at 3 and 1096,
 	// the V blank bit at the line's end, and the joypad bit as a read ends.
 	if (hvbjoy) {
 		u32 from = h - (u32) (turn / cpu.th.scalar);
 		if (from > h || from < 3 || (cpu.io.autoJoypadPoll && (cpu.status.autoJoypadCounter < 33 || joypadBusyLines()))) {
-			return;
+			return false;
 		}
 		if (from < 1096) {
 			if (h >= 1096) {
-				return;
+				return false;
 			}
 			limitH = limitH < 1096 ? limitH : 1096;
 		}
@@ -1445,11 +1454,12 @@ static void fastSkipTurns(bool hvbjoy, bool apu, u64 apuBack) {
 		u64 stopped = gsuRunTo(cpu.th.clock + room);
 		if (stopped != ~0ull) {
 			room = stopped > cpu.th.clock ? stopped - cpu.th.clock : 0;
+			toEvent = false;
 		}
 	}
 	// Not worth it for less than two turns.
 	if (room < 2 * turn) {
-		return;
+		return false;
 	}
 	// Whole turns that end before the limit: the turn the limit falls in is run, so it sees its event.
 	u64 turns = (room - 1) / turn;
@@ -1462,11 +1472,11 @@ static void fastSkipTurns(bool hvbjoy, bool apu, u64 apuBack) {
 			// now, or will once the S-CPU's clock reaches the write. With no write in the turn, the SMP
 			// has nothing to do since its last read.
 			if (smpPortsPending(cpu.th.clock)) {
-				return;
+				return false;
 			}
 			for (u32 n = 0; n < 4; ++n) {
 				if (wait.apuRead >> n & 1 && wait.apuSeen[n] != smp.toCpu[n]) {
-					return;
+					return false;
 				}
 			}
 			apuHeld.on = smpRunToPortWrite(cpu.th.clock + turns * turn - apuBack, &apuHeld.write);
@@ -1477,15 +1487,59 @@ static void fastSkipTurns(bool hvbjoy, bool apu, u64 apuBack) {
 				room = at > cpu.th.clock ? at - cpu.th.clock : 0;
 			}
 			if (room < 2 * turn) {
-				return;
+				return false;
 			}
 			turns = (room - 1) / turn;
 		}
 	}
-	u32 clocks = (u32) (turns * turn / cpu.th.scalar);
-	cpu.counterCpu += clocks;
-	cpu.counter.hcounter += clocks;
-	cpu.th.clock += turns * turn;
+	fastTakeTurns(turns, turn);
+	return toEvent;
+}
+
+// HDMA that writes neither WRAM nor A-bus memory leaves what the loop reads as it was.
+static bool hdmaKeepsMemory(void) {
+	for (int n = 0; n < 8; ++n) {
+		struct DmaChannel* channel = &cpu.channels[n];
+		if (channel->hdmaEnable && (channel->direction || (u8) (channel->targetAddress - 0x7d) <= 6)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// A loop that reads neither $4212 nor the APU's ports reads the same past the counters' events: the turns
+// to the next one are taken with the one it falls in, the event seen to, and so on until one can end the
+// wait or the GSU stops.
+static void fastSkipTurns(bool hvbjoy, bool apu, u64 apuBack) {
+	u64 turn = cpu.th.clock - wait.clock;
+	if (!fastSkipOnce(turn, hvbjoy, apu, apuBack) || hvbjoy || apu) {
+		return;
+	}
+	u32 clocks = (u32) (turn / cpu.th.scalar);
+	for (;;) {
+		u32 h = cpu.counter.hcounter;
+		u64 turns = fastNext > h ? (fastNext - h + clocks - 1) / clocks : 1;
+		if (cart.gsu) {
+			u64 stopped = gsuRunTo(cpu.th.clock + turns * turn);
+			if (stopped != ~0ull) {
+				if (stopped > cpu.th.clock) {
+					fastTakeTurns((stopped - cpu.th.clock - 1) / turn, turn);
+				}
+				return;
+			}
+		}
+		fastTakeTurns(turns, turn);
+		fastCatch();
+		if (cpu.status.hdmaPending && !cpu.status.dmaPending && hdmaKeepsMemory()) {
+			cpu.status.clockCount = 8;
+			dmaEdgeRun();
+			dmaEdge();
+		}
+		if (sys.frameEvent || cpu.status.irqLine || cpu.status.nmiTransition || cpu.status.irqTransition || R.irq ||
+		    cpu.status.dmaPending || cpu.status.hdmaPending || cpu.status.dmaActive) {
+			return;
+		}
+	}
 }
 
 static void fastBranch(void) {

@@ -74,6 +74,8 @@ enum {
 // again. This is only kept within one run, so it is no part of a state.
 static struct {
 	bool valid;
+	// A turn came round the same: the loop is one the program waits in.
+	bool waiting;
 	u32 last;
 	u32 pc;
 	u64 clock;
@@ -362,7 +364,7 @@ void sa1FrameStart(void) {
 // Fast mode: a read by the S-CPU needn't bring an SA-1 waiting in a loop up to it, while its timer
 // can't interrupt it: the loop writes nothing the read could see. It catches up at the next write.
 static void syncForRead(void) {
-	if (systemFast && loop.valid && !sa1.io.hen && !sa1.io.ven) {
+	if (systemFast && loop.valid && loop.waiting && !sa1.io.hen && !sa1.io.ven) {
 		return;
 	}
 	syncFromCpu();
@@ -1333,8 +1335,8 @@ dispatch:
 		}
 		if (PC.d <= loop.last) {
 			// A jump back.
-			if (loop.valid && PC.d == loop.pc && !memcmp(&R, &loop.r, sizeof(R)) && sa1.th.clock > loop.clock &&
-			    sa1.th.clock <= cpu.th.clock) {
+			loop.waiting = loop.valid && PC.d == loop.pc && !memcmp(&R, &loop.r, sizeof(R));
+			if (loop.waiting && sa1.th.clock > loop.clock && sa1.th.clock <= cpu.th.clock) {
 				// The same again: as many whole turns of the loop as end before the S-CPU's clock
 				// are taken in one.
 				u64 turn = sa1.th.clock - loop.clock;

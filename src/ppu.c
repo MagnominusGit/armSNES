@@ -1796,6 +1796,31 @@ void ppuMap(void) {
 	busMap(readIO, writeIO, "00-3f,80-bf:2100-213f", 0, 0, 0);
 }
 
+// Fast mode's DMA to VRAM. Until: the PPU brought up as a write to $2118 now would bring it, the clock
+// the CPU's can reach before it has more to do; 0 if a write would do more than land in VRAM (in the
+// picture with the display on).
+u64 ppuVramDmaUntil(void) {
+	syncFromCpu();
+	if (!ppu.io.displayDisable && VCOUNTER < ppu.state.vdisp) {
+		return 0;
+	}
+	return ppu.th.clock;
+}
+
+// Count bytes, each to $2118 or $2119 (high), as the writes would land them; the render thread takes
+// all of VRAM again before its next line, rather than each word.
+void ppuVramDma(const u8* data, const u8* high, u32 count) {
+	for (u32 n = 0; n < count; ++n) {
+		u16* word = vramAt(addressVRAM());
+		*word = high[n] ? (*word & 0x00ff) | data[n] << 8 : (*word & 0xff00) | data[n];
+		++vramWrites;
+		if (ppu.io.vramIncrementMode == high[n]) {
+			ppu.io.vramAddress += ppu.io.vramIncrementSize;
+		}
+	}
+	fastStale = true;
+}
+
 // The line
 
 // What a line starts with, at H = 0.

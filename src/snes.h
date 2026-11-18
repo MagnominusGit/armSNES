@@ -843,6 +843,9 @@ extern u32 ppuCanvas[CANVAS_WIDTH * CANVAS_HEIGHT];
 void ppuPower(bool reset);
 void ppuLoaded(void);
 void ppuMap(void);
+// Fast mode's DMA to VRAM: how far it can go in one pass, and the pass (ppu.c).
+u64 ppuVramDmaUntil(void);
+void ppuVramDma(const u8* data, const u8* high, u32 count);
 // Runs the PPU until its clock is past the CPU's.
 void ppuRun(void);
 void ppuLatchCounters(void);

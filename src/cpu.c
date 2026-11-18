@@ -820,7 +820,7 @@ static void writeB(u8 address, u8 data, bool valid) {
 	}
 }
 
-static void transfer(struct DmaChannel* channel, u32 addressA, u8 index) {
+static inline u8 transferAddressB(const struct DmaChannel* channel, u8 index) {
 	u8 addressB = channel->targetAddress;
 	switch (channel->transferMode) {
 	case 1:
@@ -835,6 +835,11 @@ static void transfer(struct DmaChannel* channel, u32 addressA, u8 index) {
 		addressB += index;
 		break;
 	}
+	return addressB;
+}
+
+static void transfer(struct DmaChannel* channel, u32 addressA, u8 index) {
+	u8 addressB = transferAddressB(channel, index);
 
 	// WRAM to WRAM does nothing.
 	bool valid = addressB != 0x80 || ((addressA & 0xfe0000) != 0x7e0000 && (addressA & 0x40e000) != 0x0000);
@@ -849,6 +854,56 @@ static void transfer(struct DmaChannel* channel, u32 addressA, u8 index) {
 	}
 }
 
+// Fast mode (whose DMA runs on the plain path, fastNow off): bytes to $2118/$2119 from plain memory or
+// the Super FX's RAM, while neither the CPU nor the PPU has anything to do before the last of them is
+// written, go in one pass. Each takes its eight clocks as transfer() would; with nothing pending, the
+// dmaEdge after each does nothing. Whether the channel is done.
+static bool dmaToVram(struct DmaChannel* channel, u8* index) {
+	enum { MOST = 512 };
+	u8 data[MOST], high[MOST];
+	u8 first = transferAddressB(channel, *index & 3);
+	if (first != 0x18 && first != 0x19) {
+		return false;
+	}
+	u64 until = ppuVramDmaUntil();
+	u32 remaining = channel->transferSize ? channel->transferSize : 0x10000;
+	u64 clocks = cpu.th.scalar * 8;
+	u16 source = channel->sourceAddress;
+	u32 count = 0;
+	u8 mdr = R.mdr;
+	u32 address = 0;
+	while (until && count < MOST && count < remaining && cpu.counter.hcounter + 8 * (count + 1) < fastNext &&
+	       cpu.th.clock + clocks * (count + 1) <= until) {
+		u8 port = transferAddressB(channel, (*index + count) & 3);
+		address = channel->sourceBank << 16 | source;
+		u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
+		if ((port != 0x18 && port != 0x19) || (!busDirectPages[at >> 8] && !(cart.gsu && (address & 0xfe0000) == 0x700000))) {
+			break;
+		}
+		data[count] = mdr = validA(address) ? busRead(address, mdr) : 0x00;
+		high[count] = port & 1;
+		if (!channel->fixedTransfer) {
+			source += channel->reverseTransfer ? -1 : 1;
+		}
+		count++;
+	}
+	if (!count) {
+		return false;
+	}
+	R.mar = address;
+	R.mdr = mdr;
+	cpu.status.irqLock = 0;
+	cpu.counterDma += 8 * count;
+	cpu.counterCpu += 8 * count;
+	cpu.counter.hcounter += 8 * count;
+	cpu.th.clock += clocks * count;
+	ppuVramDma(data, high, count);
+	channel->sourceAddress = source;
+	*index += count;
+	channel->transferSize -= count;
+	return count == remaining;
+}
+
 static void channelDmaRun(struct DmaChannel* channel) {
 	if (!channel->dmaEnable) {
 		return;
@@ -859,6 +914,9 @@ static void channelDmaRun(struct DmaChannel* channel) {
 
 	u8 index = 0;
 	do {
+		if (systemFast && !inputGuns && channel->direction == 0 && dmaToVram(channel, &index)) {
+			break;
+		}
 		transfer(channel, channel->sourceBank << 16 | channel->sourceAddress, index++ & 3);
 		if (!channel->fixedTransfer) {
 			if (!channel->reverseTransfer) {

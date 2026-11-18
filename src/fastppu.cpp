@@ -30,6 +30,11 @@
 #include <string.h>
 #include <unistd.h>
 #include <utility>
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#elif defined(__x86_64__)
+#include <immintrin.h>
+#endif
 
 typedef uint8_t uint8;
 typedef uint16_t uint16;
@@ -54,9 +59,30 @@ namespace R1 {
 #include "fastppu_render.inc"
 }
 
+// armSNES: on x86-64 with GCC, the same again for CPUs with AVX2, chosen as the renderer starts.
+#if defined(__x86_64__) && !defined(__clang__)
+#pragma GCC push_options
+#pragma GCC target("avx2")
+#define FASTPPU_AVX2 1
+namespace A0 {
+#include "fastppu_render.inc"
+}
+namespace A1 {
+#include "fastppu_render.inc"
+}
+#undef FASTPPU_AVX2
+#pragma GCC pop_options
+
+static void (*const LineFor[2][2])(const FastPpuLine*) = { { R0::Line, R1::Line }, { A0::Line, A1::Line } };
+static const bool Avx2 = (__builtin_cpu_init(), __builtin_cpu_supports("avx2"));
+#else
+static void (*const LineFor[2][2])(const FastPpuLine*) = { { R0::Line, R1::Line }, { R0::Line, R1::Line } };
+static const bool Avx2 = false;
+#endif
+
 extern "C" void fastPpuLine(const FastPpuLine* l)
 {
- R0::Line(l);
+ LineFor[Avx2][0](l);
 }
 
 // armSNES: the renderer on threads of their own, fed in order through a ring of commands. Each thread
@@ -110,10 +136,7 @@ void* RenderThread(void* arg)
      FastPpuLine* l = &Pool[slot];
      l->vram = VramCopy[id];
      l->cgram = CgramCopy[id];
-     if(id)
-      R1::Line(l);
-     else
-      R0::Line(l);
+     LineFor[Avx2][id](l);
      if(Sink && l->out)
       Sink(l->out);
     }

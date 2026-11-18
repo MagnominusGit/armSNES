@@ -162,6 +162,80 @@ static INLINE unsigned DirColCvt(unsigned inpix, unsigned palbase = 0)
  return ret;
 }
 
+#undef FASTPPU_SIMD_TILE
+#if defined(__aarch64__) || defined(FASTPPU_AVX2)
+#define FASTPPU_SIMD_TILE 1
+// armSNES: a 2 or 4 bpp tile's 8 pixels at once, as DrawBG's loop makes them: the color from the
+// palette, the priority bits where the pixel isn't 0. bpa holds bitplanes 0-1, bpb 2-3.
+template<unsigned bpp>
+static INLINE void DrawTile(uint32* MDFN_RESTRICT target, uint32 bpa, uint32 bpb, const uint16* cgr, uint32 prio, bool h_flip)
+{
+ static const uint8 bits[2][8] = { { 0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01 }, { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 } };
+#if defined(__aarch64__)
+ const uint8x8_t m = vld1_u8(bits[h_flip]);
+ uint8x8_t pix = vand_u8(vtst_u8(vdup_n_u8((uint8)bpa), m), vdup_n_u8(1));
+ pix = vorr_u8(pix, vand_u8(vtst_u8(vdup_n_u8((uint8)(bpa >> 8)), m), vdup_n_u8(2)));
+ if(bpp == 4)
+ {
+  pix = vorr_u8(pix, vand_u8(vtst_u8(vdup_n_u8((uint8)bpb), m), vdup_n_u8(4)));
+  pix = vorr_u8(pix, vand_u8(vtst_u8(vdup_n_u8((uint8)(bpb >> 8)), m), vdup_n_u8(8)));
+ }
+ const uint8x16x2_t pal = vld2q_u8((const uint8*)cgr);
+ const uint8x8_t lo = vqtbl1_u8(pal.val[0], pix);
+ const uint8x8_t hi = vqtbl1_u8(pal.val[1], pix);
+ const uint16x8_t color = vreinterpretq_u16_u8(vcombine_u8(vzip1_u8(lo, hi), vzip2_u8(lo, hi)));
+ const uint16x8_t shown = vreinterpretq_u16_s16(vmovl_s8(vreinterpret_s8_u8(vtst_u8(pix, pix))));
+ const uint16x8_t pr = vandq_u16(shown, vdupq_n_u16((uint16)prio));
+ vst1q_u32(target + 0, vreinterpretq_u32_u16(vzip1q_u16(pr, color)));
+ vst1q_u32(target + 4, vreinterpretq_u32_u16(vzip2q_u16(pr, color)));
+#else
+ const __m128i m = _mm_loadl_epi64((const __m128i*)bits[h_flip]);
+ const auto plane = [&](uint32 b, char value) {
+  return _mm_and_si128(_mm_cmpeq_epi8(_mm_and_si128(_mm_set1_epi8((char)b), m), m), _mm_set1_epi8(value));
+ };
+ __m128i pix = _mm_or_si128(plane(bpa, 1), plane(bpa >> 8, 2));
+ if(bpp == 4)
+  pix = _mm_or_si128(pix, _mm_or_si128(plane(bpb, 4), plane(bpb >> 8, 8)));
+ const __m128i split = _mm_setr_epi8(0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11, 13, 15);
+ const __m128i p0 = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i*)cgr), split);
+ const __m128i p1 = bpp == 4 ? _mm_shuffle_epi8(_mm_loadu_si128((const __m128i*)(cgr + 8)), split) : p0;
+ const __m128i lo = _mm_shuffle_epi8(_mm_unpacklo_epi64(p0, p1), pix);
+ const __m128i hi = _mm_shuffle_epi8(_mm_unpackhi_epi64(p0, p1), pix);
+ const __m128i color = _mm_unpacklo_epi8(lo, hi);
+ const __m128i blank = _mm_cmpeq_epi8(pix, _mm_setzero_si128());
+ const __m128i pr = _mm_andnot_si128(_mm_unpacklo_epi8(blank, blank), _mm_set1_epi16((short)prio));
+ _mm_storeu_si128((__m128i*)(target + 0), _mm_unpacklo_epi16(pr, color));
+ _mm_storeu_si128((__m128i*)(target + 4), _mm_unpackhi_epi16(pr, color));
+#endif
+}
+
+// armSNES: a sprite tile's 8 pixels (bitplanes 0-3 a byte each in data), as DrawSprites's loop draws
+// them: only where the pixel isn't 0, over what is there.
+static INLINE void DrawSpriteTile(uint32* MDFN_RESTRICT target, uint32 data, const uint16* cgr, uint32 prio, bool h_flip)
+{
+#if defined(__aarch64__)
+ alignas(16) uint32 drawn[8];
+ DrawTile<4>(drawn, data & 0xFFFF, data >> 16, cgr, prio, h_flip);
+ for(unsigned half = 0; half < 2; half++)
+ {
+  const uint32x4_t d = vld1q_u32(drawn + half * 4);
+  const uint32x4_t shown = vtstq_u32(d, vdupq_n_u32(0xFFFF));
+  vst1q_u32(target + half * 4, vbslq_u32(shown, d, vld1q_u32(target + half * 4)));
+ }
+#else
+ alignas(16) uint32 drawn[8];
+ DrawTile<4>(drawn, data & 0xFFFF, data >> 16, cgr, prio, h_flip);
+ for(unsigned half = 0; half < 2; half++)
+ {
+  const __m128i d = _mm_load_si128((const __m128i*)(drawn + half * 4));
+  const __m128i blank = _mm_cmpeq_epi32(_mm_and_si128(d, _mm_set1_epi32(0xFFFF)), _mm_setzero_si128());
+  const __m128i old = _mm_loadu_si128((const __m128i*)(target + half * 4));
+  _mm_storeu_si128((__m128i*)(target + half * 4), _mm_or_si128(_mm_and_si128(blank, old), _mm_andnot_si128(blank, d)));
+ }
+#endif
+}
+#endif
+
 template<bool size16, unsigned bpp, bool palbase_n = false, bool opt = false, bool hires = false, bool dircolor = false>
 static MDFN_HOT MDFN_FASTCALL void DrawBG(const unsigned n, const unsigned y, uint32 prio_or)
 {
@@ -258,6 +332,11 @@ static MDFN_HOT MDFN_FASTCALL void DrawBG(const unsigned n, const unsigned y, ui
   const uint32* subtarg_bound = target + (h_flip ? 8 : -1);
   uint32* subtarg = target + (h_flip ? 0 : 7);
 
+#ifdef FASTPPU_SIMD_TILE
+  if(bpp == 2 || bpp == 4)
+   DrawTile<bpp>(target, vchr[0], bpp == 4 ? vchr[8] : 0, cgr, eff_prio_or, h_flip);
+  else
+#endif
   if(bpp == 2)
   {
    uint32 tmp[4] =
@@ -1163,6 +1242,10 @@ static INLINE void DrawSprites(const FastPpuLine* l)
   uint32* tb = PPU.objbuf + 8 + t->x;
   const uint32 prio_or = ((t->priority + 1) * 0x3030 | ((t->palette & 0x40) >> 6) | 2) & prio_or_mask;
 
+#ifdef FASTPPU_SIMD_TILE
+  DrawSpriteTile(tb, t->data, CGRAM + (uint8)t->palette, prio_or, t->hflip);
+  continue;
+#endif
   for(unsigned px = 0; px < 8; px++)
   {
    const unsigned shift = t->hflip ? px : 7 - px;

@@ -14,14 +14,13 @@ static inline u8 romRead(u32 address) {
 	return cart.rom[busMirror(address & 0xffffff, cart.romSize)];
 }
 
+static u32 mmcAddress(u32 address);
+static const u8* romPageCPU(u32 target);
+static void romPagesCPU(void);
+static void armedPagesUpdate(void);
+
 static u8 mmcRead(u32 address) {
-	u32 low = address & 0xfffff;
-	switch (address >> 20 & 3) {
-	case 0: return romRead((sdd1.r4804 & 15) << 20 | low);
-	case 1: return romRead((sdd1.r4805 & 15) << 20 | low);
-	case 2: return romRead((sdd1.r4806 & 15) << 20 | low);
-	default: return romRead((sdd1.r4807 & 15) << 20 | low);
-	}
+	return romRead(mmcAddress(address));
 }
 
 // Input manager
@@ -239,12 +238,27 @@ u8 sdd1ReadIO(u32 address, u8 data) {
 void sdd1WriteIO(u32 address, u8 data) {
 	address = 0x4800 | (address & 15);
 	switch (address) {
-	case 0x4800: sdd1.r4800 = data; break;
-	case 0x4801: sdd1.r4801 = data; break;
-	case 0x4804: sdd1.r4804 = data & 0x8f; break;
-	case 0x4805: sdd1.r4805 = data & 0x8f; break;
-	case 0x4806: sdd1.r4806 = data & 0x8f; break;
-	case 0x4807: sdd1.r4807 = data & 0x8f; break;
+	case 0x4800: sdd1.r4800 = data; armedPagesUpdate(); return;
+	case 0x4801: sdd1.r4801 = data; armedPagesUpdate(); return;
+	case 0x4804:
+	case 0x4805:
+	case 0x4806:
+	case 0x4807: {
+		u32 n = address - 0x4804;
+		u8* bank = n == 0 ? &sdd1.r4804 : n == 1 ? &sdd1.r4805 : n == 2 ? &sdd1.r4806 : &sdd1.r4807;
+		u8 was = *bank;
+		*bank = data & 0x8f;
+		// Fast mode: the pages the bank's megabyte of c0-ff is, and for $4805 and $4807's bit 7 those of
+		// 20-3f or a0-bf.
+		if ((was ^ *bank) & 15) {
+			busFastMapPages(sdd1ReadMCU, romPageCPU, (0xc0 + n * 16) << 8, 16 << 8);
+		}
+		if ((was ^ *bank) & 0x80 && (n & 1)) {
+			busFastMapPages(sdd1ReadMCU, romPageCPU, (n == 1 ? 0x20 : 0xa0) << 8, 32 << 8);
+		}
+		armedPagesUpdate();
+		return;
+	}
 	}
 }
 
@@ -261,6 +275,9 @@ static void dmaWrite(u32 address, u8 data) {
 	case 5: sdd1.dma[channel].size = (sdd1.dma[channel].size & 0xff00) | data; break;
 	case 6: sdd1.dma[channel].size = (sdd1.dma[channel].size & 0x00ff) | data << 8; break;
 	}
+	if ((address & 15) >= 2 && (address & 15) <= 4) {
+		armedPagesUpdate();
+	}
 	cpuWriteDMA(address, data);
 }
 
@@ -269,18 +286,61 @@ void sdd1Map(void) {
 	busMap(dmaRead, dmaWrite, "00-3f,80-bf:4300-437f", 0, 0, 0);
 }
 
+// Where in the ROM a read of 00-3f,80-bf:8000-ffff goes.
+static u32 lowAddress(u32 address) {
+	if (!(address & 0x800000) && (address & 0x200000) && (sdd1.r4805 & 0x80)) {
+		address &= ~0x200000;
+	}
+	if ((address & 0x800000) && (address & 0x200000) && (sdd1.r4807 & 0x80)) {
+		address &= ~0x200000;
+	}
+	return (address >> 16 & 0x3f) << 15 | (address & 0x7fff);
+}
+
+// Where in the ROM a read of c0-ff:0000-ffff goes, through the banks, when nothing is decompressed.
+static u32 mmcAddress(u32 address) {
+	const u8 banks[4] = { sdd1.r4804, sdd1.r4805, sdd1.r4806, sdd1.r4807 };
+	return (u32) (banks[address >> 20 & 3] & 15) << 20 | (address & 0xfffff);
+}
+
+// Fast mode: the S-CPU reads the ROM straight from it, a page at a time, through the banks as they are,
+// but for the pages a channel ready to decompress reads from.
+static const u8* romPageCPU(u32 target) {
+	target &= 0xffffff;
+	if (!(target & 0x400000)) {
+		return &cart.rom[busMirror(lowAddress(target), cart.romSize)];
+	}
+	return &cart.rom[busMirror(mmcAddress(target), cart.romSize)];
+}
+
+static u32 armedPages[8];
+static u32 armedCount;
+
+static void armedPagesUpdate(void) {
+	while (armedCount) {
+		u32 page = armedPages[--armedCount];
+		busFastPages[page] = romPageCPU(page << 8);
+	}
+	for (u32 n = 0; n < 8; ++n) {
+		if ((sdd1.r4800 & sdd1.r4801) >> n & 1 && (sdd1.dma[n].address & 0xc00000) == 0xc00000) {
+			u32 page = sdd1.dma[n].address >> 8 & 0xffff;
+			busFastPages[page] = NULL;
+			armedPages[armedCount++] = page;
+		}
+	}
+}
+
+static void romPagesCPU(void) {
+	armedCount = 0;
+	busFastMap(sdd1ReadMCU, romPageCPU);
+	armedPagesUpdate();
+}
+
 u8 sdd1ReadMCU(u32 address, u8 data) {
 	address &= 0xffffff;
 	// 00-3f,80-bf:8000-ffff
 	if (!(address & 0x400000)) {
-		if (!(address & 0x800000) && (address & 0x200000) && (sdd1.r4805 & 0x80)) {
-			address &= ~0x200000;
-		}
-		if ((address & 0x800000) && (address & 0x200000) && (sdd1.r4807 & 0x80)) {
-			address &= ~0x200000;
-		}
-		address = (address >> 16 & 0x3f) << 15 | (address & 0x7fff);
-		return romRead(address);
+		return romRead(lowAddress(address));
 	}
 
 	// c0-ff:0000-ffff
@@ -297,6 +357,7 @@ u8 sdd1ReadMCU(u32 address, u8 data) {
 					if (--sdd1.dma[n].size == 0) {
 						sdd1.dmaReady = false;
 						sdd1.r4801 &= ~(1 << n);
+						armedPagesUpdate();
 					}
 					return data;
 				}
@@ -317,4 +378,9 @@ void sdd1Power(void) {
 	sdd1.r4805 = 0x01;
 	sdd1.r4806 = 0x02;
 	sdd1.r4807 = 0x03;
+	romPagesCPU();
+}
+
+void sdd1Loaded(void) {
+	romPagesCPU();
 }

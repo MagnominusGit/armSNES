@@ -594,6 +594,7 @@ void busDirect(BusReader reader, const u8* memory);
 void busDirectFast(BusReader reader, const u8* memory, u32 size);
 extern const u8* busFastPages[0x10000];
 void busFastMap(BusReader reader, const u8* (*map)(u32 target));
+void busFastMapPages(BusReader reader, const u8* (*map)(u32 target), u32 first, u32 count);
 void cartMap(void);
 void systemFrameEvent(void);
 
@@ -978,6 +979,7 @@ extern struct Sa1 sa1;
 void sa1Power(void);
 void sa1FrameStart(void);
 void sa1Loaded(void);
+void sdd1Loaded(void);
 // Fast mode: the SA-1's next instruction, through the plain 65816 (sa1fast.c), and the accesses it makes.
 void sa1FastInstruction(void);
 u8 sa1FastRead(u32 address);

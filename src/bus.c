@@ -264,13 +264,18 @@ void busFinish(void) {
 }
 
 // Fast mode: the pages of a reader whose memory depends on the cartridge's own registers, from map
-// (null for a page that isn't plain memory), but for the interrupt vectors' page and cheats'.
-void busFastMap(BusReader reader, const u8* (*map)(u32 target)) {
-	for (u32 page = 0; page < 0x10000; ++page) {
+// (null for a page that isn't plain memory), but for the interrupt vectors' page and cheats'; count
+// pages from first.
+void busFastMapPages(BusReader reader, const u8* (*map)(u32 target), u32 first, u32 count) {
+	for (u32 page = first; page < first + count && page < 0x10000; ++page) {
 		if (!pages[page].mixed && readers[pages[page].id] == reader && (page & 0x7fff) != 0x00ff) {
 			busFastPages[page] = map(pages[page].base);
 		}
 	}
+}
+
+void busFastMap(BusReader reader, const u8* (*map)(u32 target)) {
+	busFastMapPages(reader, map, 0, 0x10000);
 }
 
 u8 busRead(u32 address, u8 data) {

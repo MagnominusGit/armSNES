@@ -17,7 +17,7 @@ struct Cpu cpu;
 static u8 read(u32 address);
 static void write(u32 address, u8 data);
 static void idle(void);
-static void lastCycle(void);
+static inline void lastCycle(void);
 static inline void step(u32 clocks);
 static inline void dmaEdge(void);
 
@@ -231,7 +231,7 @@ static inline bool irqTest(void) {
 
 // Interrupts are looked for a cycle before an instruction ends, as the 65816's pipeline does. After
 // DMA or a write to $4200 they have to wait: that is irqLock.
-static void lastCycle(void) {
+static void lastCycleLook(void) {
 	// The IRQ is a level: Exact's polls find it again every few clocks while it stays up, so one
 	// looked for while I was set isn't lost. Balanced and Fast poll only here.
 	if (systemBalanced && cpu.status.irqLine && cpu.io.irqEnable) {
@@ -249,6 +249,13 @@ static void lastCycle(void) {
 			cpu.status.irqPending = 1;
 			cpu.status.interruptPending = 1;
 		}
+	}
+}
+
+// With no interrupt line or transition up, there is nothing to look at.
+static inline void lastCycle(void) {
+	if (cpu.status.irqLine || cpu.status.nmiTransition || cpu.status.irqTransition || R.irq) {
+		lastCycleLook();
 	}
 }
 

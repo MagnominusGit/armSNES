@@ -676,7 +676,7 @@ static __attribute__((noinline)) u8 readSlow(u32 address) {
 			wait.hvbjoy = true;
 		} else if ((address & 0x40ffc0) == 0x2140) {
 			wait.apu = true;
-		} else if (!cart.gsu || (address & 0x40ffff) != 0x3030) {
+		} else if (!cart.gsu || (address & 0x40fffe) != 0x3030) {
 			wait.unsafe = true;
 		}
 	}

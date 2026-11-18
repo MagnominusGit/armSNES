@@ -1509,9 +1509,8 @@ static bool hdmaKeepsMemory(void) {
 
 // A loop that reads neither $4212 nor the APU's ports reads the same past the counters' events: the turns
 // to the next one are taken with the one it falls in, the event seen to, and so on until one can end the
-// wait or the GSU stops.
-static void fastSkipTurns(bool hvbjoy, bool apu, u64 apuBack) {
-	u64 turn = cpu.th.clock - wait.clock;
+// wait or the GSU stops. So does one only $4212's V blank bit decides (vblank), up to where that changes.
+static void fastSkipTurns(u64 turn, bool hvbjoy, bool apu, u64 apuBack, bool vblank) {
 	if (!fastSkipOnce(turn, hvbjoy, apu, apuBack) || hvbjoy || apu) {
 		return;
 	}
@@ -1529,7 +1528,11 @@ static void fastSkipTurns(bool hvbjoy, bool apu, u64 apuBack) {
 			}
 		}
 		fastTakeTurns(turns, turn);
+		u32 line = cpu.counter.vcounter;
 		fastCatch();
+		if (vblank && cpu.counter.vcounter != line && (cpu.counter.vcounter == ppu.state.vdisp || cpu.counter.vcounter == 0)) {
+			return;
+		}
 		if (cpu.status.hdmaPending && !cpu.status.dmaPending && hdmaKeepsMemory()) {
 			cpu.status.clockCount = 8;
 			dmaEdgeRun();
@@ -1540,6 +1543,21 @@ static void fastSkipTurns(bool hvbjoy, bool apu, u64 apuBack) {
 			return;
 		}
 	}
+}
+
+// Fast mode: a byte of plain memory, read with no clock or side effect (-1 where there is none).
+static int fastPeek(u32 address) {
+	address &= 0xffffff;
+	u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
+	const u8* memory = busFastPages[at >> 8];
+	return memory ? memory[at & 0xff] : -1;
+}
+
+// A loop of BIT or LDA $4212, then BPL or BMI back to it: only the V blank bit decides it.
+static bool fastVblankLoop(u32 branch) {
+	int op = fastPeek(branch), read = fastPeek(branch - 3);
+	return (op == 0x10 || op == 0x30) && fastPeek(branch + 1) == 0xfb && (read == 0x2c || read == 0xad) && fastPeek(branch - 2) == 0x12 &&
+	       fastPeek(branch - 1) == 0x42;
 }
 
 static void fastBranch(void) {
@@ -1559,7 +1577,8 @@ static void fastBranch(void) {
 	bool quiet = wait.catches == fastCatches;
 	if (wait.valid && wait.quiet && quiet && pc == wait.pc && R.mdr == wait.mdr && !memcmp(regs, wait.regs, WAIT_SIZE) && !cpu.status.interruptPending &&
 	    !cpu.status.dmaActive && !cpu.status.dmaPending && !cpu.status.hdmaPending) {
-		fastSkipTurns(hvbjoy, apu, cpu.th.clock - wait.apuLast);
+		bool vblank = hvbjoy && !apu && fastVblankLoop(waitFrom);
+		fastSkipTurns(cpu.th.clock - wait.clock, hvbjoy && !vblank, apu, cpu.th.clock - wait.apuLast, vblank);
 	}
 	wait.valid = true;
 	wait.pc = pc;
@@ -1594,6 +1613,10 @@ void cpuMain(void) {
 		idle();
 		if (!R.wai) {
 			idle();
+		} else if (fastAccess() && !cart.sa1 && !cpu.status.interruptPending && !cpu.status.dmaActive && !cpu.status.dmaPending &&
+		           !cpu.status.hdmaPending) {
+			// Fast mode: it idles as a loop of one 6-clock turn would, to what can end the wait.
+			fastSkipTurns(cpu.th.scalar * 6, false, false, 0, false);
 		}
 		return;
 	}

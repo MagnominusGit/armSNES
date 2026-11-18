@@ -927,6 +927,9 @@ static bool dmaToVram(struct DmaChannel* channel, u8* index) {
 	if (first != 0x18 && first != 0x19) {
 		return false;
 	}
+	if (!fastNext) {
+		fastPlan();
+	}
 	u64 until = ppuVramDmaUntil();
 	u32 remaining = channel->transferSize ? channel->transferSize : 0x10000;
 	u64 clocks = cpu.th.scalar * 8;
@@ -966,6 +969,50 @@ static bool dmaToVram(struct DmaChannel* channel, u8* index) {
 	return count == remaining;
 }
 
+// The same for bytes to $2180, the WRAM port, from memory that isn't WRAM: they go straight into WRAM.
+static bool dmaToWram(struct DmaChannel* channel, u8* index) {
+	if (transferAddressB(channel, *index & 3) != 0x80) {
+		return false;
+	}
+	if (!fastNext) {
+		fastPlan();
+	}
+	u32 remaining = channel->transferSize ? channel->transferSize : 0x10000;
+	u16 source = channel->sourceAddress;
+	u32 count = 0;
+	u8 mdr = R.mdr;
+	u32 address = 0;
+	while (count < remaining && cpu.counter.hcounter + 8 * (count + 1) < fastNext) {
+		address = channel->sourceBank << 16 | source;
+		u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
+		if (transferAddressB(channel, (*index + count) & 3) != 0x80 || (at & 0xfe0000) == 0x7e0000 ||
+		    (!busDirectPages[at >> 8] && !(cart.gsu && (address & 0xfe0000) == 0x700000))) {
+			break;
+		}
+		mdr = validA(address) ? busRead(address, mdr) : 0x00;
+		cpu.wram[cpu.io.wramAddress] = mdr;
+		cpu.io.wramAddress = (cpu.io.wramAddress + 1) & 0x1ffff;
+		if (!channel->fixedTransfer) {
+			source += channel->reverseTransfer ? -1 : 1;
+		}
+		count++;
+	}
+	if (!count) {
+		return false;
+	}
+	R.mar = address;
+	R.mdr = mdr;
+	cpu.status.irqLock = 0;
+	cpu.counterDma += 8 * count;
+	cpu.counterCpu += 8 * count;
+	cpu.counter.hcounter += 8 * count;
+	cpu.th.clock += cpu.th.scalar * 8 * count;
+	channel->sourceAddress = source;
+	*index += count;
+	channel->transferSize -= count;
+	return count == remaining;
+}
+
 static void channelDmaRun(struct DmaChannel* channel) {
 	if (!channel->dmaEnable) {
 		return;
@@ -976,7 +1023,7 @@ static void channelDmaRun(struct DmaChannel* channel) {
 
 	u8 index = 0;
 	do {
-		if (systemFast && !inputGuns && channel->direction == 0 && dmaToVram(channel, &index)) {
+		if (systemFast && !inputGuns && channel->direction == 0 && (dmaToVram(channel, &index) || dmaToWram(channel, &index))) {
 			break;
 		}
 		transfer(channel, channel->sourceBank << 16 | channel->sourceAddress, index++ & 3);

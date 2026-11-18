@@ -1443,13 +1443,20 @@ static bool vramWriteNow(void) {
 
 static void balancedWrite(u32 address);
 
+// Fast mode: writes the line being drawn can't show, which don't split it. VRAM data while the picture
+// is drawn is dropped (writeVRAM); mode 7's registers are used only in mode 7 (and by the multiplier).
+static bool fastWriteUnseen(u32 address) {
+	u16 reg = address & 0xffff;
+	if (reg == 0x2118 || reg == 0x2119) {
+		return rendering();
+	}
+	return reg >= 0x211a && reg <= 0x2120 && ppu.io.bgMode != 7;
+}
+
 static void writeIO(u32 address, u8 data) {
-	bool vramData = (address & 0xfffe) == 0x2118;
-	if (!vramData || !vramWriteNow()) {
+	if ((address & 0xfffe) != 0x2118 || !vramWriteNow()) {
 		syncFromCpu();
-		// Fast mode: a VRAM write while the picture is drawn is dropped (writeVRAM), so the line isn't
-		// split for it.
-		if (!vramData || !rendering() || !systemFast) {
+		if (!systemFast || !fastWriteUnseen(address)) {
 			balancedWrite(address);
 		}
 	}
@@ -3591,11 +3598,14 @@ static void fastWholeLine(void) {
 }
 
 static void renderSpan(u32 start, u32 end) {
-	// Not mode 6, which snes_faust doesn't draw.
-	if (systemFast && start == 0 && end == 1080 && VCOUNTER != 0 && ppu.obj.x == 0 && ppu.window.x == 0 &&
-	    ppu.blankFrom == BLANK_NONE && ppu.io.bgMode != 6) {
+	// Not mode 6, which snes_faust doesn't draw. Line 0 isn't shown: only its sprites, for line 1, are
+	// looked at.
+	if (systemFast && start == 0 && end == 1080 && ppu.obj.x == 0 && ppu.window.x == 0 && ppu.blankFrom == BLANK_NONE &&
+	    ppu.io.bgMode != 6) {
 		objEvaluateLine();
-		fastWholeLine();
+		if (VCOUNTER != 0) {
+			fastWholeLine();
+		}
 		ppu.obj.x += 256;
 		if (ppu.dac.lineValid) {
 			ppu.dac.line += 512;

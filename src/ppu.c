@@ -1444,9 +1444,14 @@ static bool vramWriteNow(void) {
 static void balancedWrite(u32 address);
 
 static void writeIO(u32 address, u8 data) {
-	if (((address & 0xffff) != 0x2118 && (address & 0xffff) != 0x2119) || !vramWriteNow()) {
+	bool vramData = (address & 0xfffe) == 0x2118;
+	if (!vramData || !vramWriteNow()) {
 		syncFromCpu();
-		balancedWrite(address);
+		// Fast mode: a VRAM write while the picture is drawn is dropped (writeVRAM), so the line isn't
+		// split for it.
+		if (!vramData || !rendering() || !systemFast) {
+			balancedWrite(address);
+		}
 	}
 
 	switch (address & 0xffff) {

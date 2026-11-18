@@ -677,7 +677,7 @@ static void gsuRunBalanced(void) {
 	}
 	const u64 until = cpu.th.clock;
 	const u64 scalar = gsu.th.scalar;
-	const u32 fetchClocks = gsu.clsr ? 1 : 2;
+	const u32 fetchClocks = gsu.clsr ? 1 : 2, romFetchClocks = gsu.clsr ? 5 : 6;
 	// The clock, R15 (also kept in gsu.r[15]), the pipeline, and the registers written by the
 	// instruction under way that matter at its end (R14 and R15).
 	u64 clock = gsu.th.clock;
@@ -698,6 +698,12 @@ static void gsuRunBalanced(void) {
 			} \
 			clock += scalar * fetchClocks; \
 			pipe = gsu.cache[offset]; \
+		} else if (offset >= 512 && gsu.pbr <= 0x5f && !(gsu.romcl | gsu.ramcl)) { \
+			/* From the ROM, with no read or write pending, as readOpcodeBalanced does it. */ \
+			clock += scalar * romFetchClocks; \
+			u32 rom = gsu.pbr << 16 | (u16) pc; \
+			pipe = gsu.result = romAt(gsu.pbr < 0x40 ? ((rom & 0x3f0000) >> 1) | (rom & 0x7fff) : rom); \
+			gsu.modified[15] = false; \
 		} else { \
 			gsu.th.clock = clock; \
 			readOpcodeBalanced(pc); \

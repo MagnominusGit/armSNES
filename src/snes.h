@@ -987,6 +987,9 @@ void sa1FastWrite(u32 address, u8 data);
 void sa1FastIdle(void);
 void sa1FastIdleJump(void);
 void sa1FastLastCycle(void);
+// Fast mode: the SA-1 run to clock, or until it writes one of the count I-RAM bytes watch says or a
+// register: where it did (~0 where it did not).
+u64 sa1RunTo(u64 clock, const u32* watch, u32 count);
 void sa1Run(void);
 u8 sa1ReadIOCPU(u32 address, u8 data);
 void sa1WriteIOCPU(u32 address, u8 data);

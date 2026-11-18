@@ -94,6 +94,7 @@ static inline bool ioReadRepeats(u32 address) {
 static bool fastRead(void);
 static bool fastWrite(void);
 static inline bool fastSteps(u32 steps);
+static u64 countersRoom(void);
 static bool pcInRom(void);
 static bool romConflict(void);
 
@@ -188,7 +189,12 @@ static void triggerIRQ(void) {
 }
 
 // The counters are in clocks; the registers count dots of four.
+// Fast mode: clock steps the counters can still move before the timer could raise its IRQ, as
+// countersRoom works it out (0: to be worked out again).
+static u64 timerRoom;
+
 static void counters(void) {
+	timerRoom = 0;
 	if (sa1.io.hvselb == 0) {
 		// H/V timer
 		sa1.status.hcounter += 2;
@@ -295,8 +301,16 @@ static const u8* romPageCPU(u32 target) {
 	return &cart.rom[busMirror(address, cart.romSize)];
 }
 
+// Fast mode: where each megabyte the SA-1 reads the ROM in starts in it (~0 where it reads through
+// sa1ReadRomCPU): 0-3 for 00-3f,80-bf:8000-ffff, 4-7 for c0-ff.
+static u32 romBlocksSA1[8];
+
 static void romPagesCPU(void) {
 	busFastMap(sa1ReadRomCPU, romPageCPU);
+	for (u32 block = 0; block < 8; ++block) {
+		u32 address = romAddressCPU(block < 4 ? block << 20 : 0x400000 | (block - 4) << 20);
+		romBlocksSA1[block] = (address & 0x400000) && bsPresent() ? ~0u : address;
+	}
 }
 
 // 00-3f,80-bf:8000-ffff comes here as 00-3f:0000-ffff; c0-ff:0000-ffff as it is.
@@ -330,6 +344,18 @@ static u8 romReadSA1(u32 address, u8 data) {
 		address = (address & 0x800000) >> 2 | (address & 0x3f0000) >> 1 | (address & 0x007fff);
 	}
 	return sa1ReadRomCPU(address, data);
+}
+
+// Fast mode: the same straight from the ROM, but for the S-CPU's vectors' page and a memory pack.
+static u8 romReadFastSA1(u32 address, u8 data) {
+	if ((address & 0x408000) == 0x008000) {
+		address = (address & 0x800000) >> 2 | (address & 0x3f0000) >> 1 | (address & 0x007fff);
+	}
+	u32 block = address < 0x400000 ? address >> 20 : 4 + (address >> 20 & 3);
+	if (romBlocksSA1[block] == ~0u || (address & 0xffffe0) == 0x007fe0) {
+		return sa1ReadRomCPU(address, data);
+	}
+	return cart.rom[busMirror(romBlocksSA1[block] | (address & 0x0fffff), cart.romSize)];
 }
 
 // Memory: I-RAM
@@ -952,24 +978,30 @@ static void writeIOSA1(u32 address, u8 data) {
 		sa1.io.hen = data & 1;
 		sa1.io.ven = data >> 1 & 1;
 		sa1.io.hvselb = data >> 7 & 1;
+		timerRoom = 0;
 		return;
 	// CTR: the timer restarts
 	case 0x2211:
 		sa1.status.vcounter = 0;
 		sa1.status.hcounter = 0;
+		timerRoom = 0;
 		return;
 	// HCNT, VCNT
 	case 0x2212:
 		sa1.io.hcnt = (sa1.io.hcnt & 0xff00) | data;
+		timerRoom = 0;
 		return;
 	case 0x2213:
 		sa1.io.hcnt = (sa1.io.hcnt & 0x00ff) | data << 8;
+		timerRoom = 0;
 		return;
 	case 0x2214:
 		sa1.io.vcnt = (sa1.io.vcnt & 0xff00) | data;
+		timerRoom = 0;
 		return;
 	case 0x2215:
 		sa1.io.vcnt = (sa1.io.vcnt & 0x00ff) | data << 8;
+		timerRoom = 0;
 		return;
 	// BMAP
 	case 0x2225:
@@ -1162,6 +1194,23 @@ static inline __attribute__((always_inline)) bool fastSteps(u32 steps) {
 			sa1.status.hcounter += steps * 2;
 			return true;
 		}
+		// Fast mode with the H/V timer on: while it can't raise its IRQ, the counters move on at once.
+		if (systemFast && !sa1.io.hvselb) {
+			if (timerRoom < steps) {
+				timerRoom = countersRoom();
+			}
+			if (timerRoom >= steps) {
+				timerRoom -= steps;
+				sa1.status.hcounter += steps * 2;
+				if (sa1.status.hcounter >= 1364) {
+					sa1.status.hcounter -= 1364;
+					if (++sa1.status.vcounter >= sa1.status.scanlines) {
+						sa1.status.vcounter = 0;
+					}
+				}
+				return true;
+			}
+		}
 		while (steps--) {
 			counters();
 		}
@@ -1199,7 +1248,7 @@ static bool fastRead(void) {
 		if (!fastSteps(1 + romConflict())) {
 			return false;
 		}
-		R.dr = R.mdr = romReadSA1(R.ad, R.dr);
+		R.dr = R.mdr = systemFast ? romReadFastSA1(R.ad, R.dr) : romReadSA1(R.ad, R.dr);
 		return true;
 	}
 	if ((R.ad & 0x40e000) == 0x006000 || (R.ad & 0xe00000) == 0x400000 || (R.ad & 0xf00000) == 0x600000) {
@@ -1303,9 +1352,48 @@ u8 sa1FastRead(u32 address) {
 	return R.dr;
 }
 
+// Fast mode: the SA-1 run ahead of the S-CPU, which waits in a loop reading the I-RAM bytes watch
+// says, until it writes one of them or a register (which can interrupt the S-CPU): where that was.
+static struct {
+	bool on;
+	const u32* watch;
+	u32 count;
+	u64 at;
+} ahead;
+
+u64 sa1RunTo(u64 clock, const u32* watch, u32 count) {
+	u64 now = cpu.th.clock;
+	ahead.on = true;
+	ahead.watch = watch;
+	ahead.count = count;
+	ahead.at = ~0ull;
+	cpu.th.clock = clock;
+	if (sa1.th.clock < clock) {
+		sa1Run();
+	}
+	cpu.th.clock = now;
+	ahead.on = false;
+	return ahead.at;
+}
+
+static void aheadWrite(u32 address) {
+	bool stop = (address & 0x40fe00) == 0x002200;
+	if ((address & 0x40f800) == 0x000000 || (address & 0x40f800) == 0x003000) {
+		for (u32 n = 0; n < ahead.count; ++n) {
+			stop |= (address & 0x7ff) == ahead.watch[n];
+		}
+	}
+	if (stop && ahead.at == ~0ull) {
+		ahead.at = sa1.th.clock;
+	}
+}
+
 void sa1FastWrite(u32 address, u8 data) {
 	R.ad = address & 0xffffff;
 	R.dw = data;
+	if (ahead.on) {
+		aheadWrite(R.ad);
+	}
 	// Writing I-RAM what it has already leaves a loop as it was.
 	if (!((R.ad & 0x40f800) == 0x000000 || (R.ad & 0x40f800) == 0x003000) || iramRead(R.ad) != data) {
 		loop.valid = false;
@@ -1370,11 +1458,11 @@ static void countingSkip(void) {
 		return;
 	}
 	u32 address, size = MF ? 1 : 2;
-	u8 op = romReadSA1(PC.d, 0);
-	if (op == 0xee && romReadSA1(PC.d + 3, 0) == 0x80 && romReadSA1(PC.d + 4, 0) == 0xfb) {
-		address = B << 16 | romReadSA1(PC.d + 2, 0) << 8 | romReadSA1(PC.d + 1, 0);
-	} else if (op == 0xe6 && !D.l && romReadSA1(PC.d + 2, 0) == 0x80 && romReadSA1(PC.d + 3, 0) == 0xfc) {
-		address = D.w | romReadSA1(PC.d + 1, 0);
+	u8 op = romReadFastSA1(PC.d, 0);
+	if (op == 0xee && romReadFastSA1(PC.d + 3, 0) == 0x80 && romReadFastSA1(PC.d + 4, 0) == 0xfb) {
+		address = B << 16 | romReadFastSA1(PC.d + 2, 0) << 8 | romReadFastSA1(PC.d + 1, 0);
+	} else if (op == 0xe6 && !D.l && romReadFastSA1(PC.d + 2, 0) == 0x80 && romReadFastSA1(PC.d + 3, 0) == 0xfc) {
+		address = D.w | romReadFastSA1(PC.d + 1, 0);
 	} else {
 		counting.valid = false;
 		return;
@@ -1407,6 +1495,7 @@ static void countingSkip(void) {
 
 // The counters moved on by steps clock steps at once, which countersRoom allows. False if they can't be.
 static bool countersSkip(u64 steps) {
+	timerRoom = 0;
 	if (sa1.io.hvselb == 0) {
 		if ((sa1.status.hcounter & 1) || sa1.status.hcounter >= 1364 || !sa1.status.scanlines ||
 		    sa1.status.vcounter >= sa1.status.scanlines) {
@@ -1435,7 +1524,11 @@ void sa1Run(void) {
 dispatch:
 	switch (sa1.state) {
 	case MAIN:
+	main:
 		if (systemBalanced && cpu.th.clock < sa1.th.clock) {
+			return;
+		}
+		if (ahead.on && ahead.at != ~0ull) {
 			return;
 		}
 		if (R.wai || R.stp || sa1.io.sa1_rdyb || sa1.io.sa1_resb || sa1.status.interruptPending) {
@@ -1503,7 +1596,7 @@ dispatch:
 		// Fast mode: the instruction at once, through the plain 65816.
 		if (systemFast) {
 			sa1FastInstruction();
-			goto done;
+			goto main;
 		}
 		FETCH(R.op);
 		sa1.state = R.op;
@@ -1733,9 +1826,11 @@ void sa1Power(void) {
 	sa1.io.fb = 0x03;
 	sa1.io.bwp = 0x0f;
 	sa1.io.vb = 16;
+	timerRoom = 0;
 	romPagesCPU();
 }
 
 void sa1Loaded(void) {
+	timerRoom = 0;
 	romPagesCPU();
 }

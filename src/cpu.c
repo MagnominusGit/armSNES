@@ -652,6 +652,8 @@ static struct {
 	u8 apuSeen[4];
 	u64 apuLast;
 	bool quiet;   // no event in the turn before the one kept, whose DMA or interrupt it would have had
+	u8 sa1Count;  // the SA-1's I-RAM bytes the turn read
+	u32 sa1Read[2];
 } wait;
 // A write to the APU's ports the SMP was run past in a skip: reads before it get the ports as they were,
 // and ones before the next instruction started (which no SMP instruction comes before) as they are
@@ -676,6 +678,7 @@ void cpuFrameStart(void) {
 	wait.hvbjoy = false;
 	wait.apu = false;
 	wait.apuRead = 0;
+	wait.sa1Count = 0;
 	apuHeld.on = false;
 	apuPace.close = 0;
 	smpPortsSettle();
@@ -738,6 +741,9 @@ static __attribute__((noinline)) u8 readSlow(u32 address) {
 			wait.hvbjoy = true;
 		} else if ((address & 0x40ffc0) == 0x2140) {
 			wait.apu = true;
+		} else if (cart.sa1 && (address & 0x40f800) == 0x003000 && wait.sa1Count < 2) {
+			// The SA-1's I-RAM changes only as the SA-1 writes it, which a skip stops at.
+			wait.sa1Read[wait.sa1Count++] = address & 0x7ff;
 		} else if (!cart.gsu || (address & 0x40fffe) != 0x3030) {
 			wait.unsafe = true;
 		}
@@ -1558,6 +1564,14 @@ static bool fastSkipOnce(u64 turn, bool hvbjoy, bool apu, u64 apuBack) {
 			toEvent = false;
 		}
 	}
+	// So can the SA-1 writing what the loop reads, or its registers.
+	if (cart.sa1) {
+		u64 stopped = sa1RunTo(cpu.th.clock + room, wait.sa1Read, wait.sa1Count);
+		if (stopped != ~0ull) {
+			room = stopped > cpu.th.clock ? stopped - cpu.th.clock : 0;
+			toEvent = false;
+		}
+	}
 	// Not worth it for less than two turns.
 	if (room < 2 * turn) {
 		return false;
@@ -1629,6 +1643,15 @@ static void fastSkipTurns(u64 turn, bool hvbjoy, bool apu, u64 apuBack, bool vbl
 				return;
 			}
 		}
+		if (cart.sa1) {
+			u64 stopped = sa1RunTo(cpu.th.clock + turns * turn, wait.sa1Read, wait.sa1Count);
+			if (stopped != ~0ull) {
+				if (stopped > cpu.th.clock) {
+					fastTakeTurns((stopped - cpu.th.clock - 1) / turn, turn);
+				}
+				return;
+			}
+		}
 		fastTakeTurns(turns, turn);
 		u32 line = cpu.counter.vcounter;
 		fastCatch();
@@ -1667,13 +1690,14 @@ static void fastBranch(void) {
 	u32 pc = R.pc.d;
 	// A short jump back. A turn that wrote, or read what can change, starts over; after a clean one
 	// the registers are kept, and the same turn again with the same registers and no event inside
-	// it is waiting. Not with an SA-1 running beside it, whose work the wait can be for.
+	// it is waiting.
 	bool hvbjoy = wait.hvbjoy, apu = wait.apu;
 	wait.hvbjoy = wait.apu = false;
-	if (wait.unsafe || cart.sa1) {
+	if (wait.unsafe) {
 		wait.valid = false;
 		wait.unsafe = false;
 		wait.apuRead = 0;
+		wait.sa1Count = 0;
 		return;
 	}
 	const u8* regs = (const u8*) &R + WAIT_FROM;
@@ -1691,6 +1715,7 @@ static void fastBranch(void) {
 	wait.catches = fastCatches;
 	wait.quiet = quiet;
 	wait.apuRead = 0;
+	wait.sa1Count = 0;
 }
 
 // Fast mode: what an access would see to, once an instruction. A DMA starts at the second access edge.
@@ -1744,9 +1769,10 @@ void cpuMain(void) {
 		idle();
 		if (!R.wai) {
 			idle();
-		} else if (fastAccess() && !cart.sa1 && !cpu.status.interruptPending && !cpu.status.dmaActive && !cpu.status.dmaPending &&
+		} else if (fastAccess() && !cpu.status.interruptPending && !cpu.status.dmaActive && !cpu.status.dmaPending &&
 		           !cpu.status.hdmaPending) {
 			// Fast mode: it idles as a loop of one 6-clock turn would, to what can end the wait.
+			wait.sa1Count = 0;
 			fastSkipTurns(cpu.th.scalar * 6, false, false, 0, false);
 		}
 		return;

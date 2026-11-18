@@ -4,9 +4,20 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  * Ported from ares (ISC); see LICENSES/ISC-ares.txt. */
 // The interpreter's run loop, made twice by smp.c: with STEP and SMP_AT_INSTRUCTION as Exact and as
-// Balanced have them.
+// Balanced have them. Balanced's SMP never stops inside an instruction (SMP_WHOLE_INSTRUCTIONS), so it
+// goes straight from the fetch to the opcode.
 void SMP_RUN(void) {
 	for (;;) {
+#ifdef SMP_WHOLE_INSTRUCTIONS
+		SMP_AT_INSTRUCTION();
+		if (smp.wait || smp.stop) {
+			SKIP(PC);
+			IDLE();
+			continue;
+		}
+		FETCH(D);
+		switch (D) {
+#else
 		switch (smp.state) {
 		case MAIN:
 			SMP_AT_INSTRUCTION();
@@ -19,6 +30,7 @@ void SMP_RUN(void) {
 			FETCH(D);
 			smp.state = D;
 			continue;
+#endif
 
 		op(0x00, NoOperation)
 		op(0x01, CallTable, 0)
@@ -278,6 +290,9 @@ void SMP_RUN(void) {
 		op(0xff, Stop)
 		}
 	done:
+#ifndef SMP_WHOLE_INSTRUCTIONS
 		smp.state = MAIN;
+#endif
+		;
 	}
 }

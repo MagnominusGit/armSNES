@@ -1068,7 +1068,9 @@ static bool echoWritten(u16 address) {
 		} \
 	} while (0)
 #define SMP_RUN smpRunBalanced
+#define SMP_WHOLE_INSTRUCTIONS
 #include "smp_run.inc"
+#undef SMP_WHOLE_INSTRUCTIONS
 #undef STEP
 #undef TIMERS
 #undef SMP_AT_INSTRUCTION

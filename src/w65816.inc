@@ -34,7 +34,9 @@
 #ifndef idleBranch
 #define idleBranch()
 #endif
+#ifndef idleJump
 #define idleJump()
+#endif
 
 typedef u8 (*Alu8)(u8);
 typedef u16 (*Alu16)(u16);

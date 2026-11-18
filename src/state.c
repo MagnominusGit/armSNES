@@ -233,6 +233,9 @@ bool stateLoad(const void* data, size_t size) {
 	dspLoaded();
 	ppuLoaded();
 	gsuLoaded();
+	if (cart.sa1) {
+		sa1Loaded();
+	}
 
 	sys.pal = pal;
 	if (ppu.drawnTo > CANVAS_WIDTH * CANVAS_HEIGHT) {

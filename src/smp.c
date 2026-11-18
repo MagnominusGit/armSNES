@@ -138,6 +138,59 @@ static void timersCatchUp(void) {
 	timersPending = 0;
 }
 
+// Fast mode: a sound driver waiting for a timer by reading its counter until it isn't 0 (MOV A/X/Y from
+// $fd-$ff, then BEQ back to it). Its turns before the counter can change are skipped, their clocks and
+// the timers' given at once (spcWaitSkip); a turn is measured first, and the turn that finds the count is
+// run.
+static struct {
+	u16 pc;
+	u8 timer, length;
+	bool measured;
+	u64 lastRead;
+} spcWait = { .pc = 0xffff };
+
+// A turn's clocks: the MOV's fetches and the BEQ's (external), the counter's read and the branch's two
+// idle cycles (internal); beforeRead, the MOV's part up to its read.
+static void spcWaitCost(u32 length, const u8* cycles, u32* turn, u32* beforeRead) {
+	u32 external = cycles[smp.externalWaitStates], internal = cycles[smp.internalWaitStates];
+	*turn = (length + 2) * external + 3 * internal;
+	*beforeRead = length * external + internal;
+}
+
+static const u8 cycleWaitStates[4];
+static const u8 timerWaitStates[4];
+
+// At a read of a counter that found 0: whether it is such a loop's, and whether its turn takes the clocks
+// expected.
+static void spcWaitSeen(u16 address) {
+	u16 pc = smp.pc;
+	const u8* ram = dsp.apuram;
+	u32 length = 0;
+	if ((ram[(u16) (pc - 3)] == 0xe5 || ram[(u16) (pc - 3)] == 0xe9 || ram[(u16) (pc - 3)] == 0xec) &&
+	    ram[(u16) (pc - 2)] == address && ram[(u16) (pc - 1)] == 0x00 && ram[pc] == 0xf0 && ram[(u16) (pc + 1)] == 0xfb) {
+		length = 3;
+	} else if ((ram[(u16) (pc - 2)] == 0xe4 || ram[(u16) (pc - 2)] == 0xf8 || ram[(u16) (pc - 2)] == 0xeb) && !smp.p &&
+	           ram[(u16) (pc - 1)] == address && ram[pc] == 0xf0 && ram[(u16) (pc + 1)] == 0xfc) {
+		length = 2;
+	}
+	u16 start = pc - length;
+	if (!length || start < 0x0100 || (u16) (pc + 2) >= 0xffc0 || smp.ramDisable) {
+		spcWait.pc = 0xffff;
+		return;
+	}
+	if (spcWait.pc != start || spcWait.timer != address - 0xfd) {
+		spcWait.pc = start;
+		spcWait.timer = address - 0xfd;
+		spcWait.length = length;
+		spcWait.measured = false;
+	} else {
+		u32 turn, beforeRead;
+		spcWaitCost(length, cycleWaitStates, &turn, &beforeRead);
+		spcWait.measured = smp.th.clock - spcWait.lastRead == smp.th.scalar * turn;
+	}
+	spcWait.lastRead = smp.th.clock;
+}
+
 // Memory
 
 static u8 readRAM(u16 address) {
@@ -189,6 +242,9 @@ static u8 readIO(u16 address) {
 	case 0xff:
 		data = smp.timer[address - 0xfd].stage3;
 		smp.timer[address - 0xfd].stage3 = 0;
+		if (systemFast && !data) {
+			spcWaitSeen(address);
+		}
 		return data;
 	}
 	return data;
@@ -1002,6 +1058,62 @@ static bool echoWritten(u16 address) {
 	return now < (dsp.echo._length > 4 ? dsp.echo._length : 4) || next < (dsp.echo.delay ? dsp.echo.delay * 2048 : 4);
 }
 
+// The loop spcWaitSeen found, at its first instruction: the turns whose reads still find 0 are skipped,
+// up to the clock the SMP runs to, which no skipped turn passes. The DSP isn't brought up to the SMP in
+// those turns unless one of their reads is of its echo's RAM, which isn't skipped.
+static void spcWaitSkip(void) {
+	const u8* ram = dsp.apuram;
+	u16 pc = spcWait.pc;
+	u32 length = spcWait.length;
+	u8 op = ram[pc], counter = 0xfd + spcWait.timer;
+	bool abs = op == 0xe5 || op == 0xe9 || op == 0xec, dp = op == 0xe4 || op == 0xf8 || op == 0xeb;
+	if (!spcWait.measured || !(length == 3 ? abs && ram[(u16) (pc + 2)] == 0x00 : dp && !smp.p) || ram[(u16) (pc + 1)] != counter ||
+	    ram[(u16) (pc + length)] != 0xf0 || ram[(u16) (pc + length + 1)] != (u8) -(length + 2) || smp.timer[spcWait.timer].stage3) {
+		return;
+	}
+	u32 turn, beforeRead, timerTurn, timerBeforeRead;
+	spcWaitCost(length, cycleWaitStates, &turn, &beforeRead);
+	spcWaitCost(length, timerWaitStates, &timerTurn, &timerBeforeRead);
+	// Only straight after one of the loop's turns, which leaves the registers as the skipped ones would.
+	u64 clocks = smp.th.scalar * turn;
+	if (smp.th.clock - spcWait.lastRead != smp.th.scalar * (turn - beforeRead) || smpLimit < smp.th.clock) {
+		return;
+	}
+	for (u32 n = 0; n < length + 2; ++n) {
+		if (dspEchoPage((u16) (pc + n)) && echoWritten((u16) (pc + n))) {
+			return;
+		}
+	}
+	if (dspEchoPage(counter) && echoWritten(counter)) {
+		return;
+	}
+	u64 most = (smpLimit - smp.th.clock) / clocks;
+	if (most > 4096) {
+		most = 4096;
+	}
+	// The counter's timer, a copy, caught up read by read as the turns would.
+	static const u32 frequency[3] = { 128, 128, 16 };
+	struct SmpTimer timer = smp.timer[spcWait.timer];
+	u32 pending = timersPending + timerBeforeRead;
+	u64 skip = 0;
+	for (;;) {
+		timer.stage0 += pending;
+		while (timer.stage0 >= frequency[spcWait.timer]) {
+			timer.stage0 -= frequency[spcWait.timer];
+			timer.stage1 ^= 1;
+			timerSynchronizeStage1(&timer);
+		}
+		if (timer.stage3 || skip == most) {
+			break;
+		}
+		skip++;
+		pending = timerTurn;
+	}
+	smp.th.clock += skip * clocks;
+	timersPending += (u32) skip * timerTurn;
+	spcWait.lastRead += skip * clocks;
+}
+
 // Balanced mode: the SMP stops only between instructions once it is ahead of the CPU, and the DSP is
 // brought up to it only before a read or write of its registers, a write to RAM it may soon read or
 // its echo writes to, a read of the RAM its echo writes to, and as the SMP stops.
@@ -1028,6 +1140,9 @@ static bool echoWritten(u16 address) {
 			dspRun(); \
 		} \
 		return; \
+	} \
+	if (smp.pc == spcWait.pc) { \
+		spcWaitSkip(); \
 	}
 // Plain RAM (not the I/O registers or the IPL ROM's place) is read and written straight.
 #define PLAIN(address) ((u16) ((address) - 0x00f0) >= 0x10 && (address) < 0xffc0)

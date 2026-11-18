@@ -80,8 +80,8 @@ u8 dspRead(u8 address) {
 // The pages dspWillRead and dspEchoPage can say yes for, worked out again when what they look at may
 // have changed. Each voice's are marked for its next 256 bytes of samples, so they last while it
 // stays inside them.
-static u8 readPages[32], echoPages[32];
-static bool readPagesStale = true;
+u8 dspReadPages[32], dspEchoPages[32];
+bool dspPagesStale = true;
 static u16 markedAt[8], markedEchoLength;
 static u8 markedBank, markedEchoPage;
 
@@ -148,15 +148,15 @@ void dspWrite(u8 address, u8 data) {
 		break;
 	case 0x5d:
 		dsp.brr.bank = data;
-		readPagesStale = true;
+		dspPagesStale = true;
 		break;
 	case 0x6d:
 		dsp.echo.page = data;
-		readPagesStale = true;
+		dspPagesStale = true;
 		break;
 	case 0x7d:
 		dsp.echo.delay = data & 15;
-		readPagesStale = true;
+		dspPagesStale = true;
 		break;
 	}
 
@@ -176,7 +176,7 @@ void dspWrite(u8 address, u8 data) {
 		break;
 	case 0x04:
 		v->source = data;
-		readPagesStale = true;
+		dspPagesStale = true;
 		break;
 	case 0x05:
 		v->adsr0 = data;
@@ -724,48 +724,36 @@ static void markPages(u8* pages, u16 from, u32 length) {
 	}
 }
 
-static void markAll(void) {
-	readPagesStale = false;
-	memset(readPages, 0, sizeof(readPages));
-	memset(echoPages, 0, sizeof(echoPages));
-	markPages(readPages, dsp.brr._bank << 8, 0x400);
-	markPages(readPages, dsp.brr.bank << 8, 0x400);
+void dspMarkAll(void) {
+	dspPagesStale = false;
+	memset(dspReadPages, 0, sizeof(dspReadPages));
+	memset(dspEchoPages, 0, sizeof(dspEchoPages));
+	markPages(dspReadPages, dsp.brr._bank << 8, 0x400);
+	markPages(dspReadPages, dsp.brr.bank << 8, 0x400);
 	for (int n = 0; n < 8; ++n) {
 		const struct DspVoice* v = &dsp.voice[n];
 		u16 entry = (dsp.brr._bank << 8) + (v->source << 2);
 		markedAt[n] = v->brrAddress;
-		markPages(readPages, v->brrAddress, 256 + 18);
-		markPages(readPages, dsp.apuram[entry] | dsp.apuram[(u16) (entry + 1)] << 8, 9);
-		markPages(readPages, dsp.apuram[(u16) (entry + 2)] | dsp.apuram[(u16) (entry + 3)] << 8, 9);
+		markPages(dspReadPages, v->brrAddress, 256 + 18);
+		markPages(dspReadPages, dsp.apuram[entry] | dsp.apuram[(u16) (entry + 1)] << 8, 9);
+		markPages(dspReadPages, dsp.apuram[(u16) (entry + 2)] | dsp.apuram[(u16) (entry + 3)] << 8, 9);
 	}
 	markedBank = dsp.brr._bank;
 	markedEchoPage = dsp.echo._page;
 	markedEchoLength = dsp.echo._length;
-	markPages(echoPages, dsp.echo._page << 8, dsp.echo._length > 4 ? dsp.echo._length : 4);
-	markPages(echoPages, dsp.echo.page << 8, dsp.echo.delay ? dsp.echo.delay * 2048 : 4);
-}
-
-bool dspEchoPage(u16 address) {
-	if (readPagesStale) {
-		markAll();
-	}
-	return echoPages[address >> 11] >> (address >> 8 & 7) & 1;
+	markPages(dspEchoPages, dsp.echo._page << 8, dsp.echo._length > 4 ? dsp.echo._length : 4);
+	markPages(dspEchoPages, dsp.echo.page << 8, dsp.echo.delay ? dsp.echo.delay * 2048 : 4);
 }
 
 void dspLoaded(void) {
-	readPagesStale = true;
+	dspPagesStale = true;
 }
 
-bool dspWillRead(u16 address) {
-	if (readPagesStale) {
-		markAll();
-	}
-	if (!(readPages[address >> 11] >> (address >> 8 & 7) & 1)) {
-		return false;
-	}
+// dspWillRead's look at what is on a page it may read.
+bool dspWillReadOnPage(u16 address) {
 	if ((u16) (address - (dsp.brr._bank << 8)) < 0x400 || (u16) (address - (dsp.brr.bank << 8)) < 0x400) {
 		// A write here can change where a voice starts or loops.
-		readPagesStale = true;
+		dspPagesStale = true;
 		return true;
 	}
 	for (int n = 0; n < 8; ++n) {
@@ -806,16 +794,16 @@ void dspRun(void) {
 	} while (!(smp.th.clock < dsp.th.clock));
 	for (int n = 0; n < 8; ++n) {
 		if ((u16) (dsp.voice[n].brrAddress - markedAt[n]) > 256) {
-			readPagesStale = true;
+			dspPagesStale = true;
 		}
 	}
 	if (dsp.brr._bank != markedBank || dsp.echo._page != markedEchoPage || dsp.echo._length != markedEchoLength) {
-		readPagesStale = true;
+		dspPagesStale = true;
 	}
 }
 
 void dspPower(bool reset) {
-	readPagesStale = true;
+	dspPagesStale = true;
 	threadFrequency(&dsp.th, sys.apuFrequency);
 	if (!reset) {
 		randomArray(dsp.apuram, sizeof(dsp.apuram));

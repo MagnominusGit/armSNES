@@ -250,10 +250,25 @@ extern struct Dsp dsp;
 void dspPower(bool reset);
 // Runs the DSP until its clock is past the SMP's.
 void dspRun(void);
+// The pages of its RAM the DSP may soon read or its echo writes to, one bit each, marked again once stale.
+extern u8 dspReadPages[32], dspEchoPages[32];
+extern bool dspPagesStale;
+void dspMarkAll(void);
+bool dspWillReadOnPage(u16 address);
 // Whether the DSP may soon read this address of its RAM (Balanced mode brings it up first).
-bool dspWillRead(u16 address);
+static inline bool dspWillRead(u16 address) {
+	if (dspPagesStale) {
+		dspMarkAll();
+	}
+	return (dspReadPages[address >> 11] >> (address >> 8 & 7) & 1) && dspWillReadOnPage(address);
+}
 // Whether the DSP's echo writes may reach this page.
-bool dspEchoPage(u16 address);
+static inline bool dspEchoPage(u16 address) {
+	if (dspPagesStale) {
+		dspMarkAll();
+	}
+	return dspEchoPages[address >> 11] >> (address >> 8 & 7) & 1;
+}
 void dspLoaded(void);
 u8 dspRead(u8 address);
 void dspWrite(u8 address, u8 data);

@@ -1171,7 +1171,7 @@ static void writeVRAM(bool byte, u8 data) {
 	u16* word = vramAt(addressVRAM());
 	*word = byte ? (*word & 0x00ff) | data << 8 : (*word & 0xff00) | data;
 	++vramWrites;
-	if (systemFast && systemFastThreaded) {
+	if (systemFast && systemPictureThread) {
 		fastPpuVram(addressVRAM() & ppu.vramMask, *word);
 	} else {
 		fastStale = true;
@@ -1218,7 +1218,7 @@ static void writeCGRAM(u8 address, u16 data) {
 		address = ppu.latch.cgramAddress;
 	}
 	ppu.cgram[address] = data & 0x7fff;
-	if (systemFast && systemFastThreaded) {
+	if (systemFast && systemPictureThread) {
 		fastPpuCgram(address, data & 0x7fff);
 	} else {
 		fastStale = true;
@@ -3480,11 +3480,11 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 
 // Fast mode: a whole line by snes_faust's renderer, from the registers as they are now.
 static void fastWholeLine(void) {
-	if (systemFastThreaded && fastStale) {
+	if (systemPictureThread && fastStale) {
 		fastPpuResync(ppu.vram, ppu.cgram);
 		fastStale = false;
 	}
-	struct FastPpuLine* line = fastPpuNext(systemFastThreaded);
+	struct FastPpuLine* line = fastPpuNext(systemPictureThread);
 	line->vram = ppu.vram;
 	line->cgram = ppu.cgram;
 	line->out = ppu.dac.lineValid ? &ppuCanvas[ppu.dac.line] : NULL;

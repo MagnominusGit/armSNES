@@ -342,8 +342,10 @@ int main(int argc, char** argv) {
 	// BALANCED=1: Balanced mode. FAST=1: Fast mode.
 	bool fastWanted = getenv("FAST") != NULL;
 	systemFast = fastWanted;
-	// FASTTHREAD=0: Fast mode's lines drawn on the emulation's own thread.
-	systemFastThreaded = !getenv("FASTTHREAD") || strcmp(getenv("FASTTHREAD"), "0");
+	// FASTTHREAD=0: Fast mode's sound and lines on the emulation's own thread; FASTTHREAD=picture: the
+	// sound only.
+	systemPictureThread = !getenv("FASTTHREAD") || strcmp(getenv("FASTTHREAD"), "0");
+	systemSoundThread = !getenv("FASTTHREAD") || !strcmp(getenv("FASTTHREAD"), "1");
 	// FRAMETOP=1: frames end as their last line starts, in every mode.
 	systemFrameAtTop = getenv("FRAMETOP") != NULL;
 	// GSUJIT=0: Fast mode's GSU without its recompiler.

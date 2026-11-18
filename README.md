@@ -17,7 +17,9 @@ It also takes BS-X memory packs (`.bs`, with `BS-X.bin`), Sufami Turbo cartridge
 It has three modes, set with the core's Mode option. Exact gives the same picture and sound as ares's
 most accurate renderer, frame for frame and sample for sample. Balanced keeps nearly all of that at
 much less cost. Fast, the default, is quicker again; it may differ from Exact only in timing too small
-to see or hear. A saved state from any mode loads in the others.
+to see or hear. A saved state from any mode loads in the others. Fast runs the sound and the picture on
+threads of their own; where the cores are busy, the Fast Mode Threads option keeps the sound, or both,
+on the emulation's thread.
 
 Besides the controller, it takes the SNES Mouse, the Super Scope, the Justifier, the multitap and the
 Satellaview receiver. It builds as a libretro core with saved states; the standalone app comes later. The plan is in

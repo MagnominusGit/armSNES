@@ -12,7 +12,8 @@ struct System sys;
 bool systemClearPowerOn;
 bool systemBalanced;
 bool systemFast;
-bool systemFastThreaded;
+bool systemSoundThread;
+bool systemPictureThread;
 bool systemFrameAtTop;
 
 // ares's generator (PCG), on its low-entropy setting, or ares's no-entropy setting: everything
@@ -244,7 +245,7 @@ void systemRunFrame(void) {
 		sa1FrameStart();
 	}
 	// The MSU-1 looks at the DSP as it plays.
-	smpThreaded = smpThreadable = systemFast && systemFastThreaded && !cart.msu1 && smpCanThread();
+	smpThreaded = smpThreadable = systemFast && systemSoundThread && !cart.msu1 && smpCanThread();
 	sys.frameEvent = false;
 	while (!sys.frameEvent) {
 		cpuMain();

@@ -83,8 +83,9 @@ extern bool systemClearPowerOn;
 extern bool systemBalanced;
 // Fast mode: Balanced, with whole lines drawn by snes_faust's renderer (fastppu.cpp).
 extern bool systemFast;
-// Fast mode's lines drawn on a thread of their own: the same picture, on another core.
-extern bool systemFastThreaded;
+// Fast mode's sound, and its lines, on threads of their own: the same output, on other cores.
+extern bool systemSoundThread;
+extern bool systemPictureThread;
 // A frame ends as its last line starts rather than at line 240, so a render thread finishes the picture
 // during vblank. Where a frame ends changes nothing the game sees.
 extern bool systemFrameAtTop;

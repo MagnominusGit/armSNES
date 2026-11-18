@@ -398,6 +398,7 @@ void retro_set_environment(retro_environment_t callback) {
 		{ "armsnes_mode", "Mode; Fast|Balanced|Exact" },
 		{ "armsnes_power_on_ram", "Power-On RAM; Cleared|Patterned" },
 		{ "armsnes_crosshair", "Light Gun Crosshair; On|Off" },
+		{ "armsnes_threads", "Fast Mode Threads; All|Picture Only|Off" },
 		{ NULL, NULL },
 	};
 	callback(RETRO_ENVIRONMENT_SET_VARIABLES, (void*) variables);
@@ -582,10 +583,15 @@ static void readOptions(void) {
 	if (balanced != systemBalanced || fast != systemFast) {
 		systemBalanced = balanced;
 		systemFast = fast;
-		systemFastThreaded = true;
 		systemFrameAtTop = fast;
 		cpuFastReplan();
 	}
+	// Fast mode's threads: the sound's and the picture's, the picture's only, or none, for devices whose
+	// cores are busy.
+	struct retro_variable threads = { "armsnes_threads", NULL };
+	const char* threading = environment(RETRO_ENVIRONMENT_GET_VARIABLE, &threads) && threads.value ? threads.value : "All";
+	systemSoundThread = !strcmp(threading, "All");
+	systemPictureThread = strcmp(threading, "Off") != 0;
 	struct retro_variable variable = { "armsnes_power_on_ram", NULL };
 	systemClearPowerOn = !environment(RETRO_ENVIRONMENT_GET_VARIABLE, &variable) || !variable.value ||
 	                     strcmp(variable.value, "Patterned");

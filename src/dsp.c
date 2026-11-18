@@ -678,7 +678,7 @@ static void misc30(void) {
 	}
 }
 
-static void step(int phase) {
+static inline __attribute__((always_inline)) void step(int phase) {
 	struct DspVoice* voice = dsp.voice;
 	switch (phase) {
 	case 0: voice5(&voice[0]); voice2(&voice[1]); break;
@@ -783,8 +783,23 @@ bool dspWillRead(u16 address) {
 	return false;
 }
 
+// A sample's 32 phases in order.
+static void stepSample(void) {
+	step(0), step(1), step(2), step(3), step(4), step(5), step(6), step(7);
+	step(8), step(9), step(10), step(11), step(12), step(13), step(14), step(15);
+	step(16), step(17), step(18), step(19), step(20), step(21), step(22), step(23);
+	step(24), step(25), step(26), step(27), step(28), step(29), step(30), step(31);
+}
+
 void dspRun(void) {
+	const u64 phaseClocks = dsp.th.scalar * 3 * 8;
 	do {
+		// A whole sample that the phases would all be run for goes straight through.
+		if (dsp.phase == 0 && dsp.th.clock + 31 * phaseClocks <= smp.th.clock) {
+			stepSample();
+			dsp.th.clock += 32 * phaseClocks;
+			continue;
+		}
 		step(dsp.phase);
 		dsp.phase = (dsp.phase + 1) & 31;
 		threadStep(&dsp.th, 3 * 8);

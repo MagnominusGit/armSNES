@@ -9,6 +9,11 @@
 #include <stdlib.h>
 #include <strings.h>
 #include <time.h>
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#elif defined(__x86_64__)
+#include <emmintrin.h>
+#endif
 
 // The libretro core: a game, the pad on each port, the picture as the PPU drew it and the sound at the
 // DSP's own rate.
@@ -82,6 +87,48 @@ static bool rowWide[OUTPUT_HEIGHT];
 
 static void convertRow(const u32* from, u16* to, bool* wide) {
 	u32 dim = 0, mixed = 0, pairs = 0;
+#if defined(__aarch64__)
+	// Four pixel pairs at a time: the left pixel of each converted, the right one compared with it.
+	uint32x4_t dims = vdupq_n_u32(0), mixes = dims, pairings = dims;
+	const uint32x4_t first = vdupq_n_u32(from[0]);
+	for (u32 n = 0; n < OUTPUT_WIDTH / 2; n += 4) {
+		uint32x4x2_t two = vld2q_u32(&from[2 * n]);
+		uint32x4_t pixel = two.val[0];
+		dims = vorrq_u32(dims, vbicq_u32(vdupq_n_u32(0x78000), pixel));
+		mixes = vorrq_u32(mixes, veorq_u32(pixel, first));
+		pairings = vorrq_u32(pairings, veorq_u32(pixel, two.val[1]));
+		uint32x4_t color = vandq_u32(vshlq_n_u32(pixel, 11), vdupq_n_u32(0xf800));
+		color = vorrq_u32(color, vandq_u32(vshlq_n_u32(pixel, 1), vdupq_n_u32(0x07c0)));
+		color = vorrq_u32(color, vandq_u32(vshrq_n_u32(pixel, 4), vdupq_n_u32(0x0020)));
+		color = vorrq_u32(color, vandq_u32(vshrq_n_u32(pixel, 10), vdupq_n_u32(0x001f)));
+		vst1_u16(&to[n], vmovn_u32(color));
+	}
+	dim = vmaxvq_u32(dims);
+	mixed = vmaxvq_u32(mixes);
+	pairs = vmaxvq_u32(pairings);
+#elif defined(__x86_64__)
+	__m128i dims = _mm_setzero_si128(), mixes = dims, pairings = dims;
+	const __m128i first = _mm_set1_epi32((int) from[0]);
+	for (u32 n = 0; n < OUTPUT_WIDTH / 2; n += 4) {
+		__m128i a = _mm_loadu_si128((const __m128i*) &from[2 * n]);
+		__m128i b = _mm_loadu_si128((const __m128i*) &from[2 * n + 4]);
+		__m128i pixel = _mm_castps_si128(_mm_shuffle_ps(_mm_castsi128_ps(a), _mm_castsi128_ps(b), _MM_SHUFFLE(2, 0, 2, 0)));
+		__m128i right = _mm_castps_si128(_mm_shuffle_ps(_mm_castsi128_ps(a), _mm_castsi128_ps(b), _MM_SHUFFLE(3, 1, 3, 1)));
+		dims = _mm_or_si128(dims, _mm_andnot_si128(pixel, _mm_set1_epi32(0x78000)));
+		mixes = _mm_or_si128(mixes, _mm_xor_si128(pixel, first));
+		pairings = _mm_or_si128(pairings, _mm_xor_si128(pixel, right));
+		__m128i color = _mm_and_si128(_mm_slli_epi32(pixel, 11), _mm_set1_epi32(0xf800));
+		color = _mm_or_si128(color, _mm_and_si128(_mm_slli_epi32(pixel, 1), _mm_set1_epi32(0x07c0)));
+		color = _mm_or_si128(color, _mm_and_si128(_mm_srli_epi32(pixel, 4), _mm_set1_epi32(0x0020)));
+		color = _mm_or_si128(color, _mm_and_si128(_mm_srli_epi32(pixel, 10), _mm_set1_epi32(0x001f)));
+		// 16 bits from each lane, kept as they are by sign-extending first.
+		color = _mm_srai_epi32(_mm_slli_epi32(color, 16), 16);
+		_mm_storel_epi64((__m128i*) &to[n], _mm_packs_epi32(color, color));
+	}
+	dim = (u32) _mm_movemask_epi8(_mm_cmpeq_epi32(dims, _mm_setzero_si128())) != 0xffff;
+	mixed = (u32) _mm_movemask_epi8(_mm_cmpeq_epi32(mixes, _mm_setzero_si128())) != 0xffff;
+	pairs = (u32) _mm_movemask_epi8(_mm_cmpeq_epi32(pairings, _mm_setzero_si128())) != 0xffff;
+#else
 	for (u32 n = 0; n < OUTPUT_WIDTH / 2; ++n) {
 		u32 pixel = from[2 * n];
 		dim |= ~pixel & 0x78000;
@@ -89,6 +136,7 @@ static void convertRow(const u32* from, u16* to, bool* wide) {
 		pairs |= pixel ^ from[2 * n + 1];
 		to[n] = rgb565Bright(pixel);
 	}
+#endif
 	*wide = pairs != 0;
 	if (pairs) {
 		convertWide(from, to);

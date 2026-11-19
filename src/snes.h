@@ -859,6 +859,8 @@ extern struct Ppu ppu;
 // The frame being drawn, CANVAS_WIDTH x CANVAS_HEIGHT: each pixel is four bits of brightness over a
 // 15-bit color. A line is two rows apart when interlaced, and every pixel is two wide.
 extern u32 ppuCanvas[CANVAS_WIDTH * CANVAS_HEIGHT];
+// A line meant for the canvas's place at, which fastPpuSetSink's sink drew elsewhere, put in the canvas.
+void ppuCanvasDirty(const u32* at);
 
 void ppuPower(bool reset);
 void ppuLoaded(void);

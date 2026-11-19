@@ -31,7 +31,10 @@ static bool bitmasks;
 
 // The picture, in RGB565: up to 512 pixels by 239 lines, or twice the lines when interlaced.
 enum { OUTPUT_WIDTH = 512, OUTPUT_HEIGHT = 478 };
-static u16 output[OUTPUT_WIDTH * OUTPUT_HEIGHT];
+// Two pictures: the last frame's, which the frontend is given, and the one being drawn, whose lines a
+// render thread (or the emulation running on past the frame's end) converts as it goes.
+static u16 outputs[2][OUTPUT_WIDTH * OUTPUT_HEIGHT];
+static u16* output = outputs[0];
 static unsigned outputWidth = 256, outputHeight = 224;
 static bool crosshair = true;
 static bool outputReady;
@@ -152,22 +155,31 @@ static void convertRow(const u32* from, u16* to, bool* wide) {
 	}
 }
 
-// Fast mode's render thread converts each line it draws as it goes, for the last frame's crop, and
-// marks its row with the frame's stamp; videoFrame converts the others.
+// Fast mode's renderer converts each line it draws as it goes, for the last frame's crop, and marks
+// its row with the frame's stamp; videoFrame converts the others from the canvas. A line outside that
+// crop is put in the canvas.
 static u32 cropX = 26, cropY = 9, cropHeight = 224;
 static u32 rowStamp[CANVAS_HEIGHT];
 static u32 stamp = 1;
 
-static void lineDrawn(const u32* line) {
-	u32 row = (u32) (line - ppuCanvas) / CANVAS_WIDTH;
-	if (row - cropY < cropHeight && line == &ppuCanvas[row * CANVAS_WIDTH + cropX]) {
-		convertRow(line, &output[(row - cropY) * OUTPUT_WIDTH], &rowWide[row - cropY]);
+static void lineDrawn(u32* at, const u32* pixels) {
+	u32 row = (u32) (at - ppuCanvas) / CANVAS_WIDTH;
+	if (row - cropY < cropHeight && at == &ppuCanvas[row * CANVAS_WIDTH + cropX]) {
+		convertRow(pixels, &outputs[stamp & 1][(row - cropY) * OUTPUT_WIDTH], &rowWide[row - cropY]);
 		rowStamp[row] = stamp;
+	} else {
+		memcpy(at, pixels, 512 * sizeof(u32));
+		ppuCanvasDirty(at);
 	}
 }
 
+// The rows converted as they were drawn, where the last crop put them in the output.
+static u16 moved[OUTPUT_WIDTH * OUTPUT_HEIGHT];
+static bool movedWide[OUTPUT_HEIGHT];
+
 // The part of the canvas a television shows, as ares crops it without overscan.
 void videoFrame(const u32* canvas) {
+	output = outputs[stamp & 1];
 	bool interlace = ppu.state.interlace;
 	u32 yScale = interlace ? 2 : 1;
 	u32 height = sys.pal ? 288 : 242;
@@ -189,8 +201,19 @@ void videoFrame(const u32* canvas) {
 	}
 
 	bool sameCrop = canvas == ppuCanvas && x == cropX && y == cropY && h == cropHeight;
+	// A new crop: the rows converted as they were drawn are moved to where it puts them (they aren't in
+	// the canvas).
+	bool move = !sameCrop && canvas == ppuCanvas && x == cropX;
+	if (move) {
+		memcpy(moved, output, cropHeight * OUTPUT_WIDTH * sizeof(u16));
+		memcpy(movedWide, rowWide, cropHeight * sizeof(bool));
+	}
 	for (u32 row = 0; row < h; ++row) {
-		if (!sameCrop || rowStamp[y + row] != stamp) {
+		u32 from = y + row - cropY;
+		if (move && rowStamp[y + row] == stamp && from < cropHeight) {
+			memcpy(&output[row * OUTPUT_WIDTH], &moved[from * OUTPUT_WIDTH], OUTPUT_WIDTH * sizeof(u16));
+			rowWide[row] = movedWide[from];
+		} else if (!sameCrop || rowStamp[y + row] != stamp) {
 			convertRow(&canvas[(y + row) * CANVAS_WIDTH + x], &output[row * OUTPUT_WIDTH], &rowWide[row]);
 		}
 	}

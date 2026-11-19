@@ -67,8 +67,11 @@ void fastPpuResync(const uint16_t* vram, const uint16_t* cgram);
 void fastPpuStop(void);
 // How many render threads to use: 0 for as many as the cores allow.
 void fastPpuThreads(unsigned count);
-// Called on the thread with each line it has drawn.
-void fastPpuSetSink(void (*sink)(const uint32_t* line));
+// Called with each line drawn, on the thread that drew it: the canvas place it is for, and its pixels.
+// With a sink, the canvas isn't written: the pixels are in a line of the renderer's own until it
+// returns.
+void fastPpuSetSink(void (*sink)(uint32_t* at, const uint32_t* pixels));
+bool fastPpuDirect(void);
 
 #ifdef __cplusplus
 }

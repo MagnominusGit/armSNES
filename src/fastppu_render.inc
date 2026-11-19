@@ -1259,7 +1259,10 @@ static INLINE void DrawSprites(const FastPpuLine* l)
 
 } // namespace
 
-void Line(const FastPpuLine* l)
+// armSNES: where a line goes when it isn't drawn into the canvas (fastPpuSetSink).
+static uint32 Direct[512];
+
+const uint32* Line(const FastPpuLine* l, bool direct)
 {
  static bool ready;
 
@@ -1271,13 +1274,15 @@ void Line(const FastPpuLine* l)
  }
 
  if(!l->out)
-  return;
+  return NULL;
+
+ uint32* const out = direct ? Direct : l->out;
 
  if(l->blank)
  {
   for(unsigned i = 0; i < 512; i++)
-   l->out[i] = l->brightness;
-  return;
+   out[i] = l->brightness;
+  return out;
  }
 
  VRAM = l->vram;
@@ -1316,10 +1321,11 @@ void Line(const FastPpuLine* l)
  DoWindow<true>(5, linebuf.main);
 
  if((BGMode & 0x7) == 0x5 || (BGMode & 0x7) == 0x6 || (ScreenMode & 0x08))
-  MixMainSub<true, false>(l->out);
+  MixMainSub<true, false>(out);
  else
-  MixMainSub<false, false>(l->out);
+  MixMainSub<false, false>(out);
 
  if(l->hiresFirstBlack)
-  l->out[0] = l->brightness;
+  out[0] = l->brightness;
+ return out;
 }

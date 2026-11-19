@@ -1157,16 +1157,31 @@ static u32 vramWrites;
 // Fast mode: VRAM or CGRAM was written while the render thread's copies weren't told.
 static bool fastStale = true;
 
+// The canvas's rows the frame (canvasFrame) gave to fastPpuSetSink's sink and nothing put in the
+// canvas: still black from the last frame's end.
+static u32 canvasKept[CANVAS_HEIGHT], canvasFrame = 1;
+
+void ppuCanvasDirty(const u32* at) {
+	canvasKept[(at - ppuCanvas) / CANVAS_WIDTH] = 0;
+}
+
 static void frameOut(void) {
 	// The next frame starts on a black canvas, so lines it doesn't draw stay black.
 	fastPpuFence();
 	videoFrame(ppuCanvas);
-	memset(ppuCanvas, 0, ppu.drawnTo * sizeof(u32));
+	for (u32 row = 0; row * CANVAS_WIDTH < ppu.drawnTo; ++row) {
+		if (canvasKept[row] != canvasFrame) {
+			u32 end = (row + 1) * CANVAS_WIDTH < ppu.drawnTo ? (row + 1) * CANVAS_WIDTH : ppu.drawnTo;
+			memset(&ppuCanvas[row * CANVAS_WIDTH], 0, (end - row * CANVAS_WIDTH) * sizeof(u32));
+		}
+	}
+	canvasFrame++;
 	ppu.drawnTo = 0;
 	systemFrameEvent();
 }
 
 void ppuLoaded(void) {
+	memset(canvasKept, 0, sizeof(canvasKept));
 	objItemsUsed[0] = objItemsUsed[1] = 32;
 	objTilesUsed[0] = objTilesUsed[1] = 34;
 	fastPpuFence();
@@ -3561,6 +3576,9 @@ static void fastWholeLine(void) {
 	line->vram = ppu.vram;
 	line->cgram = ppu.cgram;
 	line->out = ppu.dac.lineValid ? &ppuCanvas[ppu.dac.line] : NULL;
+	if (line->out && fastPpuDirect()) {
+		canvasKept[ppu.dac.line / CANVAS_WIDTH] = canvasFrame;
+	}
 	line->brightness = ppu.io.displayBrightness << 15;
 	line->blank = ppu.io.displayDisable || (!ppu.io.overscan && VCOUNTER >= 225);
 	line->y = VCOUNTER;

@@ -73,16 +73,16 @@ namespace A1 {
 #undef FASTPPU_AVX2
 #pragma GCC pop_options
 
-static void (*const LineFor[2][2])(const FastPpuLine*) = { { R0::Line, R1::Line }, { A0::Line, A1::Line } };
+static const uint32* (*const LineFor[2][2])(const FastPpuLine*, bool) = { { R0::Line, R1::Line }, { A0::Line, A1::Line } };
 static const bool Avx2 = (__builtin_cpu_init(), __builtin_cpu_supports("avx2"));
 #else
-static void (*const LineFor[2][2])(const FastPpuLine*) = { { R0::Line, R1::Line }, { R0::Line, R1::Line } };
+static const uint32* (*const LineFor[2][2])(const FastPpuLine*, bool) = { { R0::Line, R1::Line }, { R0::Line, R1::Line } };
 static const bool Avx2 = false;
 #endif
 
 extern "C" void fastPpuLine(const FastPpuLine* l)
 {
- LineFor[Avx2][0](l);
+ LineFor[Avx2][0](l, false);
 }
 
 // armSNES: the renderer on threads of their own, fed in order through a ring of commands. Each thread
@@ -102,7 +102,7 @@ alignas(64) uint32 RingTail[THREADS];  // by each render thread
 alignas(64) uint32 HeadLocal, TailSeen;  // the main thread's: where it has written to, the oldest tail it last saw
 alignas(64) uint32 LinesGiven;
 alignas(64) uint32 LinesDone[THREADS];
-void (*Sink)(const uint32_t* line);
+void (*Sink)(uint32_t* at, const uint32_t* pixels);
 FastPpuLine Scratch;
 pthread_t Thread[THREADS];
 unsigned Count, Wanted;  // the threads running, and asked for (0: by the cores there are)
@@ -136,9 +136,9 @@ void* RenderThread(void* arg)
      FastPpuLine* l = &Pool[slot];
      l->vram = VramCopy[id];
      l->cgram = CgramCopy[id];
-     LineFor[Avx2][id](l);
+     const uint32* pixels = LineFor[Avx2][id](l, Sink != NULL);
      if(Sink && l->out)
-      Sink(l->out);
+      Sink(l->out, pixels);
     }
     __atomic_store_n(&LinesDone[id], LinesDone[id] + 1, __ATOMIC_RELEASE);
    }
@@ -279,7 +279,9 @@ extern "C" void fastPpuSubmit(FastPpuLine* l)
 {
  if(l == &Scratch)
  {
-  fastPpuLine(l);
+  const uint32* pixels = LineFor[Avx2][0](l, Sink != NULL);
+  if(Sink && l->out)
+   Sink(l->out, pixels);
   return;
  }
 
@@ -313,10 +315,15 @@ extern "C" void fastPpuFence(void)
  TailSeen = HeadLocal;
 }
 
-extern "C" void fastPpuSetSink(void (*sink)(const uint32_t* line))
+extern "C" void fastPpuSetSink(void (*sink)(uint32_t* at, const uint32_t* pixels))
 {
  fastPpuStop();
  Sink = sink;
+}
+
+extern "C" bool fastPpuDirect(void)
+{
+ return Sink != NULL;
 }
 
 extern "C" void fastPpuStop(void)

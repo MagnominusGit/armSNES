@@ -516,19 +516,25 @@ static void objAddressReset(void) {
 	objSetFirstSprite();
 }
 
+// The items and tiles each half of the lists last had valid: they are made valid in order from the
+// first, so only those are cleared as the half is used again (all of them after a state is loaded).
+static u8 objItemsUsed[2], objTilesUsed[2];
+
 static void objScanline(void) {
 	ppu.obj.latchFirstSprite = ppu.obj.io.firstSprite;
 
+	objItemsUsed[ppu.obj.active] = ppu.obj.itemCount < 32 ? ppu.obj.itemCount : 32;
+	objTilesUsed[ppu.obj.active] = ppu.obj.tileCount < 34 ? ppu.obj.tileCount : 34;
 	ppu.obj.x = 0;
 	ppu.obj.y = VCOUNTER;
 	ppu.obj.itemCount = 0;
 	ppu.obj.tileCount = 0;
 
 	ppu.obj.active = !ppu.obj.active;
-	for (int n = 0; n < 32; ++n) {
+	for (u32 n = 0; n < objItemsUsed[ppu.obj.active]; ++n) {
 		ppu.obj.item[ppu.obj.active][n].valid = false;
 	}
-	for (int n = 0; n < 34; ++n) {
+	for (u32 n = 0; n < objTilesUsed[ppu.obj.active]; ++n) {
 		ppu.obj.tile[ppu.obj.active][n].valid = false;
 	}
 
@@ -1161,6 +1167,8 @@ static void frameOut(void) {
 }
 
 void ppuLoaded(void) {
+	objItemsUsed[0] = objItemsUsed[1] = 32;
+	objTilesUsed[0] = objTilesUsed[1] = 34;
 	fastPpuFence();
 	fastStale = true;
 	++vramWrites;
@@ -1829,6 +1837,18 @@ void ppuVramDma(const u8* data, const u8* high, u32 count) {
 	u8 mapping = ppu.io.vramMapping, mode = ppu.io.vramIncrementMode;
 	u32 mask = ppu.vramMask;
 	for (u32 n = 0; n < count; ++n) {
+		// A low byte and the high one after it, unmapped, the address stepping after the high: a word.
+		if (mapping == 0 && mode == 1 && n + 1 < count && !high[n] && high[n + 1]) {
+			u32 at = address & mask;
+			u16 word = data[n] | data[n + 1] << 8;
+			ppu.vram[at] = word;
+			if (threaded) {
+				fastPpuVram(at, word);
+			}
+			address += size;
+			n++;
+			continue;
+		}
 		u32 at = mapVRAM(address, mapping) & mask;
 		u16 word = ppu.vram[at];
 		word = high[n] ? (word & 0x00ff) | data[n] << 8 : (word & 0xff00) | data[n];

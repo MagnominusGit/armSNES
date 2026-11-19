@@ -959,8 +959,8 @@ static inline void dmaSourceStart(struct DmaSource* from) {
 	from->gsuRam = cart.gsu ? gsuRamCPU() : NULL;
 }
 
-static inline u8 dmaSourceRead(struct DmaSource* from, u32 address, u8 mdr) {
-	u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
+// The page of plain memory at (an address as dmaSourceRead maps it), or NULL.
+static inline const u8* dmaSourcePage(struct DmaSource* from, u32 at) {
 	if (at >> 8 != from->page) {
 		from->page = at >> 8;
 		from->memory = busDirectPages[at >> 8];
@@ -968,7 +968,19 @@ static inline u8 dmaSourceRead(struct DmaSource* from, u32 address, u8 mdr) {
 			from->memory = busPageMemory(at >> 8, gsuReadRamCPU, from->gsuRam);
 		}
 	}
-	return from->memory ? from->memory[at & 0xff] : busRead(address, mdr);
+	return from->memory;
+}
+
+static inline u8 dmaSourceRead(struct DmaSource* from, u32 address, u8 mdr) {
+	u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
+	const u8* memory = dmaSourcePage(from, at);
+	return memory ? memory[at & 0xff] : busRead(address, mdr);
+}
+
+// Of the bytes from count to most, those a forward DMA takes from the source page that at is in.
+static inline u32 dmaPageRun(u32 at, u32 count, u32 most) {
+	u32 run = 0x100 - (at & 0xff);
+	return run < most - count ? run : most - count;
 }
 
 // The bytes a one-pass DMA can move before the CPU's next event.
@@ -1017,6 +1029,7 @@ static bool dmaToVram(struct DmaChannel* channel, u8* index) {
 	u8 mdr = R.mdr;
 	u32 address = 0;
 	u32 page = ~0u;
+	bool forward = !channel->fixedTransfer && !channel->reverseTransfer;
 	while (count < most) {
 		u8 port = ports[count & 3];
 		address = channel->sourceBank << 16 | source;
@@ -1026,6 +1039,20 @@ static bool dmaToVram(struct DmaChannel* channel, u8* index) {
 				break;
 			}
 			page = at >> 8;
+			// Forward from plain memory: the rest of the page in one copy.
+			const u8* memory = forward ? dmaSourcePage(&from, at) : NULL;
+			if (memory) {
+				u32 run = dmaPageRun(at, count, most);
+				memcpy(&data[count], &memory[at & 0xff], run);
+				for (u32 n = count; n < count + run; ++n) {
+					high[n] = ports[n & 3] & 1;
+				}
+				count += run;
+				source += run;
+				mdr = data[count - 1];
+				address = channel->sourceBank << 16 | (u16) (source - 1);
+				continue;
+			}
 		}
 		data[count] = mdr = dmaSourceRead(&from, address, mdr);
 		high[count] = port & 1;
@@ -1069,12 +1096,29 @@ static bool dmaToWram(struct DmaChannel* channel, u8* index) {
 	u8 mdr = R.mdr;
 	u32 address = 0;
 	u32 wram = cpu.io.wramAddress;
+	bool forward = !channel->fixedTransfer && !channel->reverseTransfer && ports[0] == 0x80 && ports[1] == 0x80 && ports[2] == 0x80 &&
+	               ports[3] == 0x80;
 	while (count < most) {
 		address = channel->sourceBank << 16 | source;
 		u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
 		if (ports[count & 3] != 0x80 || (at & 0xfe0000) == 0x7e0000 ||
 		    (!busFastPages[at >> 8] && !(cart.gsu && (address & 0xfe0000) == 0x700000))) {
 			break;
+		}
+		// Forward from plain memory to $2180 alone: the rest of the page in one copy.
+		const u8* memory = forward ? dmaSourcePage(&from, at) : NULL;
+		if (memory) {
+			u32 run = dmaPageRun(at, count, most);
+			const u8* bytes = &memory[at & 0xff];
+			for (u32 n = 0; n < run; ++n) {
+				cpu.wram[wram] = bytes[n];
+				wram = (wram + 1) & 0x1ffff;
+			}
+			count += run;
+			source += run;
+			mdr = bytes[run - 1];
+			address = channel->sourceBank << 16 | (u16) (source - 1);
+			continue;
 		}
 		mdr = dmaSourceRead(&from, address, mdr);
 		cpu.wram[wram] = mdr;

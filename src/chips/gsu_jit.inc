@@ -894,8 +894,8 @@ static bool jitDR(u32 dreg, int v, bool* r14) {
 	return true;
 }
 
-// Instructions made as a call to jitOne: plot, rpix, color, cmode, getb, getc, ramb, romb, the RAM
-// loads and stores but lm/sm/lms/sms, and sbk. None writes R15 or fetches.
+// Instructions made as a call to C: plot, rpix, color, cmode, getb, getc, ramb, romb, the RAM loads and
+// stores but lm/sm/lms/sms, and sbk. None writes R15 or fetches.
 static bool jitCalled(const struct JitState* s) {
 	u8 op = s->pipe;
 	if (op == 0x4c) {
@@ -1042,14 +1042,62 @@ static void jitStore(u32 v) {
 	}
 }
 
-static void jitRam(bool load, u32 n, u32 address) {
-	jStI(2, GOFF(ramaddr), address);
+// ldw and ldb (v & 0x100): the word or byte at R[v & 15] in the RAM, into R[v >> 4 & 15].
+static void jitLoadAt(u32 v) {
+	u32 d = v >> 4 & 15;
+	gsu.ramaddr = gsu.r[v & 15];
+	if (gsu.ramcl) {
+		stepBalanced(gsu.ramcl);
+	}
+	readBalanced(0x700000 + (gsu.rambr << 16) + gsu.ramaddr);
+	u32 value = (u8) gsu.result;
+	if (!(v & 0x100)) {
+		readBalanced(0x700000 + (gsu.rambr << 16) + (gsu.ramaddr ^ 1));
+		value |= (u8) gsu.result << 8;
+	}
+	gsu.r[d] = value;
+	if (d != 14) {
+		gsu.modified[d] = true;
+	}
+}
+
+// stw, stb (v & 0x200) and sbk (v & 16): R[v >> 5 & 15] to the RAM through the buffer, at R[v & 15] or,
+// for sbk, where the last access was.
+static void jitStoreAt(u32 v) {
+	if (!(v & 16)) {
+		gsu.ramaddr = gsu.r[v & 15];
+	}
+	u32 value = gsu.r[v >> 5 & 15];
+	for (u32 i = 0; i < (v & 0x200 ? 1u : 2u); ++i) {
+		if (gsu.ramcl) {
+			stepBalanced(gsu.ramcl);
+		}
+		gsu.ramcl = gsu.clsr ? 5 : 6;
+		gsu.ramar = gsu.ramaddr ^ i;
+		gsu.ramdr = value >> (i * 8);
+	}
+}
+
+// plot when a row of the pixel cache is flushed first, then R1 + 1.
+static void jitPlotFlushing(void) {
+	plotBalanced(gsu.r[1], gsu.r[2]);
+	gsu.r[1]++;
+	gsu.modified[1] = true;
+}
+
+// A C function's call that steps the clock and the buffers.
+static void jitTimedCall(const void* fn, u32 v) {
 	jitFlush();
 	jClockOut();
 	jitSfrOut();
-	jCallI(load ? (const void*) jitLoad : (const void*) jitStore, address | n << 16);
+	jCallI(fn, v);
 	jitSfrIn();
 	jClockIn();
+}
+
+static void jitRam(bool load, u32 n, u32 address) {
+	jStI(2, GOFF(ramaddr), address);
+	jitTimedCall(load ? (const void*) jitLoad : (const void*) jitStore, address | n << 16);
 }
 
 // plot as plotBalanced does it when no row of the pixel cache is flushed; 0, with nothing done, when
@@ -1102,9 +1150,25 @@ static bool jitInstruction(struct JitState* s) {
 		jitWriteR(1, 0);
 		uint8_t* done = jJump();
 		jPatchHere(flushes);
-		jitCallOut(s, op);
+		jitTimedCall((const void*) jitPlotFlushing, 0);
 		jPatchHere(done);
 		jitRegsReset(s);
+		s->last = op;
+		s->pc = (u16) (s->pc + 1);
+		return true;
+	}
+	if ((op >= 0x30 && op <= 0x3b && sr != 15) || (op == 0x90 && sr != 15) || (op >= 0x40 && op <= 0x4b && dr != 15)) {
+		// The RAM's loads and stores
+		bool load = op >= 0x40 && op <= 0x4b;
+		if (load) {
+			jitTimedCall((const void*) jitLoadAt, n | dr << 4 | s->alt1 << 8);
+		} else {
+			jitTimedCall((const void*) jitStoreAt, (op == 0x90 ? 16 : n) | sr << 5 | (op != 0x90 && s->alt1) << 9);
+		}
+		jitRegsReset(s);
+		if (load && dr == 14) {
+			jitEndR14();
+		}
 		s->last = op;
 		s->pc = (u16) (s->pc + 1);
 		return true;

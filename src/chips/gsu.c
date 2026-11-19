@@ -558,19 +558,47 @@ static void flushBalanced(u32 which) {
 	}
 	u32 bpp;
 	u32 address = pixelAddress(cache->offset << 3, cache->offset >> 5, &bpp);
+	u32 clocks = gsu.clsr ? 5 : 6;
+	if (gsu.romcl > clocks || gsu.ramcl > clocks) {
+		for (u32 n = 0; n < bpp; ++n) {
+			u32 byte = ((n >> 1) << 4) + (n & 1);
+			u32 data = 0x00;
+			for (u32 x = 0; x < 8; ++x) {
+				data |= ((cache->data[x] >> n) & 1) << x;
+			}
+			if (cache->bitpend != 0xff) {
+				stepBalanced(clocks);
+				readBalanced(address + byte);
+				data = (data & cache->bitpend) | (gsu.result & ~cache->bitpend);
+			}
+			stepBalanced(clocks);
+			writeBalanced(address + byte, data & 0xff);
+		}
+		cache->bitpend = 0x00;
+		return;
+	}
+	// A buffered ROM read or RAM write ends within the first access's clocks: the rest only take theirs.
+	stepBalanced(clocks);
+	gsu.th.clock += gsu.th.scalar * clocks * ((cache->bitpend != 0xff ? 2 * bpp : bpp) - 1);
+	// The eight pixels' bits, a plane to a byte.
+	u64 planes = 0;
+	for (u32 x = 0; x < 8; ++x) {
+		planes |= (u64) cache->data[x] << (x * 8);
+	}
+	u64 t = (planes ^ (planes >> 7)) & 0x00aa00aa00aa00aaull;
+	planes ^= t ^ (t << 7);
+	t = (planes ^ (planes >> 14)) & 0x0000cccc0000ccccull;
+	planes ^= t ^ (t << 14);
+	t = (planes ^ (planes >> 28)) & 0x00000000f0f0f0f0ull;
+	planes ^= t ^ (t << 28);
 	for (u32 n = 0; n < bpp; ++n) {
 		u32 byte = ((n >> 1) << 4) + (n & 1);
-		u32 data = 0x00;
-		for (u32 x = 0; x < 8; ++x) {
-			data |= ((cache->data[x] >> n) & 1) << x;
-		}
+		u32 data = planes >> (n * 8) & 0xff;
 		if (cache->bitpend != 0xff) {
-			stepBalanced(gsu.clsr ? 5 : 6);
 			readBalanced(address + byte);
 			data = (data & cache->bitpend) | (gsu.result & ~cache->bitpend);
 		}
-		stepBalanced(gsu.clsr ? 5 : 6);
-		writeBalanced(address + byte, data & 0xff);
+		writeBalanced(address + byte, data);
 	}
 	cache->bitpend = 0x00;
 }

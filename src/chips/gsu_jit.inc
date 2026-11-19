@@ -677,6 +677,11 @@ static struct JitFront {
 	u32 fetched;  // how many bytes from start on it fetches
 	bool rom;     // fetched from the ROM, outside the cache
 	bool romIdle; // no ROM buffer read pending: set by a fetch's wait, until R14 is written or jitOne runs
+	// A block is made twice: the first time only finds which flags each instruction sets and reads, so
+	// the second leaves out the flags no instruction reads before another sets them.
+	bool scan;
+	u32 index;  // the instruction being made
+	u16 sets[JIT_BLOCK_MAX], reads[JIT_BLOCK_MAX], live[JIT_BLOCK_MAX];
 } jf;
 
 static u8 jitRomByte(u32 address) {
@@ -864,6 +869,30 @@ static void jitEndR14(void) {
 static void jitSetFlags(u32 mask, int f) {
 	jAluI(J_AND, J_SFRV, J_SFRV, ~mask & 0xffff);
 	jAlu(J_OR, J_SFRV, J_SFRV, f);
+}
+
+enum { JIT_FLAGS = 1u << SFR_S | 1u << SFR_Z | 1u << SFR_CY | 1u << SFR_OV };
+
+// Whether flags in mask, which the instruction being made sets, are read before they are set again.
+static bool jitFlagsLive(u32 mask) {
+	if (jf.scan) {
+		jf.sets[jf.index] |= mask;
+		return true;
+	}
+	return (jf.live[jf.index] & mask) != 0;
+}
+
+// The flags an instruction reads: the branches, rol, ror, adc and sbc. Those made as a call to C read
+// none.
+static u32 jitFlagReads(const struct JitState* s) {
+	u8 op = s->pipe;
+	if (op >= 0x05 && op <= 0x0f) {
+		return JIT_FLAGS;
+	}
+	if (op == 0x04 || op == 0x97 || (op >> 4 == 5 && s->alt1) || (op >> 4 == 6 && s->alt1 && !s->alt2)) {
+		return 1u << SFR_CY;
+	}
+	return 0;
 }
 
 // S and Z from the 16-bit value in v, into f (scratch t).
@@ -1136,6 +1165,9 @@ static bool jitInstruction(struct JitState* s) {
 	u32 n = op & 15;
 	bool r14 = false;
 	const u32 sr = s->sreg, dr = s->dreg;
+	if (jf.scan) {
+		jf.reads[jf.index] = (u16) jitFlagReads(s);
+	}
 	// The fetch at the top of the loop.
 	jitFetchStep();
 	s->pipe = jitFetch(s->pc);
@@ -1245,9 +1277,11 @@ static bool jitInstruction(struct JitState* s) {
 			jShift(J_LSL, 2, 2, SFR_CY);
 			jShift(J_LSR, 1, 0, 1);
 			jitDR(dr, 1, &r14);
-			jitSZ(3, 1, 4);
-			jAlu(J_OR, 2, 2, 3);
-			jitSetFlags(1u << SFR_CY | 1u << SFR_S | 1u << SFR_Z, 2);
+			if (jitFlagsLive(1u << SFR_CY | 1u << SFR_S | 1u << SFR_Z)) {
+				jitSZ(3, 1, 4);
+				jAlu(J_OR, 2, 2, 3);
+				jitSetFlags(1u << SFR_CY | 1u << SFR_S | 1u << SFR_Z, 2);
+			}
 			jitRegsReset(s);
 		} else if (op == 0x04) {
 			// rol
@@ -1259,9 +1293,11 @@ static bool jitInstruction(struct JitState* s) {
 			jAlu(J_OR, 2, 2, 1);
 			jExt(J_UXTH, 2, 2);
 			jitDR(dr, 2, &r14);
-			jitSZ(3, 2, 4);
-			jitFlagIf(3, 0, 0x8000, SFR_CY, 4);
-			jitSetFlags(1u << SFR_CY | 1u << SFR_S | 1u << SFR_Z, 3);
+			if (jitFlagsLive(1u << SFR_CY | 1u << SFR_S | 1u << SFR_Z)) {
+				jitSZ(3, 2, 4);
+				jitFlagIf(3, 0, 0x8000, SFR_CY, 4);
+				jitSetFlags(1u << SFR_CY | 1u << SFR_S | 1u << SFR_Z, 3);
+			}
 			jitRegsReset(s);
 		} else {
 			// Branches: the displacement, then R15 + it if taken. The prefix stays.
@@ -1358,8 +1394,10 @@ static bool jitInstruction(struct JitState* s) {
 		}
 		jExt(J_UXTH, 1, 1);
 		jitDR(dr, 1, &r14);
-		jitSZ(2, 1, 3);
-		jitSetFlags(1u << SFR_S | 1u << SFR_Z, 2);
+		if (jitFlagsLive(1u << SFR_S | 1u << SFR_Z)) {
+			jitSZ(2, 1, 3);
+			jitSetFlags(1u << SFR_S | 1u << SFR_Z, 2);
+		}
 		jitRegsReset(s);
 		break;
 	case 0x5:
@@ -1392,35 +1430,42 @@ static bool jitInstruction(struct JitState* s) {
 				jAlu(J_SUB, 2, 2, 3);
 			}
 		}
-		// OV: add ~(SR ^ n) & (n ^ r), sub (SR ^ n) & (SR ^ r); bit 15.
-		jAlu(J_XOR, 3, 0, 1);
-		if (add) {
-			jAluI(J_XOR, 3, 3, 0xffffffff);
-			jAlu(J_XOR, 4, 1, 2);
-		} else {
-			jAlu(J_XOR, 4, 0, 2);
+		bool flags = jitFlagsLive(1u << SFR_OV | 1u << SFR_S | 1u << SFR_CY | 1u << SFR_Z);
+		if (flags) {
+			// OV: add ~(SR ^ n) & (n ^ r), sub (SR ^ n) & (SR ^ r); bit 15.
+			jAlu(J_XOR, 3, 0, 1);
+			if (add) {
+				jAluI(J_XOR, 3, 3, 0xffffffff);
+				jAlu(J_XOR, 4, 1, 2);
+			} else {
+				jAlu(J_XOR, 4, 0, 2);
+			}
+			jAlu(J_AND, 3, 3, 4);
+			jShift(J_LSR, 3, 3, 15);
+			jAluI(J_AND, 3, 3, 1);
+			jShift(J_LSL, 3, 3, SFR_OV);
+			// CY: add r >= 0x10000, sub r >= 0 (signed).
+			if (add) {
+				jShift(J_LSR, 4, 2, 16);
+				jSetNe0(4, 4);
+			} else {
+				jShift(J_LSR, 4, 2, 31);
+				jAluI(J_XOR, 4, 4, 1);
+			}
+			jShift(J_LSL, 4, 4, SFR_CY);
+			jAlu(J_OR, 3, 3, 4);
 		}
-		jAlu(J_AND, 3, 3, 4);
-		jShift(J_LSR, 3, 3, 15);
-		jAluI(J_AND, 3, 3, 1);
-		jShift(J_LSL, 3, 3, SFR_OV);
-		// CY: add r >= 0x10000, sub r >= 0 (signed).
-		if (add) {
-			jShift(J_LSR, 4, 2, 16);
-			jSetNe0(4, 4);
-		} else {
-			jShift(J_LSR, 4, 2, 31);
-			jAluI(J_XOR, 4, 4, 1);
-		}
-		jShift(J_LSL, 4, 4, SFR_CY);
-		jAlu(J_OR, 3, 3, 4);
 		jExt(J_UXTH, 2, 2);
-		jitSZ(4, 2, 1);
-		jAlu(J_OR, 3, 3, 4);
+		if (flags) {
+			jitSZ(4, 2, 1);
+			jAlu(J_OR, 3, 3, 4);
+		}
 		if (write) {
 			jitDR(dr, 2, &r14);
 		}
-		jitSetFlags(1u << SFR_OV | 1u << SFR_S | 1u << SFR_CY | 1u << SFR_Z, 3);
+		if (flags) {
+			jitSetFlags(1u << SFR_OV | 1u << SFR_S | 1u << SFR_CY | 1u << SFR_Z, 3);
+		}
 		jitRegsReset(s);
 		break;
 	}
@@ -1435,22 +1480,26 @@ static bool jitInstruction(struct JitState* s) {
 			jShift(J_LSR, 1, 1, 8);
 			jAlu(J_OR, 1, 0, 1);
 			jitDR(dr, 1, &r14);
-			jMovI(2, 0);
-			jitFlagIf(2, 1, 0xc0c0, SFR_OV, 3);
-			jitFlagIf(2, 1, 0x8080, SFR_S, 3);
-			jitFlagIf(2, 1, 0xe0e0, SFR_CY, 3);
-			jitFlagIf(2, 1, 0xf0f0, SFR_Z, 3);
-			jitSetFlags(1u << SFR_OV | 1u << SFR_S | 1u << SFR_CY | 1u << SFR_Z, 2);
+			if (jitFlagsLive(1u << SFR_OV | 1u << SFR_S | 1u << SFR_CY | 1u << SFR_Z)) {
+				jMovI(2, 0);
+				jitFlagIf(2, 1, 0xc0c0, SFR_OV, 3);
+				jitFlagIf(2, 1, 0x8080, SFR_S, 3);
+				jitFlagIf(2, 1, 0xe0e0, SFR_CY, 3);
+				jitFlagIf(2, 1, 0xf0f0, SFR_Z, 3);
+				jitSetFlags(1u << SFR_OV | 1u << SFR_S | 1u << SFR_CY | 1u << SFR_Z, 2);
+			}
 		} else if (op == 0xc0) {
 			// hib
 			jShift(J_LSR, 1, 0, 8);
 			jitDR(dr, 1, &r14);
-			jMovI(2, 0);
-			jitFlagIf(2, 1, 0x80, SFR_S, 3);
-			jSetEq0(3, 1);
-			jShift(J_LSL, 3, 3, SFR_Z);
-			jAlu(J_OR, 2, 2, 3);
-			jitSetFlags(1u << SFR_S | 1u << SFR_Z, 2);
+			if (jitFlagsLive(1u << SFR_S | 1u << SFR_Z)) {
+				jMovI(2, 0);
+				jitFlagIf(2, 1, 0x80, SFR_S, 3);
+				jSetEq0(3, 1);
+				jShift(J_LSL, 3, 3, SFR_Z);
+				jAlu(J_OR, 2, 2, 3);
+				jitSetFlags(1u << SFR_S | 1u << SFR_Z, 2);
+			}
 		} else {
 			if (s->alt2) {
 				jMovI(1, n);
@@ -1467,8 +1516,10 @@ static bool jitInstruction(struct JitState* s) {
 			}
 			jExt(J_UXTH, 2, 2);
 			jitDR(dr, 2, &r14);
-			jitSZ(3, 2, 4);
-			jitSetFlags(1u << SFR_S | 1u << SFR_Z, 3);
+			if (jitFlagsLive(1u << SFR_S | 1u << SFR_Z)) {
+				jitSZ(3, 2, 4);
+				jitSetFlags(1u << SFR_S | 1u << SFR_Z, 3);
+			}
 		}
 		jitRegsReset(s);
 		break;
@@ -1485,8 +1536,10 @@ static bool jitInstruction(struct JitState* s) {
 		jMul(2, 0, 1);
 		jExt(J_UXTH, 2, 2);
 		jitDR(dr, 2, &r14);
-		jitSZ(3, 2, 4);
-		jitSetFlags(1u << SFR_S | 1u << SFR_Z, 3);
+		if (jitFlagsLive(1u << SFR_S | 1u << SFR_Z)) {
+			jitSZ(3, 2, 4);
+			jitSetFlags(1u << SFR_S | 1u << SFR_Z, 3);
+		}
 		jitRegsReset(s);
 		if (!gsu.cfgr.ms0) {
 			jitStep(jf.clsr ? 1 : 2);
@@ -1544,9 +1597,11 @@ static bool jitInstruction(struct JitState* s) {
 			jShift(J_LSR, 1, 3, 16);
 			jExt(J_UXTH, 1, 1);
 			jitDR(dr, 1, &r14);
-			jitSZ(2, 1, 4);
-			jitFlagIf(2, 3, 0x8000, SFR_CY, 4);
-			jitSetFlags(1u << SFR_S | 1u << SFR_CY | 1u << SFR_Z, 2);
+			if (jitFlagsLive(1u << SFR_S | 1u << SFR_CY | 1u << SFR_Z)) {
+				jitSZ(2, 1, 4);
+				jitFlagIf(2, 3, 0x8000, SFR_CY, 4);
+				jitSetFlags(1u << SFR_S | 1u << SFR_CY | 1u << SFR_Z, 2);
+			}
 			jitRegsReset(s);
 			jitStep((gsu.cfgr.ms0 ? 3 : 7) * (jf.clsr ? 1 : 2));
 			break;
@@ -1554,20 +1609,23 @@ static bool jitInstruction(struct JitState* s) {
 		jExt(J_UXTH, 1, 1);
 		jitDR(dr, 1, &r14);
 		if (op == 0x9e) {
-			jMovI(2, 0);
-			jitFlagIf(2, 1, 0x80, SFR_S, 3);
-			jSetEq0(3, 1);
-			jShift(J_LSL, 3, 3, SFR_Z);
-			jAlu(J_OR, 2, 2, 3);
-			jitSetFlags(1u << SFR_S | 1u << SFR_Z, 2);
-		} else {
-			jitSZ(2, 1, 3);
-			if (op == 0x96 || op == 0x97) {
-				jitFlagIf(2, 0, 1, SFR_CY, 3);
-				jitSetFlags(1u << SFR_CY | 1u << SFR_S | 1u << SFR_Z, 2);
-			} else {
+			if (jitFlagsLive(1u << SFR_S | 1u << SFR_Z)) {
+				jMovI(2, 0);
+				jitFlagIf(2, 1, 0x80, SFR_S, 3);
+				jSetEq0(3, 1);
+				jShift(J_LSL, 3, 3, SFR_Z);
+				jAlu(J_OR, 2, 2, 3);
 				jitSetFlags(1u << SFR_S | 1u << SFR_Z, 2);
 			}
+		} else if (op == 0x96 || op == 0x97) {
+			if (jitFlagsLive(1u << SFR_CY | 1u << SFR_S | 1u << SFR_Z)) {
+				jitSZ(2, 1, 3);
+				jitFlagIf(2, 0, 1, SFR_CY, 3);
+				jitSetFlags(1u << SFR_CY | 1u << SFR_S | 1u << SFR_Z, 2);
+			}
+		} else if (jitFlagsLive(1u << SFR_S | 1u << SFR_Z)) {
+			jitSZ(2, 1, 3);
+			jitSetFlags(1u << SFR_S | 1u << SFR_Z, 2);
 		}
 		jitRegsReset(s);
 		break;
@@ -1595,11 +1653,13 @@ static bool jitInstruction(struct JitState* s) {
 			// moves
 			jitReadR(0, n, s->pc);
 			jitDR(dr, 0, &r14);
-			jMovI(2, 0);
-			jitFlagIf(2, 0, 0x80, SFR_OV, 3);
-			jitSZ(3, 0, 4);
-			jAlu(J_OR, 2, 2, 3);
-			jitSetFlags(1u << SFR_OV | 1u << SFR_S | 1u << SFR_Z, 2);
+			if (jitFlagsLive(1u << SFR_OV | 1u << SFR_S | 1u << SFR_Z)) {
+				jMovI(2, 0);
+				jitFlagIf(2, 0, 0x80, SFR_OV, 3);
+				jitSZ(3, 0, 4);
+				jAlu(J_OR, 2, 2, 3);
+				jitSetFlags(1u << SFR_OV | 1u << SFR_S | 1u << SFR_Z, 2);
+			}
 			jitRegsReset(s);
 		}
 		break;
@@ -1610,8 +1670,10 @@ static bool jitInstruction(struct JitState* s) {
 		jExt(J_UXTH, 0, 0);
 		jitWriteR(n, 0);
 		r14 |= n == 14;
-		jitSZ(1, 0, 2);
-		jitSetFlags(1u << SFR_S | 1u << SFR_Z, 1);
+		if (jitFlagsLive(1u << SFR_S | 1u << SFR_Z)) {
+			jitSZ(1, 0, 2);
+			jitSetFlags(1u << SFR_S | 1u << SFR_Z, 1);
+		}
 		jitRegsReset(s);
 		break;
 	case 0xf: {
@@ -1689,26 +1751,54 @@ static const void* jitCompile(u32 pc, u8 pipe) {
 	}
 	const uint8_t* start = jitE.p;
 	jf.startCode = start;
-	for (u32 count = 0;; count++) {
-		if (count == JIT_BLOCK_MAX || !jitByte(s.pc, &x) || !jitSupported(&s)) {
-			jitFlush();
-			jitExitTo(&s);
-			break;
+	const struct JitState first = s;
+	const u32 slots = jitSlotCount, exits = jitExitCount;
+	for (u32 pass = 0; pass < 2; ++pass) {
+		jf.scan = pass == 0;
+		if (!jf.scan) {
+			// What each instruction sets that the rest of the block sets again before reading it. At the
+			// block's end all are kept.
+			u32 live = JIT_FLAGS;
+			for (u32 i = jf.index; i-- > 0;) {
+				jf.live[i] = (u16) live;
+				live = (live & ~jf.sets[i]) | jf.reads[i];
+			}
+			jitE.p = (uint8_t*) start;
+			jitSlotCount = slots;
+			jitExitCount = exits;
+			jf.exitCount = 0;
+			jf.pending = 0;
+			jf.fetched = 0;
+			jf.romIdle = false;
+			s = first;
 		}
-		if (!count) {
-			jitExitLater(jDeadline(), &s);
+		jf.index = 0;
+		for (u32 count = 0;; count++) {
+			if (count == JIT_BLOCK_MAX || !jitByte(s.pc, &x) || !jitSupported(&s)) {
+				jitFlush();
+				jitExitTo(&s);
+				break;
+			}
+			if (!count) {
+				jitExitLater(jDeadline(), &s);
+			}
+			if (jf.scan) {
+				jf.sets[count] = jf.reads[count] = 0;
+			}
+			bool more = jitInstruction(&s);
+			jf.index = count + 1;
+			if (!more) {
+				break;
+			}
 		}
-		if (!jitInstruction(&s)) {
-			break;
+		for (u32 i = 0; i < jf.exitCount; ++i) {
+			jPatchTo(jf.exits[i].site, jitE.p);
+			jitExitStub(&jf.exits[i].s);
 		}
-	}
-	for (u32 i = 0; i < jf.exitCount; ++i) {
-		jPatchTo(jf.exits[i].site, jitE.p);
-		jitExitStub(&jf.exits[i].s);
-	}
-	if (jitE.p > jitE.end) {
-		jitFree = jitE.end;
-		return NULL;
+		if (jitE.p > jitE.end) {
+			jitFree = jitE.end;
+			return NULL;
+		}
 	}
 	jFlush((uint8_t*) start, jitE.p);
 	jitFree = jitE.p;

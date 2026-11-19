@@ -89,6 +89,10 @@ extern bool systemPictureThread;
 // A frame ends as its last line starts rather than at line 240, so a render thread finishes the picture
 // during vblank. Where a frame ends changes nothing the game sees.
 extern bool systemFrameAtTop;
+// The CPU, Super FX and SA-1 Clock options: each chip's clock in quarters of its own (4 = 100%), taken
+// up as a frame starts. The S-CPU's instructions take 4/quarters of their time; its DMA, and the rest of
+// the machine, keep theirs.
+extern u8 systemCpuClock, systemGsuClock, systemSa1Clock;
 // Balanced mode works out again what comes next on the line (after a state is loaded or the mode set).
 void cpuFastReplan(void);
 // Fast mode: a frame starts knowing no loop the S-CPU waits in, as a state loaded at a frame's end does.

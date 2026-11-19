@@ -15,6 +15,7 @@ bool systemFast;
 bool systemSoundThread;
 bool systemPictureThread;
 bool systemFrameAtTop;
+u8 systemCpuClock = 4, systemGsuClock = 4, systemSa1Clock = 4;
 
 // ares's generator (PCG), on its low-entropy setting, or ares's no-entropy setting: everything
 // starts at 0.

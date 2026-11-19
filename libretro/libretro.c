@@ -447,6 +447,9 @@ void retro_set_environment(retro_environment_t callback) {
 		{ "armsnes_power_on_ram", "Power-On RAM; Cleared|Patterned" },
 		{ "armsnes_crosshair", "Light Gun Crosshair; On|Off" },
 		{ "armsnes_threads", "Fast Mode Threads; All|Picture Only|Off" },
+		{ "armsnes_cpu_clock", "CPU Clock; 100%|125%|150%|175%|200%|225%|250%|275%|300%|325%|350%|375%|400%|25%|50%|75%" },
+		{ "armsnes_superfx_clock", "Super FX Clock; 100%|125%|150%|175%|200%|225%|250%|275%|300%|325%|350%|375%|400%|25%|50%|75%" },
+		{ "armsnes_sa1_clock", "SA-1 Clock; 100%|125%|150%|175%|200%|225%|250%|275%|300%|325%|350%|375%|400%|25%|50%|75%" },
 		{ NULL, NULL },
 	};
 	callback(RETRO_ENVIRONMENT_SET_VARIABLES, (void*) variables);
@@ -621,6 +624,13 @@ void retro_cheat_set(unsigned index, bool enabled, const char* code) {
 	}
 }
 
+// A Clock option, in quarters (25% each).
+static u8 clockOption(const char* key) {
+	struct retro_variable variable = { key, NULL };
+	int percent = environment(RETRO_ENVIRONMENT_GET_VARIABLE, &variable) && variable.value ? atoi(variable.value) : 100;
+	return percent >= 25 && percent <= 400 ? (u8) (percent / 25) : 4;
+}
+
 // Patterned is ares's: stripes of two values. Cleared is all 0, which some unlicensed games and
 // betas need.
 // Exact is ares's timing, Balanced coarser, Fast Balanced's with snes_faust's renderer on a thread of
@@ -644,6 +654,9 @@ static void readOptions(void) {
 	struct retro_variable variable = { "armsnes_power_on_ram", NULL };
 	systemClearPowerOn = !environment(RETRO_ENVIRONMENT_GET_VARIABLE, &variable) || !variable.value ||
 	                     strcmp(variable.value, "Patterned");
+	systemCpuClock = clockOption("armsnes_cpu_clock");
+	systemGsuClock = clockOption("armsnes_superfx_clock");
+	systemSa1Clock = clockOption("armsnes_sa1_clock");
 	struct retro_variable cross = { "armsnes_crosshair", NULL };
 	crosshair = !environment(RETRO_ENVIRONMENT_GET_VARIABLE, &cross) || !cross.value || strcmp(cross.value, "Off");
 }

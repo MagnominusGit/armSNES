@@ -391,6 +391,7 @@ static struct {
 } counting;
 
 void sa1FrameStart(void) {
+	threadFrequency(&sa1.th, sys.cpuFrequency * systemSa1Clock / 4);
 	loop.valid = false;
 	loop.last = ~0u;
 	counting.valid = false;
@@ -1841,7 +1842,7 @@ void sa1Power(void) {
 	struct Thread th = sa1.th;
 	memset(&sa1, 0, sizeof(sa1));
 	sa1.th = th;
-	threadFrequency(&sa1.th, sys.cpuFrequency);
+	threadFrequency(&sa1.th, sys.cpuFrequency * systemSa1Clock / 4);
 	sa1.state = MAIN;
 
 	PC.d = 0x000000;

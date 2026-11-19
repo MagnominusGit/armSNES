@@ -346,6 +346,14 @@ int main(int argc, char** argv) {
 	// sound only.
 	systemPictureThread = !getenv("FASTTHREAD") || strcmp(getenv("FASTTHREAD"), "0");
 	systemSoundThread = !getenv("FASTTHREAD") || !strcmp(getenv("FASTTHREAD"), "1");
+	// CLOCKS=cpu,superfx,sa1: the Clock options, in quarters (4 = 100%).
+	if (getenv("CLOCKS")) {
+		unsigned q[3] = { 4, 4, 4 };
+		sscanf(getenv("CLOCKS"), "%u,%u,%u", &q[0], &q[1], &q[2]);
+		systemCpuClock = (u8) q[0];
+		systemGsuClock = (u8) q[1];
+		systemSa1Clock = (u8) q[2];
+	}
 	// FRAMETOP=1: frames end as their last line starts, in every mode.
 	systemFrameAtTop = getenv("FRAMETOP") != NULL;
 	// GSUJIT=0: Fast mode's GSU without its recompiler.

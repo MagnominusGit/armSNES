@@ -998,7 +998,17 @@ void gsuLine(void) {
 	}
 }
 
+// The Super FX Clock.
+static void clockSet(void) {
+	threadFrequency(&gsu.th, 21440000.0 * systemGsuClock / 4);
+}
+
 void gsuFrameStart(void) {
+	u64 scalar = gsu.th.scalar;
+	clockSet();
+	if (gsu.th.scalar != scalar) {
+		gsuJitDrop();
+	}
 	if (systemFast) {
 		lineThreaded = systemSoundThread && frameWaits * 2 < frameLines;
 		frameLines = frameWaits = 0;
@@ -1215,7 +1225,7 @@ void gsuPower(void) {
 	struct Thread th = gsu.th;
 	memset(&gsu, 0, sizeof(gsu));
 	gsu.th = th;
-	threadFrequency(&gsu.th, 21440000);
+	clockSet();
 	gsu.state = MAIN;
 
 	gsu.vcr = 0x04;

@@ -33,10 +33,30 @@ static void fastWaitChoose(void);
 // instructions, or before an access that isn't to plain memory (fastCatchUp).
 static u32 fastPending;
 
+// The CPU Clock: an access's time, in quarters of 2 clocks, divided by the clock's quarters. What is
+// left over goes to the next, and is dropped as a frame starts, where states are made.
+static u32 clockLeft;
+
+static u32 clockedSlow(u32 clocks) {
+	u32 parts = clocks * 2 + clockLeft;
+	clockLeft = parts % systemCpuClock;
+	return parts / systemCpuClock * 2;
+}
+
+static inline __attribute__((always_inline)) u32 clocked(u32 clocks) {
+	return systemCpuClock == 4 ? clocks : clockedSlow(clocks);
+}
+
+// The time fastPending comes to, without taking it.
+static inline u32 fastPendingClocks(void) {
+	return systemCpuClock == 4 ? fastPending : (fastPending * 2 + clockLeft) / systemCpuClock * 2;
+}
+
 static inline void fastSettle(void) {
 	u32 clocks = fastPending;
 	if (clocks) {
 		fastPending = 0;
+		clocks = clocked(clocks);
 		cpu.counterCpu += clocks;
 		cpu.counter.hcounter += clocks;
 		cpu.th.clock += cpu.th.scalar * clocks;
@@ -672,6 +692,7 @@ static struct {
 } apuPace;
 
 void cpuFrameStart(void) {
+	clockLeft = 0;
 	wait.valid = false;
 	wait.catches = fastCatches;
 	fastPlan();
@@ -714,7 +735,7 @@ static inline __attribute__((always_inline)) void idle(void) {
 	}
 	cpu.status.clockCount = 6;
 	dmaEdge();
-	step(6);
+	step(clocked(6));
 	aluEdge();
 }
 
@@ -758,16 +779,17 @@ static __attribute__((noinline)) u8 readSlow(u32 address) {
 		u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
 		const u8* memory = busDirectPages[at >> 8];
 		if (memory) {
-			step(cpu.status.clockCount);
+			step(clocked(cpu.status.clockCount));
 			u8 data = memory[at & 0xff];
 			aluEdge();
 			R.mdr = data;
 			return data;
 		}
 	}
-	step(cpu.status.clockCount - 4);
+	u32 clocks = clocked(cpu.status.clockCount), last = clocks < 4 ? clocks : 4;
+	step(clocks - last);
 	u8 data = busRead(address, R.mdr);
-	step(4);
+	step(last);
 	aluEdge();
 	// Reads of 00-3f,80-bf:4000-43ff are inside the CPU and leave the data bus as it was.
 	if ((address & 0x40fc00) != 0x4000) {
@@ -788,7 +810,7 @@ static void write(u32 address, u8 data) {
 			cpu.wram[at & 0x1ffff] = R.mdr = data;
 			return;
 		}
-		stepFastNow(waitFor(address));
+		stepFastNow(clocked(waitFor(address)));
 		R.mar = address;
 		busWrite(address, R.mdr = data);
 		// A multiplication or division has its result at once.
@@ -805,7 +827,7 @@ static void write(u32 address, u8 data) {
 	cpu.status.clockCount = waitFor(address);
 	dmaEdge();
 	R.mar = address;
-	step(cpu.status.clockCount);
+	step(clocked(cpu.status.clockCount));
 	busWrite(address, R.mdr = data);
 }
 
@@ -1855,7 +1877,7 @@ void cpuRunFast(void) {
 		u16 halted;
 		memcpy(&starting, &cpu.status.interruptPending, sizeof(starting));
 		memcpy(&halted, &R.wai, sizeof(halted));
-		if (starting || halted || cpu.counter.hcounter + fastPending >= fastNext) {
+		if (starting || halted || cpu.counter.hcounter + fastPendingClocks() >= fastNext) {
 			cpuMain();
 			continue;
 		}
@@ -1870,7 +1892,7 @@ void cpuRunFast(void) {
 void cpuMain(void) {
 	fastNow = systemFast && !inputGuns && !cpu.status.dmaPending;
 	if (fastAccess()) {
-		if (cpu.counter.hcounter + fastPending >= fastNext) {
+		if (cpu.counter.hcounter + fastPendingClocks() >= fastNext) {
 			fastCatchUp();
 		}
 		fastBetween();

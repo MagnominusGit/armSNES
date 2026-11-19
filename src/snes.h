@@ -592,6 +592,8 @@ void busDirect(BusReader reader, const u8* memory);
 // Fast mode: a reader that reads memory[offset] but for rare times its pages are read straight from
 // too (busFastPages), but for the interrupt vectors' page.
 void busDirectFast(BusReader reader, const u8* memory, u32 size);
+// Where a reader that reads memory[offset] reads a page from; NULL if the page is another's.
+const u8* busPageMemory(u32 page, BusReader reader, const u8* memory);
 extern const u8* busFastPages[0x10000];
 void busFastMap(BusReader reader, const u8* (*map)(u32 target));
 void busFastMapPages(BusReader reader, const u8* (*map)(u32 target), u32 first, u32 count);
@@ -1077,6 +1079,8 @@ void gsuWriteIO(u32 address, u8 data);
 u8 gsuReadRomCPU(u32 address, u8 data);
 void gsuWriteRomCPU(u32 address, u8 data);
 u8 gsuReadRamCPU(u32 address, u8 data);
+// The RAM as gsuReadRamCPU reads it, NULL while the GSU has it.
+const u8* gsuRamCPU(void);
 void gsuWriteRamCPU(u32 address, u8 data);
 
 // --- S-DD1 ---

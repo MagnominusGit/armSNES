@@ -134,6 +134,11 @@ void busDirectFast(BusReader reader, const u8* memory, u32 size) {
 	}
 }
 
+const u8* busPageMemory(u32 page, BusReader reader, const u8* memory) {
+	const struct Page* p = &pages[page];
+	return !p->mixed && readers[p->id] == reader ? memory + p->base : NULL;
+}
+
 static const u8* directFor(const struct Page* page);
 
 // The interrupt vectors' page, in either half of the banks, is always read through its reader.

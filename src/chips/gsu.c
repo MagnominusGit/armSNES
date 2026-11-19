@@ -938,6 +938,10 @@ u8 gsuReadRamCPU(u32 address, u8 data) {
 	return cart.ram[address];
 }
 
+const u8* gsuRamCPU(void) {
+	return FLAG(SFR_G) && gsu.scmr.ran ? NULL : cart.ram;
+}
+
 void gsuWriteRamCPU(u32 address, u8 data) {
 	cart.ram[address] = data;
 }

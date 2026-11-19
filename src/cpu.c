@@ -924,6 +924,41 @@ static void transfer(struct DmaChannel* channel, u32 addressA, u8 index) {
 	}
 }
 
+// Fast mode's one-pass DMA reads plain memory and the Super FX's RAM a page at a time, from where the
+// page's reader would read it.
+struct DmaSource {
+	u32 page;
+	const u8* memory;
+	const u8* gsuRam;
+};
+
+static inline void dmaSourceStart(struct DmaSource* from) {
+	from->page = ~0u;
+	from->gsuRam = cart.gsu ? gsuRamCPU() : NULL;
+}
+
+static inline u8 dmaSourceRead(struct DmaSource* from, u32 address, u8 mdr) {
+	u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
+	if (at >> 8 != from->page) {
+		from->page = at >> 8;
+		from->memory = busDirectPages[at >> 8];
+		if (!from->memory && from->gsuRam && (at & 0xfe0000) == 0x700000) {
+			from->memory = busPageMemory(at >> 8, gsuReadRamCPU, from->gsuRam);
+		}
+	}
+	return from->memory ? from->memory[at & 0xff] : busRead(address, mdr);
+}
+
+// The bytes a one-pass DMA can move before the CPU's next event.
+static inline u32 dmaRoom(u32 remaining) {
+	if (!fastNext) {
+		fastPlan();
+	}
+	u32 h = cpu.counter.hcounter;
+	u32 room = fastNext <= h ? 0 : (fastNext - h - 1) / 8;
+	return room < remaining ? room : remaining;
+}
+
 // Fast mode (whose DMA runs on the plain path, fastNow off): bytes to $2118/$2119 from plain memory or
 // the Super FX's RAM, while neither the CPU nor the PPU has anything to do before the last of them is
 // written, go in one pass. Each takes its eight clocks as transfer() would; with nothing pending, the
@@ -935,24 +970,22 @@ static bool dmaToVram(struct DmaChannel* channel, u8* index) {
 	if (first != 0x18 && first != 0x19) {
 		return false;
 	}
-	if (!fastNext) {
-		fastPlan();
-	}
-	u64 until = ppuVramDmaUntil();
 	u32 remaining = channel->transferSize ? channel->transferSize : 0x10000;
+	u32 most = dmaRoom(remaining < MOST ? remaining : MOST);
+	// And by the PPU's clock.
+	u64 until = ppuVramDmaUntil();
 	u64 clocks = cpu.th.scalar * 8;
-	// The bytes that end before the CPU's next event and by the PPU's clock.
-	u32 h = cpu.counter.hcounter;
-	u32 most = !until || fastNext <= h || until < cpu.th.clock ? 0 : (fastNext - h - 1) / 8;
-	most = most < MOST ? most : MOST;
-	most = most < remaining ? most : remaining;
-	if (most && (until - cpu.th.clock) / clocks < most) {
+	if (!until || until < cpu.th.clock) {
+		most = 0;
+	} else if ((until - cpu.th.clock) / clocks < most) {
 		most = (until - cpu.th.clock) / clocks;
 	}
 	u8 ports[4];
 	for (u32 n = 0; n < 4; ++n) {
 		ports[n] = transferAddressB(channel, (*index + n) & 3);
 	}
+	struct DmaSource from;
+	dmaSourceStart(&from);
 	u16 source = channel->sourceAddress;
 	u32 count = 0;
 	u8 mdr = R.mdr;
@@ -964,7 +997,7 @@ static bool dmaToVram(struct DmaChannel* channel, u8* index) {
 		if ((port != 0x18 && port != 0x19) || (!busFastPages[at >> 8] && !(cart.gsu && (address & 0xfe0000) == 0x700000))) {
 			break;
 		}
-		data[count] = mdr = validA(address) ? busRead(address, mdr) : 0x00;
+		data[count] = mdr = dmaSourceRead(&from, address, mdr);
 		high[count] = port & 1;
 		if (!channel->fixedTransfer) {
 			source += channel->reverseTransfer ? -1 : 1;
@@ -993,29 +1026,83 @@ static bool dmaToWram(struct DmaChannel* channel, u8* index) {
 	if (transferAddressB(channel, *index & 3) != 0x80) {
 		return false;
 	}
-	if (!fastNext) {
-		fastPlan();
-	}
 	u32 remaining = channel->transferSize ? channel->transferSize : 0x10000;
+	u32 most = dmaRoom(remaining);
+	u8 ports[4];
+	for (u32 n = 0; n < 4; ++n) {
+		ports[n] = transferAddressB(channel, (*index + n) & 3);
+	}
+	struct DmaSource from;
+	dmaSourceStart(&from);
 	u16 source = channel->sourceAddress;
 	u32 count = 0;
 	u8 mdr = R.mdr;
 	u32 address = 0;
-	while (count < remaining && cpu.counter.hcounter + 8 * (count + 1) < fastNext) {
+	u32 wram = cpu.io.wramAddress;
+	while (count < most) {
 		address = channel->sourceBank << 16 | source;
 		u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
-		if (transferAddressB(channel, (*index + count) & 3) != 0x80 || (at & 0xfe0000) == 0x7e0000 ||
+		if (ports[count & 3] != 0x80 || (at & 0xfe0000) == 0x7e0000 ||
 		    (!busFastPages[at >> 8] && !(cart.gsu && (address & 0xfe0000) == 0x700000))) {
 			break;
 		}
-		mdr = validA(address) ? busRead(address, mdr) : 0x00;
-		cpu.wram[cpu.io.wramAddress] = mdr;
-		cpu.io.wramAddress = (cpu.io.wramAddress + 1) & 0x1ffff;
+		mdr = dmaSourceRead(&from, address, mdr);
+		cpu.wram[wram] = mdr;
+		wram = (wram + 1) & 0x1ffff;
 		if (!channel->fixedTransfer) {
 			source += channel->reverseTransfer ? -1 : 1;
 		}
 		count++;
 	}
+	cpu.io.wramAddress = wram;
+	if (!count) {
+		return false;
+	}
+	R.mar = address;
+	R.mdr = mdr;
+	cpu.status.irqLock = 0;
+	cpu.counterDma += 8 * count;
+	cpu.counterCpu += 8 * count;
+	cpu.counter.hcounter += 8 * count;
+	cpu.th.clock += cpu.th.scalar * 8 * count;
+	channel->sourceAddress = source;
+	*index += count;
+	channel->transferSize -= count;
+	return count == remaining;
+}
+
+// And bytes the other way, from $2180 to the Super FX's RAM.
+static bool dmaFromWram(struct DmaChannel* channel, u8* index) {
+	if (!cart.gsu || transferAddressB(channel, *index & 3) != 0x80) {
+		return false;
+	}
+	u32 remaining = channel->transferSize ? channel->transferSize : 0x10000;
+	u32 most = dmaRoom(remaining);
+	u8 ports[4];
+	for (u32 n = 0; n < 4; ++n) {
+		ports[n] = transferAddressB(channel, (*index + n) & 3);
+	}
+	struct DmaSource from;
+	dmaSourceStart(&from);
+	u16 source = channel->sourceAddress;
+	u32 count = 0;
+	u8 mdr = R.mdr;
+	u32 address = 0;
+	u32 wram = cpu.io.wramAddress;
+	while (count < most) {
+		address = channel->sourceBank << 16 | source;
+		if (ports[count & 3] != 0x80 || (address & 0xfe0000) != 0x700000) {
+			break;
+		}
+		mdr = dmaSourceRead(&from, 0x7e0000 | wram, mdr);
+		wram = (wram + 1) & 0x1ffff;
+		busWrite(address, mdr);
+		if (!channel->fixedTransfer) {
+			source += channel->reverseTransfer ? -1 : 1;
+		}
+		count++;
+	}
+	cpu.io.wramAddress = wram;
 	if (!count) {
 		return false;
 	}
@@ -1042,7 +1129,8 @@ static void channelDmaRun(struct DmaChannel* channel) {
 
 	u8 index = 0;
 	do {
-		if (systemFast && !inputGuns && channel->direction == 0 && (dmaToVram(channel, &index) || dmaToWram(channel, &index))) {
+		if (systemFast && !inputGuns &&
+		    (channel->direction == 0 ? dmaToVram(channel, &index) || dmaToWram(channel, &index) : dmaFromWram(channel, &index))) {
 			break;
 		}
 		transfer(channel, channel->sourceBank << 16 | channel->sourceAddress, index++ & 3);

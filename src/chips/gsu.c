@@ -20,7 +20,7 @@ enum { SFR_Z = 1, SFR_CY = 2, SFR_S = 3, SFR_OV = 4, SFR_G = 5, SFR_R = 6, SFR_A
 // Fast mode's recompiled blocks are dropped when the code cache or the settings they were made for
 // change (gsu_jit.inc).
 static void gsuJitInvalidate(void);
-static void gsuJitLines(void);
+static void gsuJitLine(u32 line);
 static void gsuJitDrop(void);
 
 #define FLAG(bit) (gsu.sfr >> (bit) & 1)
@@ -89,7 +89,7 @@ static u8 readCache(u16 address) {
 static void writeCache(u16 address, u8 data) {
 	address = (address + gsu.cbr) & 511;
 	gsu.cache[address] = data;
-	gsuJitLines();
+	gsuJitLine(address >> 4);
 	if ((address & 15) == 15) {
 		gsu.cacheValid[address >> 4] = true;
 	}
@@ -327,7 +327,7 @@ dispatch:
 					FR.e++;
 				}
 				gsu.cacheValid[FR.c >> 4] = true;
-				gsuJitLines();
+				gsuJitLine(FR.c >> 4);
 			} else {
 				STEP(gsu.clsr ? 1 : 2);
 			}
@@ -521,7 +521,7 @@ static __attribute__((noinline)) void readOpcodeBalanced(u32 address) {
 				from++;
 			}
 			gsu.cacheValid[offset >> 4] = true;
-			gsuJitLines();
+			gsuJitLine(offset >> 4);
 		} else {
 			stepBalanced(gsu.clsr ? 1 : 2);
 		}

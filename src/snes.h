@@ -1074,6 +1074,13 @@ extern bool gsuJitEnabled;
 // (all ones if it didn't, or wasn't running).
 u64 gsuRunTo(u64 clock);
 void gsuRun(void);
+// The GSU at the start of the S-CPU's line, which in Fast mode runs to the line's end, on a thread of
+// its own when there are threads; and as a frame starts.
+void gsuLine(void);
+void gsuFrameStart(void);
+// Fast mode: the run under way finished, and what it raised seen to.
+void gsuSettle(void);
+void gsuStop(void);
 u8 gsuReadIO(u32 address, u8 data);
 void gsuWriteIO(u32 address, u8 data);
 u8 gsuReadRomCPU(u32 address, u8 data);

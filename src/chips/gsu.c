@@ -5,6 +5,10 @@
  * Ported from ares (ISC); see LICENSES/ISC-ares.txt. */
 #include "../snes.h"
 
+#include <pthread.h>
+#include <sched.h>
+#include <time.h>
+
 // The Super FX: a GSU drawing into the cartridge's RAM, with an instruction cache, ROM and RAM
 // buffers and a pixel cache.
 //
@@ -76,6 +80,10 @@ static inline u8 romAt(u32 address) {
 
 // Where gsuRunTo's run stopped.
 static u64 stoppedAt = ~0ull;
+// A stop asked for the S-CPU's interrupt, which it gets once the run is seen to (lineWait).
+static bool irqRaised;
+// The clock a run goes up to: the S-CPU's, or in Fast mode the end of its line.
+static u64 runUntil;
 
 static void flushCache(void) {
 	memset(gsu.cacheValid, 0, sizeof(gsu.cacheValid));
@@ -210,8 +218,8 @@ enum {
 // has the ROM and the RAM, for the Balanced loop.
 #define WAIT_STEPS() \
 	do { \
-		if (!gsu.romcl && !gsu.ramcl && gsu.th.clock <= cpu.th.clock) { \
-			gsu.th.clock += (cpu.th.clock - gsu.th.clock) / (gsu.th.scalar * 6) * (gsu.th.scalar * 6); \
+		if (!gsu.romcl && !gsu.ramcl && gsu.th.clock <= runUntil) { \
+			gsu.th.clock += (runUntil - gsu.th.clock) / (gsu.th.scalar * 6) * (gsu.th.scalar * 6); \
 		} \
 	} while (0)
 
@@ -259,7 +267,7 @@ dispatch:
 			}
 		}
 		gsu.th.clock += gsu.th.scalar * FR.a;
-		if (cpu.th.clock < gsu.th.clock) {
+		if (runUntil < gsu.th.clock) {
 			gsu.state = FIRST_LABEL - 1;
 			return;
 		case FIRST_LABEL - 1:;
@@ -704,7 +712,7 @@ static void gsuRunBalanced(void) {
 		gsuRunExact();
 		return;
 	}
-	const u64 until = cpu.th.clock;
+	const u64 until = runUntil;
 	const u64 scalar = gsu.th.scalar;
 	const u32 fetchClocks = gsu.clsr ? 1 : 2, romFetchClocks = gsu.clsr ? 5 : 6;
 	// The clock, R15 (also kept in gsu.r[15]), the pipeline, and the registers written by the
@@ -810,7 +818,8 @@ static void gsuRunBalanced(void) {
 #undef FETCH
 }
 
-void gsuRun(void) {
+static void runTo(u64 until) {
+	runUntil = until;
 	if (!systemBalanced || gsu.state != MAIN) {
 		gsuRunExact();
 	}
@@ -819,17 +828,210 @@ void gsuRun(void) {
 	}
 }
 
+static void raiseIrq(void) {
+	if (irqRaised) {
+		irqRaised = false;
+		cpu.r.irq = 1;
+	}
+}
+
+// Fast mode: the GSU runs a line at a time, to where the S-CPU's line ends, on a thread of its own
+// when Fast mode has threads (the same runs on the S-CPU's when it hasn't). Whatever of the GSU the
+// S-CPU looks at or changes is as the line's end leaves it, once that run is done (lineWait): a
+// stop's interrupt, and what the S-CPU reads, can be up to a line early. A start is taken from the
+// S-CPU's clock. Each run is set by the S-CPU's thread from the emulated state alone, so it is the
+// same with the thread or without. None is under way between frames, which a saved state needs.
+static u64 lineEnd;
+// Where the last run that stopped stopped, ~0 if none has since the frame began.
+static u64 lineStop = ~0ull;
+
+static void lineRun(u64 until) {
+	stoppedAt = ~0ull;
+	if (gsu.th.clock < until) {
+		runTo(until);
+	}
+	if (stoppedAt != ~0ull) {
+		lineStop = stoppedAt;
+	}
+	// Stopped, the GSU only waited after: its clock goes back to where it stopped, so a start the
+	// S-CPU makes before the end of the line isn't late.
+	if (stoppedAt != ~0ull && !FLAG(SFR_G)) {
+		gsu.th.clock = stoppedAt;
+	}
+}
+
+static pthread_t lineThread;
+static pthread_mutex_t lineLock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t lineWake = PTHREAD_COND_INITIALIZER;
+static bool lineStarted, lineStopping;
+// The thread is used for a frame when, in the one before, the S-CPU waited on the GSU's stop in fewer
+// than half the lines it ran: when it waits, the GSU's line is ahead of nothing it could run beside.
+// It changes where the runs are made, not what they do.
+static bool lineThreaded;
+static u32 frameLines, frameWaits;
+static u64 linePostUntil;
+// On cache lines of their own, as each is written by one thread and read by the other.
+static _Alignas(64) u32 linePosted;  // by the S-CPU's thread
+static _Alignas(64) u32 lineDone;    // by the GSU's
+static _Alignas(64) bool lineSleeping;
+
+static inline void lineRelax(void) {
+#if defined(__aarch64__) || defined(__arm__)
+	__asm__ volatile("yield");
+#elif defined(__x86_64__) || defined(__i386__)
+	__builtin_ia32_pause();
+#endif
+}
+
+static u64 lineNanoseconds(void) {
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return (u64) now.tv_sec * 1000000000u + (u64) now.tv_nsec;
+}
+
+static void* lineMain(void* unused) {
+	(void) unused;
+	u32 done = lineDone;
+	for (;;) {
+		// A line is a few microseconds at speed: the next is looked for at once for 0.2 ms before the
+		// thread gives way.
+		for (u64 since = lineNanoseconds(); done == __atomic_load_n(&linePosted, __ATOMIC_ACQUIRE);) {
+			for (u32 spin = 0; spin < 64 && done == __atomic_load_n(&linePosted, __ATOMIC_ACQUIRE); spin++) {
+				lineRelax();
+			}
+			if (lineNanoseconds() - since > 200000) {
+				break;
+			}
+		}
+		// Sleeping is set before the post is looked at again, and linePost looks at it after it posts,
+		// both in one order for both threads: one of them sees the other.
+		if (done == __atomic_load_n(&linePosted, __ATOMIC_ACQUIRE)) {
+			pthread_mutex_lock(&lineLock);
+			__atomic_store_n(&lineSleeping, true, __ATOMIC_SEQ_CST);
+			while (done == __atomic_load_n(&linePosted, __ATOMIC_SEQ_CST) && !lineStopping) {
+				pthread_cond_wait(&lineWake, &lineLock);
+			}
+			__atomic_store_n(&lineSleeping, false, __ATOMIC_SEQ_CST);
+			bool stop = lineStopping && done == __atomic_load_n(&linePosted, __ATOMIC_SEQ_CST);
+			pthread_mutex_unlock(&lineLock);
+			if (stop) {
+				return NULL;
+			}
+		}
+		lineRun(linePostUntil);
+		__atomic_store_n(&lineDone, ++done, __ATOMIC_RELEASE);
+	}
+}
+
+static void lineWakeIfSleeping(void) {
+	if (__atomic_load_n(&lineSleeping, __ATOMIC_SEQ_CST)) {
+		pthread_mutex_lock(&lineLock);
+		pthread_cond_signal(&lineWake);
+		pthread_mutex_unlock(&lineLock);
+	}
+}
+
+// The run to until, on the thread when there is one. The last is seen to first (lineWait).
+static void linePost(u64 until) {
+	if (lineThreaded && !lineStarted) {
+		lineStarted = pthread_create(&lineThread, NULL, lineMain, NULL) == 0;
+	}
+	if (!lineThreaded || !lineStarted) {
+		lineRun(until);
+		return;
+	}
+	linePostUntil = until;
+	__atomic_store_n(&linePosted, linePosted + 1, __ATOMIC_SEQ_CST);
+	lineWakeIfSleeping();
+}
+
+static void lineWait(void) {
+	if (lineStarted) {
+		while (__atomic_load_n(&lineDone, __ATOMIC_ACQUIRE) != linePosted) {
+			lineWakeIfSleeping();
+			lineRelax();
+		}
+	}
+	raiseIrq();
+}
+
+void gsuSettle(void) {
+	if (cart.gsu) {
+		lineWait();
+		lineStop = ~0ull;
+	}
+}
+
+void gsuStop(void) {
+	if (!lineStarted) {
+		return;
+	}
+	lineWait();
+	pthread_mutex_lock(&lineLock);
+	lineStopping = true;
+	pthread_cond_signal(&lineWake);
+	pthread_mutex_unlock(&lineLock);
+	pthread_join(lineThread, NULL);
+	lineStopping = false;
+	lineStarted = false;
+}
+
+// The S-CPU's clock is at a line's start.
+void gsuLine(void) {
+	if (!systemFast) {
+		if (gsu.th.clock < cpu.th.clock) {
+			gsuRun();
+		}
+		return;
+	}
+	lineWait();
+	// The frame ends at this line's start: its run is posted as the next frame begins.
+	if (sys.frameEvent) {
+		return;
+	}
+	lineEnd = cpu.th.clock + cpu.th.scalar * cpu.counter.hperiod;
+	if (FLAG(SFR_G)) {
+		frameLines++;
+		linePost(lineEnd);
+	} else if (gsu.th.clock < cpu.th.clock) {
+		lineRun(cpu.th.clock);
+	}
+}
+
+void gsuFrameStart(void) {
+	if (systemFast) {
+		lineThreaded = systemSoundThread && frameWaits * 2 < frameLines;
+		frameLines = frameWaits = 0;
+		lineEnd = cpu.th.clock + cpu.th.scalar * (cpu.counter.hperiod - cpu.counter.hcounter);
+		if (FLAG(SFR_G) && gsu.th.clock < lineEnd) {
+			linePost(lineEnd);
+		}
+	}
+}
+
+void gsuRun(void) {
+	runTo(cpu.th.clock);
+	raiseIrq();
+}
+
 u64 gsuRunTo(u64 clock) {
+	if (systemFast) {
+		lineWait();
+		frameWaits += FLAG(SFR_G) || lineStop != ~0ull;
+		if (FLAG(SFR_G) && gsu.th.clock < clock) {
+			lineRun(clock);
+		}
+		return lineStop != ~0ull && lineStop > cpu.th.clock && lineStop <= clock ? lineStop : ~0ull;
+	}
 	if (!FLAG(SFR_G)) {
 		return ~0ull;
 	}
 	u64 now = cpu.th.clock;
-	cpu.th.clock = clock;
 	stoppedAt = ~0ull;
 	if (gsu.th.clock < clock) {
-		gsuRun();
+		runTo(clock);
+		raiseIrq();
 	}
-	cpu.th.clock = now;
 	// Stopped, the GSU only waited after: its clock goes back to where it stopped, so a start the
 	// S-CPU makes before the end of the run isn't late.
 	if (stoppedAt != ~0ull && !FLAG(SFR_G)) {
@@ -839,6 +1041,13 @@ u64 gsuRunTo(u64 clock) {
 }
 
 static void syncFromCpu(void) {
+	if (systemFast) {
+		lineWait();
+		if (gsu.th.clock < cpu.th.clock) {
+			lineRun(cpu.th.clock);
+		}
+		return;
+	}
 	if (gsu.th.clock < cpu.th.clock) {
 		gsuRun();
 	}
@@ -881,8 +1090,17 @@ u8 gsuReadIO(u32 address, u8 data) {
 	return 0x00;
 }
 
+static void writeIO(u32 address, u8 data);
+
 void gsuWriteIO(u32 address, u8 data) {
 	syncFromCpu();
+	writeIO(address, data);
+	if (systemFast && FLAG(SFR_G) && gsu.th.clock < lineEnd) {
+		linePost(lineEnd);
+	}
+}
+
+static void writeIO(u32 address, u8 data) {
 	address = 0x3000 | (address & 0x3ff);
 
 	if (address >= 0x3100 && address <= 0x32ff) {
@@ -945,6 +1163,9 @@ void gsuWriteIO(u32 address, u8 data) {
 // While the GSU runs with the ROM, the S-CPU reads its interrupt vectors from a fixed table.
 u8 gsuReadRomCPU(u32 address, u8 data) {
 	(void) data;
+	if (systemFast) {
+		lineWait();
+	}
 	if (FLAG(SFR_G) && gsu.scmr.ron) {
 		static const u8 vector[16] = {
 			0x00, 0x01, 0x00, 0x01, 0x04, 0x01, 0x00, 0x01, 0x00, 0x01, 0x08, 0x01, 0x00, 0x01, 0x0c, 0x01,
@@ -960,6 +1181,9 @@ void gsuWriteRomCPU(u32 address, u8 data) {
 }
 
 u8 gsuReadRamCPU(u32 address, u8 data) {
+	if (systemFast) {
+		lineWait();
+	}
 	if (FLAG(SFR_G) && gsu.scmr.ran) {
 		return data;
 	}
@@ -967,10 +1191,16 @@ u8 gsuReadRamCPU(u32 address, u8 data) {
 }
 
 const u8* gsuRamCPU(void) {
+	if (systemFast) {
+		lineWait();
+	}
 	return FLAG(SFR_G) && gsu.scmr.ran ? NULL : cart.ram;
 }
 
 void gsuWriteRamCPU(u32 address, u8 data) {
+	if (systemFast) {
+		lineWait();
+	}
 	cart.ram[address] = data;
 }
 
@@ -979,6 +1209,8 @@ void gsuLoaded(void) {
 }
 
 void gsuPower(void) {
+	gsuSettle();
+	irqRaised = false;
 	gsuJitDrop();
 	struct Thread th = gsu.th;
 	memset(&gsu, 0, sizeof(gsu));

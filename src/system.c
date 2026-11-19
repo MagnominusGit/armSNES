@@ -145,6 +145,7 @@ void systemPower(bool reset) {
 // The PPU finished a frame. The clocks all drop by the same amount, so they never overflow.
 void systemFrameEvent(void) {
 	smpDrain();
+	gsuSettle();
 	// The clocks a waiting loop's skip keeps are about to drop.
 	cpuFrameStart();
 	u64 minimum = cpu.th.clock - 0;
@@ -243,6 +244,9 @@ void systemRunFrame(void) {
 	cpuFrameStart();
 	if (cart.sa1) {
 		sa1FrameStart();
+	}
+	if (cart.gsu) {
+		gsuFrameStart();
 	}
 	// The MSU-1 looks at the DSP as it plays.
 	smpThreaded = smpThreadable = systemFast && systemSoundThread && !cart.msu1 && smpCanThread();

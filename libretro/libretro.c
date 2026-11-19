@@ -514,6 +514,7 @@ void retro_init(void) {
 void retro_deinit(void) {
 	fastPpuStop();
 	smpStop();
+	gsuStop();
 }
 
 void retro_get_system_info(struct retro_system_info* info) {
@@ -780,6 +781,7 @@ void retro_unload_game(void) {
 	}
 	fastPpuStop();
 	smpStop();
+	gsuStop();
 	loaded = false;
 	cheatReset();
 	free(game);

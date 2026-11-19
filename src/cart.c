@@ -1070,8 +1070,8 @@ void cartSync(void) {
 	if (cart.sa1 && sa1.th.clock < cpu.th.clock) {
 		sa1Run();
 	}
-	if (cart.gsu && gsu.th.clock < cpu.th.clock) {
-		gsuRun();
+	if (cart.gsu) {
+		gsuLine();
 	}
 	if (cart.cx4 && cx4.th.clock < cpu.th.clock) {
 		cx4Run();

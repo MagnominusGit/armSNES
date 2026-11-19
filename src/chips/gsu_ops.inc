@@ -9,7 +9,7 @@
 	case 0x00:
 		if (gsu.cfgr.irq == 0) {
 			SET_FLAG(SFR_IRQ, 1);
-			cpu.r.irq = 1;
+			irqRaised = true;
 		}
 		SET_FLAG(SFR_G, 0);
 		stoppedAt = GSU_CLOCK < stoppedAt ? GSU_CLOCK : stoppedAt;

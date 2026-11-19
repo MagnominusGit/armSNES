@@ -15,7 +15,7 @@
 // clock step and come back to the same place: smp.state says where, and what an instruction holds
 // between its cycles is in smp too, never in a local variable.
 
-struct Smp smp;
+ON_OWN_LINES(struct Smp, smp);
 
 static const u8 iplrom[64] = {
 	0xcd, 0xef, 0xbd, 0xe8, 0x00, 0xc6, 0x1d, 0xd0, 0xfc, 0x8f, 0xaa, 0xf4, 0x8f, 0xbb, 0xf5, 0x78,

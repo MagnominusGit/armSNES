@@ -75,6 +75,12 @@ struct System {
 	bool frameEvent;
 };
 extern struct System sys;
+// What a thread of its own writes all the time, on cache lines of its own: a write by another thread to
+// what shared a line with it would take the line from that thread each time. The struct keeps its size,
+// which saved states have.
+#define ON_OWN_LINES(type, name) \
+	_Alignas(64) union { type state; u8 lines[(sizeof(type) + 63) / 64 * 64]; } name##Lines; \
+	extern type name __attribute__((alias(#name "Lines")))
 // RAM and registers start at 0 at power on, as on ares's no-entropy setting, not ares's usual
 // stripes; some unlicensed games and betas read memory they never wrote.
 extern bool systemClearPowerOn;

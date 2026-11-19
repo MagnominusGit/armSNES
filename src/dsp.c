@@ -8,7 +8,7 @@
 // The S-DSP: eight BRR voices, noise, echo. A sample takes 32 steps of 24 clocks, and the DSP stops
 // after any step that puts its clock past the SMP's.
 
-struct Dsp dsp;
+ON_OWN_LINES(struct Dsp, dsp);
 
 enum { RELEASE, ATTACK, DECAY, SUSTAIN };
 

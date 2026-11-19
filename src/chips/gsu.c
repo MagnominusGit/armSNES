@@ -17,7 +17,7 @@
 // steps for the bus; fetching an opcode through the cache; plotting) are subroutines in it, each
 // with a frame on a stack for its return state, its arguments and its locals.
 
-struct Gsu gsu;
+ON_OWN_LINES(struct Gsu, gsu);
 
 enum { SFR_Z = 1, SFR_CY = 2, SFR_S = 3, SFR_OV = 4, SFR_G = 5, SFR_R = 6, SFR_ALT1 = 8, SFR_ALT2 = 9, SFR_B = 12, SFR_IRQ = 15 };
 

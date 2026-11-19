@@ -1114,6 +1114,34 @@ static void jitPlotFlushing(void) {
 	gsu.modified[1] = true;
 }
 
+// A block that is plot then loop back to its own start: the turns that loop back again, run here as
+// the block would run them, until the run's end. The block makes the last turn itself.
+static u32 jitPlot(void);
+
+static void jitPlotLoop(u32 start) {
+	const u32 fetch = gsu.clsr ? 1 : 2;
+	const u64 until = runUntil;
+	bool turned = false;
+	while (gsu.th.clock <= until && gsu.r[12] != 1 && gsu.r[13] == start) {
+		stepBalanced(fetch);
+		if (jitPlot()) {
+			gsu.r[1]++;
+			gsu.modified[1] = true;
+		} else {
+			jitPlotFlushing();
+		}
+		stepBalanced(fetch);
+		gsu.r[12]--;
+		gsu.modified[12] = true;
+		turned = true;
+	}
+	if (turned) {
+		SET_FLAG(SFR_S, gsu.r[12] & 0x8000);
+		SET_FLAG(SFR_Z, 0);
+		gsu.opcode = 0x3c;
+	}
+}
+
 // A C function's call that steps the clock and the buffers.
 static void jitTimedCall(const void* fn, u32 v) {
 	jitFlush();
@@ -1773,6 +1801,14 @@ static const void* jitCompile(u32 pc, u8 pipe) {
 			s = first;
 		}
 		jf.index = 0;
+		// plot, loop and plot again, from the cache with no prefix: the loop to here runs in C.
+		if (!jf.rom && pipe == 0x4c && jitByte(pc, &x) && x == 0x3c && jitByte(pc + 1, &x) && x == 0x4c) {
+			jClockOut();
+			jitSfrOut();
+			jCallI((const void*) jitPlotLoop, pc);
+			jitSfrIn();
+			jClockIn();
+		}
 		for (u32 count = 0;; count++) {
 			if (count == JIT_BLOCK_MAX || !jitByte(s.pc, &x) || !jitSupported(&s)) {
 				jitFlush();

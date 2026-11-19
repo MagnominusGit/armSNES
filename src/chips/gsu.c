@@ -599,6 +599,20 @@ static void flushBalanced(u32 which) {
 	planes ^= t ^ (t << 14);
 	t = (planes ^ (planes >> 28)) & 0x00000000f0f0f0f0ull;
 	planes ^= t ^ (t << 28);
+	// Bytes all in the RAM are read and written in place, as readBalanced and writeBalanced would.
+	if (cart.ramSize && (address & 0xfe0000) == 0x700000 && ((address + 0x31) & 0xfe0000) == 0x700000) {
+		for (u32 n = 0; n < bpp; ++n) {
+			u8* at = &cart.ram[(address + ((n >> 1) << 4) + (n & 1)) & ramMask];
+			u32 data = planes >> (n * 8) & 0xff;
+			if (cache->bitpend != 0xff) {
+				gsu.result = *at;
+				data = (data & cache->bitpend) | (*at & ~cache->bitpend);
+			}
+			*at = data;
+		}
+		cache->bitpend = 0x00;
+		return;
+	}
 	for (u32 n = 0; n < bpp; ++n) {
 		u32 byte = ((n >> 1) << 4) + (n & 1);
 		u32 data = planes >> (n * 8) & 0xff;

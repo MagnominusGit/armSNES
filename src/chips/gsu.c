@@ -20,6 +20,7 @@ enum { SFR_Z = 1, SFR_CY = 2, SFR_S = 3, SFR_OV = 4, SFR_G = 5, SFR_R = 6, SFR_A
 // Fast mode's recompiled blocks are dropped when the code cache or the settings they were made for
 // change (gsu_jit.inc).
 static void gsuJitInvalidate(void);
+static void gsuJitLines(void);
 static void gsuJitDrop(void);
 
 #define FLAG(bit) (gsu.sfr >> (bit) & 1)
@@ -88,7 +89,7 @@ static u8 readCache(u16 address) {
 static void writeCache(u16 address, u8 data) {
 	address = (address + gsu.cbr) & 511;
 	gsu.cache[address] = data;
-	gsuJitInvalidate();
+	gsuJitLines();
 	if ((address & 15) == 15) {
 		gsu.cacheValid[address >> 4] = true;
 	}
@@ -326,7 +327,7 @@ dispatch:
 					FR.e++;
 				}
 				gsu.cacheValid[FR.c >> 4] = true;
-				gsuJitInvalidate();
+				gsuJitLines();
 			} else {
 				STEP(gsu.clsr ? 1 : 2);
 			}
@@ -520,7 +521,7 @@ static __attribute__((noinline)) void readOpcodeBalanced(u32 address) {
 				from++;
 			}
 			gsu.cacheValid[offset >> 4] = true;
-			gsuJitInvalidate();
+			gsuJitLines();
 		} else {
 			stepBalanced(gsu.clsr ? 1 : 2);
 		}
@@ -731,8 +732,9 @@ static void gsuRunBalanced(void) {
 			CALL(SUB_STEP, 6, 0, 0);
 			continue;
 		}
-		// Fast mode: a recompiled block, when no prefix or written R14 is pending and R15 is in the cache.
-		if ((u16) (pc - gsu.cbr) >= 512) {
+		// Fast mode: a recompiled block, when no prefix or written R14 is pending and R15 is in the cache or
+		// the ROM.
+		if ((u16) (pc - gsu.cbr) >= 512 && gsu.pbr > 0x5f) {
 			gsuJitPass();
 		} else if (GSU_JIT && systemFast && gsuJitEnabled && !written && !gsu.sreg && !gsu.dreg &&
 		           !(gsu.sfr & (1 << SFR_B | 1 << SFR_ALT1 | 1 << SFR_ALT2))) {

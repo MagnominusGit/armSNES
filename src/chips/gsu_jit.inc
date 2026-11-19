@@ -1,9 +1,9 @@
 /* Copyright (c) 2026 Magnominus
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
-// Fast mode's GSU recompiler, included by gsu.c. Runs of instructions in the code cache are
-// compiled to host code that does what the interpreter's loop does, instruction by instruction:
-// it stops before an instruction once the GSU is ahead of the S-CPU, steps the clock for each fetch
+// Fast mode's GSU recompiler, included by gsu.c. Runs of instructions in the code cache, or in
+// the ROM outside it, are compiled to host code that does what the interpreter's loop does,
+// instruction by instruction: it stops before an instruction once the GSU is ahead of the S-CPU, steps the clock for each fetch
 // with the ROM and RAM buffers, and leaves every register, flag and field as the loop would. A
 // block starts with no prefix pending and ends after an instruction that writes R15, or before one
 // it doesn't compile, which the interpreter then runs.
@@ -70,7 +70,9 @@ static struct JitEntry {
 	u8 pipe;
 	bool clsr, ms0;
 	u8 length;  // the program's bytes from pc on that the block fetches
-	u8 lines;   // which cache lines it could reach are valid (jitLines)
+	u8 lines;   // which cache lines it could reach are valid (jitLines); 0 for a block in the ROM
+	u8 pbr;     // a block in the ROM: its bank, and where the cache is, which it stops short of
+	u16 cbr;
 } jitTable[JIT_TABLE];
 static u8 jitVictim[1 << JIT_SET_BITS];
 static u8 jitBytes[JIT_TABLE][JIT_BYTES];
@@ -79,16 +81,22 @@ static const u8 jitNone;
 // Bumped when the code buffer starts again, which drops every block.
 static u32 jitGen = 1;
 // Bumped when lines of the cache are flushed, written or filled: until then, bytes found in it stay,
-// and chains (made to blocks for the lines valid then) hold.
-static u32 jitEpoch = 1;
+// and chains (made to blocks for the lines valid then) hold. Chains from a block in the ROM to
+// another hold until the cache moves or is flushed, or the clock speed or multiplier changes.
+static u32 jitEpoch = 1, jitRomEpoch = 1;
 
 static void gsuJitInvalidate(void) {
+	jitEpoch++;
+	jitRomEpoch++;
+}
+
+static void gsuJitLines(void) {
 	jitEpoch++;
 }
 
 // Every block dropped: the state they were made against is gone.
 static void gsuJitDrop(void) {
-	jitEpoch++;
+	gsuJitInvalidate();
 	jitGen++;
 }
 
@@ -100,6 +108,7 @@ static struct JitSlot {
 	u32 pc;
 	const void* target;
 	u8 pipe;
+	bool rom;  // from a block in the ROM to another
 } jitSlots[1 << 16];
 static u32 jitSlotCount;
 static struct JitSlot* jitLastSlot;
@@ -119,6 +128,7 @@ static const int jReg[7] = { RAX, RCX, RDX, RSI, RDI, R8, RBP };
 #define J_CLOCK R12
 #define J_UNTIL R13
 #define J_EPOCH R14
+#define J_ROM_EPOCH R15
 
 static void jMov(int d, int a) {
 	xMovRR(&jitE, 4, jReg[d], jReg[a]);
@@ -271,7 +281,7 @@ static void jJumpTo(const void* target) {
 // To the slot's block if it was found in this epoch; on, if not, with the slot named.
 static void jChain(struct JitSlot* slot) {
 	xMovI64(&jitE, R11, (u64) (uintptr_t) slot);
-	xAluRM(&jitE, X_CMP, 4, J_EPOCH, M(R11, 0));
+	xAluRM(&jitE, X_CMP, 4, slot->rom ? J_ROM_EPOCH : J_EPOCH, M(R11, 0));
 	uint8_t* miss = xJcc(&jitE, CC_NE, NULL);
 	xJmpM(&jitE, M(R11, offsetof(struct JitSlot, target)));
 	patchHere(&jitE, miss);
@@ -311,6 +321,8 @@ static void jTrampolines(void) {
 	xMovzx(&jitE, RBP, 2, M(J_BASE, GOFF(sfr)));
 	xMovI64(&jitE, R11, (u64) (uintptr_t) &jitEpoch);
 	xLoad(&jitE, 4, J_EPOCH, M(R11, 0));
+	xMovI64(&jitE, R11, (u64) (uintptr_t) &jitRomEpoch);
+	xLoad(&jitE, 4, J_ROM_EPOCH, M(R11, 0));
 	xJmpR(&jitE, RDI);
 	jitExitState = jitE.p;
 	xStore(&jitE, 2, M(J_BASE, GOFF(sfr)), RBP);
@@ -346,6 +358,7 @@ static const int jReg[7] = { 9, 10, 11, 12, 13, 14, 24 };
 #define J_CLOCK 20
 #define J_UNTIL 21
 #define J_EPOCH 22
+#define J_ROM_EPOCH 23
 #define J_TMP 16
 #define J_TMP2 17
 
@@ -508,7 +521,7 @@ static void jJumpTo(const void* target) {
 static void jChain(struct JitSlot* slot) {
 	aMovImm64(&jitE, J_TMP, (u64) (uintptr_t) slot);
 	aLdr(&jitE, J_TMP2, J_TMP, 0);
-	aDp(&jitE, A_SUBS, ZR, J_TMP2, J_EPOCH, S_LSL, 0);
+	aDp(&jitE, A_SUBS, ZR, J_TMP2, slot->rom ? J_ROM_EPOCH : J_EPOCH, S_LSL, 0);
 	uint8_t* miss = aBcond(&jitE, C_NE, NULL);
 	aLdrX(&jitE, J_TMP2, J_TMP, offsetof(struct JitSlot, target));
 	aBr(&jitE, J_TMP2);
@@ -543,6 +556,8 @@ static void jTrampolines(void) {
 	aLdrh(&jitE, 24, J_BASE, GOFF(sfr));
 	aMovImm64(&jitE, J_TMP, (u64) (uintptr_t) &jitEpoch);
 	aLdr(&jitE, J_EPOCH, J_TMP, 0);
+	aMovImm64(&jitE, J_TMP, (u64) (uintptr_t) &jitRomEpoch);
+	aLdr(&jitE, J_ROM_EPOCH, J_TMP, 0);
 	aBr(&jitE, 0);
 	jitExitState = jitE.p;
 	aStrh(&jitE, 24, J_BASE, GOFF(sfr));
@@ -621,12 +636,26 @@ static struct JitFront {
 	u8 startPipe;
 	const uint8_t* startCode;
 	u32 fetched;  // how many bytes from start on it fetches
+	bool rom;     // fetched from the ROM, outside the cache
+	bool romIdle; // no ROM buffer read pending: set by a fetch's wait, until R14 is written or jitOne runs
 } jf;
+
+static u8 jitRomByte(u32 address) {
+	u32 rom = gsu.pbr << 16 | (u16) address;
+	return romAt(gsu.pbr < 0x40 ? ((rom & 0x3f0000) >> 1) | (rom & 0x7fff) : rom);
+}
 
 // A byte of the program, if it is in a valid line of the cache, and no further than a block keeps.
 static bool jitByte(u32 address, u8* byte) {
 	u32 offset = (u16) (address - gsu.cbr);
 	u32 index = (u16) (address - jf.start);
+	if (jf.rom) {
+		if (offset < 512 || index >= JIT_BYTES) {
+			return false;
+		}
+		*byte = jitRomByte(address);
+		return true;
+	}
 	if (offset >= 512 || !gsu.cacheValid[offset >> 4] || index >= JIT_BYTES || (u16) (jf.start - gsu.cbr) + index >= 512) {
 		return false;
 	}
@@ -684,7 +713,7 @@ static void jitExitStub(const struct JitState* s) {
 static void jitExitTo(const struct JitState* out) {
 	if (jitClean(out) && jitSlotCount < sizeof(jitSlots) / sizeof(*jitSlots)) {
 		struct JitSlot* slot = &jitSlots[jitSlotCount++];
-		*slot = (struct JitSlot) { 0, out->pc, NULL, out->pipe };
+		*slot = (struct JitSlot) { 0, out->pc, NULL, out->pipe, jf.rom && (u16) (out->pc - gsu.cbr) >= 512 };
 		if (out->last >= 0) {
 			jStI(1, GOFF(opcode), out->last);
 		}
@@ -704,7 +733,27 @@ static void jitExitLater(uint8_t* site, const struct JitState* s) {
 // added up as the block is made, and given to them in one step before anything that sees them (a
 // call to jitOne, an R14 written, the block's end). Only the buffers' times move, which nothing in
 // between looks at, and the block's runs end at its end instead of an instruction sooner.
+// From the ROM, a fetch first waits for a pending ROM buffer read, as readOpcodeBalanced does.
+static void jitFlush(void);
+static void jitRomWait(void);
+
 static void jitFetchStep(void) {
+	if (jf.rom) {
+		if (!jf.romIdle) {
+			jitFlush();
+			jLd(4, 0, GOFF(romcl));
+			uint8_t* skip = jBranchZ(0);
+			jClockOut();
+			jitSfrOut();
+			jCallV((const void*) jitRomWait);
+			jitSfrIn();
+			jClockIn();
+			jPatchHere(skip);
+			jf.romIdle = true;
+		}
+		jf.pending += jf.clsr ? 5 : 6;
+		return;
+	}
 	jf.pending += jf.clsr ? 1 : 2;
 }
 
@@ -747,6 +796,7 @@ static void jitWriteR(u32 n, int v) {
 }
 
 static void jitEndR14(void) {
+	jf.romIdle = false;
 	jitFlush();
 	jAluI(J_OR, J_SFRV, J_SFRV, 1u << SFR_R);
 	jStI(4, GOFF(romcl), jf.clsr ? 5 : 6);
@@ -841,14 +891,14 @@ static bool jitSupported(const struct JitState* s) {
 		}
 		return (op == 0x95 || op == 0x96 || op == 0x97 || op == 0x9e || op == 0x9f) && s->dreg != 15 && !(op == 0x9f && s->alt1 && s->dreg == 4);
 	case 0xa:
-		return !s->alt1 && !s->alt2 && n != 15 && jitByte(s->pc + 1, &x);
+		return n != 15 && jitByte(s->pc + 1, &x);
 	case 0xb:
 		return !s->b || s->dreg != 15;
 	case 0xd:
 	case 0xe:
 		return n != 15;
 	case 0xf:
-		return !s->alt1 && !s->alt2 && jitByte(s->pc + 1, &x) && jitByte(s->pc + 2, &x);
+		return (n != 15 || (!s->alt1 && !s->alt2)) && jitByte(s->pc + 1, &x) && jitByte(s->pc + 2, &x);
 	}
 	return false;
 }
@@ -891,6 +941,7 @@ static void jitCallOut(const struct JitState* s, u8 op) {
 	jCallI((const void*) jitOne, op);
 	jitSfrIn();
 	jClockIn();
+	jf.romIdle = false;
 }
 
 static void jitColor(u32 v) {
@@ -904,6 +955,44 @@ static void jitCmode(u32 v) {
 // SYNC_ROM_BUFFER's wait, the clock in memory.
 static void jitRomWait(void) {
 	stepBalanced(gsu.romcl);
+}
+
+// lm and lms after their operands: the word at the address (v's low half) in the RAM, into Rn (v >> 16).
+static void jitLoad(u32 v) {
+	u32 n = v >> 16, address = v & 0xffff;
+	if (gsu.ramcl) {
+		stepBalanced(gsu.ramcl);
+	}
+	readBalanced(0x700000 + (gsu.rambr << 16) + address);
+	gsu.lo = gsu.result;
+	readBalanced(0x700000 + (gsu.rambr << 16) + (address ^ 1));
+	gsu.r[n] = (u8) gsu.result << 8 | gsu.lo;
+	if (n != 14) {
+		gsu.modified[n] = true;
+	}
+}
+
+// sm and sms after their operands: Rn to the RAM through the buffer, a byte at a time.
+static void jitStore(u32 v) {
+	u32 n = v >> 16, address = v & 0xffff;
+	for (u32 i = 0; i < 2; ++i) {
+		if (gsu.ramcl) {
+			stepBalanced(gsu.ramcl);
+		}
+		gsu.ramcl = gsu.clsr ? 5 : 6;
+		gsu.ramar = address ^ i;
+		gsu.ramdr = gsu.r[n] >> (i * 8);
+	}
+}
+
+static void jitRam(bool load, u32 n, u32 address) {
+	jStI(2, GOFF(ramaddr), address);
+	jitFlush();
+	jClockOut();
+	jitSfrOut();
+	jCallI(load ? (const void*) jitLoad : (const void*) jitStore, address | n << 16);
+	jitSfrIn();
+	jClockIn();
 }
 
 // plot as plotBalanced does it when no row of the pixel cache is flushed; 0, with nothing done, when
@@ -1371,9 +1460,16 @@ static bool jitInstruction(struct JitState* s) {
 		jitRegsReset(s);
 		break;
 	case 0xa: {
-		// ibt
 		u8 v = jitPipe(s);
 		jStI(4, GOFF(result), v);
+		if (s->alt1 || s->alt2) {
+			// lms / sms
+			jitRam(s->alt1, n, v << 1);
+			r14 |= s->alt1 && n == 14;
+			jitRegsReset(s);
+			break;
+		}
+		// ibt
 		jMovI(0, (u16) (s8) v);
 		jitWriteR(n, 0);
 		r14 |= n == 14;
@@ -1407,11 +1503,18 @@ static bool jitInstruction(struct JitState* s) {
 		jitRegsReset(s);
 		break;
 	case 0xf: {
-		// iwt
 		u8 lo = jitPipe(s);
-		jStI(1, GOFF(lo), lo);
 		u8 hi = jitPipe(s);
 		jStI(4, GOFF(result), hi);
+		if (s->alt1 || s->alt2) {
+			// lm / sm
+			jitRam(s->alt1, n, hi << 8 | lo);
+			r14 |= s->alt1 && n == 14;
+			jitRegsReset(s);
+			break;
+		}
+		// iwt
+		jStI(1, GOFF(lo), lo);
 		if (n == 15) {
 			jitFlush();
 			jitRegsReset(s);
@@ -1465,6 +1568,8 @@ static const void* jitCompile(u32 pc, u8 pipe) {
 	jf.start = pc;
 	jf.startPipe = pipe;
 	jf.fetched = 0;
+	jf.rom = (u16) (pc - gsu.cbr) >= 512;
+	jf.romIdle = false;
 	struct JitState s = { .pc = pc, .pipe = pipe, .last = -1 };
 	u8 x;
 	if (!jitByte(pc, &x) || !jitSupported(&s)) {
@@ -1543,16 +1648,20 @@ static bool gsuJitRun(u32 pc, u8 pipe, u64 until) {
 	struct JitSlot* last = jitLastSlot;
 	jitLastSlot = NULL;
 	u32 offset = (u16) (pc - gsu.cbr);
-	if (offset >= 512 || !gsu.cacheValid[offset >> 4]) {
+	bool rom = offset >= 512;
+	if (rom ? gsu.pbr > 0x5f : !gsu.cacheValid[offset >> 4]) {
 		return false;
 	}
-	u8 lines = jitLines(offset);
-	u32 set = (pc * 0x9e3779b1u + pipe * 0x85ebca6bu + lines * 0xc2b2ae35u) >> (32 - JIT_SET_BITS);
+	u8 lines = rom ? 0 : jitLines(offset);
+	u8 pbr = rom ? gsu.pbr : 0;
+	u16 cbr = rom ? gsu.cbr : 0;
+	u32 set = (pc * 0x9e3779b1u + pipe * 0x85ebca6bu + (lines | pbr << 8 | cbr << 16) * 0xc2b2ae35u) >> (32 - JIT_SET_BITS);
 	u32 index = set * 4;
 	struct JitEntry* e = NULL;
 	for (u32 way = 0; way < 4; ++way, ++index) {
 		struct JitEntry* t = &jitTable[index];
-		if (t->gen == jitGen && t->pc == pc && t->pipe == pipe && t->clsr == gsu.clsr && t->ms0 == gsu.cfgr.ms0 && t->lines == lines) {
+		if (t->gen == jitGen && t->pc == pc && t->pipe == pipe && t->clsr == gsu.clsr && t->ms0 == gsu.cfgr.ms0 && t->lines == lines &&
+		    t->pbr == pbr && t->cbr == cbr) {
 			e = t;
 			break;
 		}
@@ -1560,9 +1669,9 @@ static bool gsuJitRun(u32 pc, u8 pipe, u64 until) {
 	if (!e) {
 		index = set * 4 + (jitVictim[set]++ & 3);
 		e = &jitTable[index];
-		*e = (struct JitEntry) { NULL, jitGen, 0, (u16) pc, 0, pipe, gsu.clsr, gsu.cfgr.ms0, 0, lines };
+		*e = (struct JitEntry) { NULL, jitGen, 0, (u16) pc, 0, pipe, gsu.clsr, gsu.cfgr.ms0, 0, lines, pbr, cbr };
 	}
-	if (e->code && e->checked != jitEpoch) {
+	if (!rom && e->code && e->checked != jitEpoch) {
 		if (!jitInCache(pc, e->length, jitBytes[index])) {
 			e->code = NULL;
 			e->count = 0;
@@ -1576,7 +1685,9 @@ static bool gsuJitRun(u32 pc, u8 pipe, u64 until) {
 		}
 		// The bytes it fetched: from pc to the furthest one.
 		e->length = jf.fetched ? jf.fetched : 1;
-		memcpy(jitBytes[index], &gsu.cache[offset], e->length);
+		if (!rom) {
+			memcpy(jitBytes[index], &gsu.cache[offset], e->length);
+		}
 		e->checked = jitEpoch;
 	}
 	if (e->code == &jitNone) {
@@ -1585,7 +1696,7 @@ static bool gsuJitRun(u32 pc, u8 pipe, u64 until) {
 	// The exit that came here named a slot for this block: chain it.
 	if (last && last->pc == pc && last->pipe == pipe && e->gen == jitGen) {
 		last->target = e->code;
-		last->epoch = jitEpoch;
+		last->epoch = last->rom ? jitRomEpoch : jitEpoch;
 	}
 	jitEnter(e->code, until);
 	return true;
@@ -1594,6 +1705,8 @@ static bool gsuJitRun(u32 pc, u8 pipe, u64 until) {
 #else
 #define GSU_JIT 0
 static void gsuJitInvalidate(void) {
+}
+static void gsuJitLines(void) {
 }
 static inline void gsuJitPass(void) {
 }

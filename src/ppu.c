@@ -1826,10 +1826,12 @@ void ppuVramDma(const u8* data, const u8* high, u32 count) {
 		u16* word = vramAt(addressVRAM());
 		*word = high[n] ? (*word & 0x00ff) | data[n] << 8 : (*word & 0xff00) | data[n];
 		++vramWrites;
-		if (threaded) {
+		bool step = ppu.io.vramIncrementMode == high[n];
+		// A word the next byte lands in again goes to the picture thread once, after that byte.
+		if (threaded && (step || n + 1 == count)) {
 			fastPpuVram(addressVRAM() & ppu.vramMask, *word);
 		}
-		if (ppu.io.vramIncrementMode == high[n]) {
+		if (step) {
 			ppu.io.vramAddress += ppu.io.vramIncrementSize;
 		}
 	}

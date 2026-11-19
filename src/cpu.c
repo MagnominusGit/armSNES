@@ -941,16 +941,27 @@ static bool dmaToVram(struct DmaChannel* channel, u8* index) {
 	u64 until = ppuVramDmaUntil();
 	u32 remaining = channel->transferSize ? channel->transferSize : 0x10000;
 	u64 clocks = cpu.th.scalar * 8;
+	// The bytes that end before the CPU's next event and by the PPU's clock.
+	u32 h = cpu.counter.hcounter;
+	u32 most = !until || fastNext <= h || until < cpu.th.clock ? 0 : (fastNext - h - 1) / 8;
+	most = most < MOST ? most : MOST;
+	most = most < remaining ? most : remaining;
+	if (most && (until - cpu.th.clock) / clocks < most) {
+		most = (until - cpu.th.clock) / clocks;
+	}
+	u8 ports[4];
+	for (u32 n = 0; n < 4; ++n) {
+		ports[n] = transferAddressB(channel, (*index + n) & 3);
+	}
 	u16 source = channel->sourceAddress;
 	u32 count = 0;
 	u8 mdr = R.mdr;
 	u32 address = 0;
-	while (until && count < MOST && count < remaining && cpu.counter.hcounter + 8 * (count + 1) < fastNext &&
-	       cpu.th.clock + clocks * (count + 1) <= until) {
-		u8 port = transferAddressB(channel, (*index + count) & 3);
+	while (count < most) {
+		u8 port = ports[count & 3];
 		address = channel->sourceBank << 16 | source;
 		u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
-		if ((port != 0x18 && port != 0x19) || (!busDirectPages[at >> 8] && !(cart.gsu && (address & 0xfe0000) == 0x700000))) {
+		if ((port != 0x18 && port != 0x19) || (!busFastPages[at >> 8] && !(cart.gsu && (address & 0xfe0000) == 0x700000))) {
 			break;
 		}
 		data[count] = mdr = validA(address) ? busRead(address, mdr) : 0x00;
@@ -994,7 +1005,7 @@ static bool dmaToWram(struct DmaChannel* channel, u8* index) {
 		address = channel->sourceBank << 16 | source;
 		u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
 		if (transferAddressB(channel, (*index + count) & 3) != 0x80 || (at & 0xfe0000) == 0x7e0000 ||
-		    (!busDirectPages[at >> 8] && !(cart.gsu && (address & 0xfe0000) == 0x700000))) {
+		    (!busFastPages[at >> 8] && !(cart.gsu && (address & 0xfe0000) == 0x700000))) {
 			break;
 		}
 		mdr = validA(address) ? busRead(address, mdr) : 0x00;

@@ -980,9 +980,13 @@ static bool dmaToVram(struct DmaChannel* channel, u8* index) {
 	} else if ((until - cpu.th.clock) / clocks < most) {
 		most = (until - cpu.th.clock) / clocks;
 	}
+	// The ports repeat every four bytes: up to the first that isn't $2118/$2119.
 	u8 ports[4];
 	for (u32 n = 0; n < 4; ++n) {
 		ports[n] = transferAddressB(channel, (*index + n) & 3);
+		if (ports[n] != 0x18 && ports[n] != 0x19 && n < most) {
+			most = n;
+		}
 	}
 	struct DmaSource from;
 	dmaSourceStart(&from);
@@ -990,12 +994,16 @@ static bool dmaToVram(struct DmaChannel* channel, u8* index) {
 	u32 count = 0;
 	u8 mdr = R.mdr;
 	u32 address = 0;
+	u32 page = ~0u;
 	while (count < most) {
 		u8 port = ports[count & 3];
 		address = channel->sourceBank << 16 | source;
 		u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
-		if ((port != 0x18 && port != 0x19) || (!busFastPages[at >> 8] && !(cart.gsu && (address & 0xfe0000) == 0x700000))) {
-			break;
+		if (at >> 8 != page) {
+			if (!busFastPages[at >> 8] && !(cart.gsu && (address & 0xfe0000) == 0x700000)) {
+				break;
+			}
+			page = at >> 8;
 		}
 		data[count] = mdr = dmaSourceRead(&from, address, mdr);
 		high[count] = port & 1;

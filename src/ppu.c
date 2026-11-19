@@ -1117,9 +1117,8 @@ void ppuLatchCounters(void) {
 	ppu.latch.counters = 1;
 }
 
-static u16 addressVRAM(void) {
-	u16 address = ppu.io.vramAddress;
-	switch (ppu.io.vramMapping) {
+static inline u16 mapVRAM(u16 address, u8 mapping) {
+	switch (mapping) {
 	case 0:
 		return address;
 	case 1:
@@ -1129,6 +1128,10 @@ static u16 addressVRAM(void) {
 	default:
 		return (address & 0xfc00) | (address & 0x7f) << 3 | (address >> 7 & 7);
 	}
+}
+
+static u16 addressVRAM(void) {
+	return mapVRAM(ppu.io.vramAddress, ppu.io.vramMapping);
 }
 
 static inline bool rendering(void) {
@@ -1822,19 +1825,25 @@ u64 ppuVramDmaUntil(void) {
 // Count bytes, each to $2118 or $2119 (high), as writeVRAM would land them.
 void ppuVramDma(const u8* data, const u8* high, u32 count) {
 	bool threaded = systemFast && systemPictureThread;
+	u16 address = ppu.io.vramAddress, size = ppu.io.vramIncrementSize;
+	u8 mapping = ppu.io.vramMapping, mode = ppu.io.vramIncrementMode;
+	u32 mask = ppu.vramMask;
 	for (u32 n = 0; n < count; ++n) {
-		u16* word = vramAt(addressVRAM());
-		*word = high[n] ? (*word & 0x00ff) | data[n] << 8 : (*word & 0xff00) | data[n];
-		++vramWrites;
-		bool step = ppu.io.vramIncrementMode == high[n];
+		u32 at = mapVRAM(address, mapping) & mask;
+		u16 word = ppu.vram[at];
+		word = high[n] ? (word & 0x00ff) | data[n] << 8 : (word & 0xff00) | data[n];
+		ppu.vram[at] = word;
+		bool step = mode == high[n];
 		// A word the next byte lands in again goes to the picture thread once, after that byte.
 		if (threaded && (step || n + 1 == count)) {
-			fastPpuVram(addressVRAM() & ppu.vramMask, *word);
+			fastPpuVram(at, word);
 		}
 		if (step) {
-			ppu.io.vramAddress += ppu.io.vramIncrementSize;
+			address += size;
 		}
 	}
+	ppu.io.vramAddress = address;
+	vramWrites += count;
 	if (!threaded) {
 		fastStale = true;
 	}

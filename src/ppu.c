@@ -3910,6 +3910,12 @@ static void balancedWrite(u32 address) {
 	if (h <= balancedSplit) {
 		return;
 	}
+	// Fast mode: the color math registers are first used at dot 58 (windowRun, dacRun), so one written
+	// before it is used from the line's start, which snes_faust's renderer can draw whole.
+	u16 reg = address & 0xffff;
+	if (systemFast && reg >= 0x2130 && reg <= 0x2132 && h <= 58) {
+		return;
+	}
 	ppu.counter.hcounter = balancedSplit;
 	renderSpan(balancedSplit, h);
 	balancedSplit = h;

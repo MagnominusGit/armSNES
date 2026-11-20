@@ -5,28 +5,32 @@
  * Ported from ares (ISC); see LICENSES/ISC-ares.txt. */
 #include "snes.h"
 
-// The two controller ports. Each takes a standard pad or a mouse; the second also a Super Multitap
-// with four pads, a Super Scope or one or two Justifiers, whose light is taken from where the beam
-// is, as ares takes it.
+// The two controller ports. Each takes a standard pad, a rumble pad, a mouse, a Super Multitap with
+// four pads, an NTT Data Keypad or a Twin Tap; the second also a Super Scope or one or two
+// Justifiers, whose light is taken from where the beam is, as ares takes it.
 
 struct Input input;
 u8 inputDevice[2] = { DEVICE_PAD, DEVICE_PAD };
 bool inputGuns;
 
+static bool isGun(int device) {
+	return device == DEVICE_SUPER_SCOPE || device == DEVICE_JUSTIFIER || device == DEVICE_JUSTIFIERS;
+}
+
 void inputPower(void) {
 	memset(&input, 0, sizeof(input));
 	input.gun.cx[0] = input.gun.cx[1] = -1;
 	input.gun.cy[0] = input.gun.cy[1] = -1;
-	inputGuns = inputDevice[1] >= DEVICE_SUPER_SCOPE;
+	inputGuns = isGun(inputDevice[1]);
 }
 
 void inputSetDevice(int port, int device) {
 	// The guns' light is only wired to the second port's pin.
-	if (port == 0 && device != DEVICE_NONE && device != DEVICE_MOUSE) {
+	if (port == 0 && isGun(device)) {
 		device = DEVICE_PAD;
 	}
 	inputDevice[port] = device;
-	inputGuns = inputDevice[1] >= DEVICE_SUPER_SCOPE;
+	inputGuns = isGun(inputDevice[1]);
 }
 
 // --- The standard pad: a 16-bit shift register that takes the buttons when its latch falls ---
@@ -99,6 +103,69 @@ static void padLatch(struct Pad* pad, int which, bool data) {
 			pad->rightLatch = swap;
 		}
 	}
+}
+
+// The port's pin, which the CPU sets in $4201.
+static bool ioBit(int port) {
+	return cpu.io.pio >> (6 + port) & 1;
+}
+
+// --- The NTT Data Keypad: a pad with Back and Next for Select and Start, and 16 bits of keys more ---
+
+static u8 keypadData(int port) {
+	struct Pad* pad = &input.pad[port];
+	u8 n = pad->counter;
+	if (pad->latched || n < 12) {
+		return padData(pad, port);
+	}
+	pad->counter++;
+	if (n < 16) {
+		// The device signature.
+		return n == 13;
+	}
+	if (n < 32) {
+		return input.keys[port] >> (n - 16) & 1;
+	}
+	pad->counter = 32;
+	return 1;
+}
+
+static void keypadLatch(int port, bool data) {
+	struct Pad* pad = &input.pad[port];
+	if (pad->latched != data && !data) {
+		input.keys[port] = inputPollKeys(port) & ~(1 << 14);
+	}
+	padLatch(pad, port, data);
+}
+
+// --- The Twin Tap: two buttons, 2 then 1 ---
+
+static u8 twinTapData(int port) {
+	struct Pad* pad = &input.pad[port];
+	if (pad->latched) {
+		return padData(pad, port);
+	}
+	switch (pad->counter++) {
+	case 0: return pad->buttons >> PAD_B & 1;
+	case 1: return pad->buttons >> PAD_A & 1;
+	}
+	if (pad->counter < 24) {
+		return 0;
+	}
+	pad->counter = 24;
+	return 1;
+}
+
+// --- The rumble pad: a homebrew pad that takes its motors' strengths through the port's pin, sent
+// after the byte 0x72 ---
+
+static u8 rumblePadData(int port) {
+	input.rumble[port] = (u16) (input.rumble[port] << 1 | ioBit(port));
+	if (input.rumble[port] >> 8 == 0x72) {
+		inputRumble(port, input.rumble[port] & 15, input.rumble[port] >> 4 & 15);
+		input.rumble[port] = 0;
+	}
+	return padData(&input.pad[port], port);
 }
 
 // --- The mouse: 32 bits, the buttons and speed, then how far it moved each way ---
@@ -320,22 +387,37 @@ static void gunLatch(bool data) {
 
 // --- The ports ---
 
-// The pad a port's own pad is for the frontend: 0, and 1 on the second port, where a Super Multitap
-// has 1 to 4.
+// A Super Multitap's pads: 1 to 4 in the second port, 0 and 5 to 7 in the first.
+static struct Pad* tapPad(int port, int n, int* which) {
+	if (port) {
+		*which = n + 1;
+		return &input.pad[n + 1];
+	}
+	*which = n ? n + 4 : 0;
+	return n ? &input.firstTap[n - 1] : &input.pad[0];
+}
+
+static u8 multitapData(int port) {
+	// What tells a game it is there.
+	if (port ? input.tapLatched : input.firstTapLatched) {
+		return 2;
+	}
+	// The port's pin picks the pair of pads.
+	int first = ioBit(port) ? 0 : 2, a, b;
+	struct Pad* padA = tapPad(port, first, &a);
+	struct Pad* padB = tapPad(port, first + 1, &b);
+	return padData(padA, a) | padData(padB, b) << 1;
+}
+
+// The pad a port's own pad is for the frontend: 0, and 1 on the second port.
 u8 controllerData(int port) {
 	switch (inputDevice[port]) {
 	case DEVICE_PAD: return padData(&input.pad[port], port);
+	case DEVICE_RUMBLE_PAD: return rumblePadData(port);
+	case DEVICE_KEYPAD: return keypadData(port);
+	case DEVICE_TWIN_TAP: return twinTapData(port);
 	case DEVICE_MOUSE: return mouseData(&input.mouse[port]);
-	case DEVICE_MULTITAP:
-		// What tells a game it is there.
-		if (input.tapLatched) {
-			return 2;
-		}
-		// The port's pin picks the pair of pads.
-		if (cpu.io.pio & 0x80) {
-			return padData(&input.pad[1], 1) | padData(&input.pad[2], 2) << 1;
-		}
-		return padData(&input.pad[3], 3) | padData(&input.pad[4], 4) << 1;
+	case DEVICE_MULTITAP: return multitapData(port);
 	case DEVICE_SUPER_SCOPE: return scopeData();
 	case DEVICE_JUSTIFIER:
 	case DEVICE_JUSTIFIERS:
@@ -346,12 +428,19 @@ u8 controllerData(int port) {
 
 void controllerLatch(int port, bool data) {
 	switch (inputDevice[port]) {
-	case DEVICE_PAD: padLatch(&input.pad[port], port, data); break;
+	case DEVICE_PAD:
+	case DEVICE_RUMBLE_PAD:
+	case DEVICE_TWIN_TAP:
+		padLatch(&input.pad[port], port, data);
+		break;
+	case DEVICE_KEYPAD: keypadLatch(port, data); break;
 	case DEVICE_MOUSE: mouseLatch(&input.mouse[port], port, data); break;
 	case DEVICE_MULTITAP:
-		input.tapLatched = data;
-		for (int n = 1; n <= 4; n++) {
-			padLatch(&input.pad[n], n, data);
+		*(port ? &input.tapLatched : &input.firstTapLatched) = data;
+		for (int n = 0; n < 4; n++) {
+			int which;
+			struct Pad* pad = tapPad(port, n, &which);
+			padLatch(pad, which, data);
 		}
 		break;
 	case DEVICE_SUPER_SCOPE:

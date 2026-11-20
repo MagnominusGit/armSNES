@@ -586,10 +586,23 @@ struct Input {
 	struct Mouse mouse[2];
 	struct Gun gun;
 	bool tapLatched;
+	// A Super Multitap's other three pads in the first port.
+	struct Pad firstTap[3];
+	bool firstTapLatched;
+	// Each port's NTT Data Keypad keys, and what a rumble pad has been sent.
+	u16 keys[2];
+	u16 rumble[2];
 };
 extern struct Input input;
 
-enum { DEVICE_NONE, DEVICE_PAD, DEVICE_MOUSE, DEVICE_MULTITAP, DEVICE_SUPER_SCOPE, DEVICE_JUSTIFIER, DEVICE_JUSTIFIERS };
+enum {
+	DEVICE_NONE, DEVICE_PAD, DEVICE_MOUSE, DEVICE_MULTITAP, DEVICE_SUPER_SCOPE, DEVICE_JUSTIFIER, DEVICE_JUSTIFIERS,
+	DEVICE_RUMBLE_PAD, DEVICE_KEYPAD, DEVICE_TWIN_TAP,
+};
+// The NTT Data Keypad's keys past the pad's, one bit each from 0 to 9; Back and Next are Select's and
+// Start's.
+enum { KEY_STAR = 10, KEY_POUND, KEY_POINT, KEY_CLEAR, KEY_END = 15 };
+// The Twin Tap's buttons are the pad's: 1 its A, 2 its B.
 // A gun's buttons; the Justifier's Start is its pause.
 enum { GUN_TRIGGER, GUN_CURSOR, GUN_TURBO, GUN_PAUSE };
 extern u8 inputDevice[2];
@@ -597,14 +610,19 @@ extern u8 inputDevice[2];
 extern bool inputGuns;
 
 void inputPower(void);
-// What is plugged into a port. The first takes a pad or a mouse.
+// What is plugged into a port. The guns go in the second.
 void inputSetDevice(int port, int device);
 u8 controllerData(int port);
 void controllerLatch(int port, bool data);
 void inputBeam(u32 vcounter, u32 hcounter);
 // The frontend's: the buttons held on a pad now, one bit each by the numbers above. Pad 0 is the
-// first port's and 1 the second's; a Super Multitap's are 1 to 4.
+// first port's and 1 the second's; a Super Multitap's are 1 to 4 in the second, 0 and 5 to 7 in the
+// first.
 u16 inputPoll(int pad);
+// The keys held on a port's NTT Data Keypad, by the numbers above.
+u16 inputPollKeys(int port);
+// A rumble pad's motors, 0 to 15 each.
+void inputRumble(int port, u8 strong, u8 weak);
 // How far a port's mouse moved since it was last asked, and its buttons.
 void inputPollMouse(int port, int* x, int* y, bool* left, bool* right);
 // Where a gun points in the picture, 256 wide, or below 0 when off it, and its buttons.

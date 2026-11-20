@@ -14,7 +14,7 @@
 // A state is taken between frames. The canvas is usually clear then, but not after a DMA that ran on
 // into the next frame.
 
-enum { STATE_MAGIC = 0x534e5341, STATE_VERSION = 14 };
+enum { STATE_MAGIC = 0x534e5341, STATE_VERSION = 15 };
 
 struct StateHeader {
 	u32 magic;
@@ -184,14 +184,24 @@ bool stateLoad(const void* data, size_t size) {
 	}
 	memcpy(&header, data, sizeof(header));
 
-	// Version 13 is this one without ppu.framePending, the PPU's last field.
+	// Version 14 is this one with the controllers' state as it was before the first port took a Super
+	// Multitap, which comes first in the new; 13 also without ppu.framePending, the PPU's last field.
+	struct OldInput {
+		struct Pad pad[5];
+		struct Mouse mouse[2];
+		struct Gun gun;
+		bool tapLatched;
+	};
 	u32 sizes[23];
 	layout(sizes);
-	const bool v13 = header.version == 13;
+	const bool v13 = header.version == 13, old = v13 || header.version == 14;
 	const size_t ppuSize = v13 ? offsetof(struct Ppu, framePending) : sizeof(ppu);
+	const size_t inputSize = old ? sizeof(struct OldInput) : sizeof(input);
 	sizes[4] = (u32) ppuSize;
-	if (header.magic != STATE_MAGIC || (header.version != STATE_VERSION && !v13) || memcmp(header.sizes, sizes, sizeof(sizes)) ||
-	    header.ramSize != cart.ramSize || header.extraSize != extraSize() || size < stateSize() - (sizeof(ppu) - ppuSize)) {
+	sizes[5] = (u32) inputSize;
+	if (header.magic != STATE_MAGIC || (header.version != STATE_VERSION && !old) || memcmp(header.sizes, sizes, sizeof(sizes)) ||
+	    header.ramSize != cart.ramSize || header.extraSize != extraSize() ||
+	    size < stateSize() - (sizeof(ppu) - ppuSize) - (sizeof(input) - inputSize)) {
 		return false;
 	}
 
@@ -210,7 +220,11 @@ bool stateLoad(const void* data, size_t size) {
 		ppu.framePending = systemFrameAtTop && ppu.counter.vcounter >= 240 && ppu.counter.vcounter < ppu.counter.vperiod - 1u &&
 			ppu.drawnTo > 0;
 	}
-	GET(input);
+	if (old) {
+		memset(&input, 0, sizeof(input));
+	}
+	memcpy(&input, in, inputSize);
+	in += inputSize;
 	GET(necdsp);
 	GET(sa1);
 	GET(gsu);

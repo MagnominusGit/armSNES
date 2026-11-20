@@ -156,6 +156,17 @@ void inputPollMouse(int port, int* x, int* y, bool* left, bool* right) {
 	*right = false;
 }
 
+u16 inputPollKeys(int port) {
+	(void) port;
+	return 0;
+}
+
+void inputRumble(int port, u8 strong, u8 weak) {
+	(void) port;
+	(void) strong;
+	(void) weak;
+}
+
 void inputPollGun(int gun, int* x, int* y, u8* buttons) {
 	*x = (sys.frames * 2 + gun * 100) % 256;
 	*y = (sys.frames + gun * 50) % 200 + 10;

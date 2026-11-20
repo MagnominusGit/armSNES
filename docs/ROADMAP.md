@@ -146,4 +146,6 @@ The rest of phase 4, easiest first, all in now:
     lost at power off on the console).
 14. HD Mode 7: mode 7 drawn at two to four times the resolution.
 
-Rumble isn't on the list: no Super Nintendo controller had it.
+Then the controllers ares has that were missing: the homebrew rumble pad, the NTT Data Keypad (its
+number keys from the keyboard), the Twin Tap and a Super Multitap in either port. The light guns and
+the mouse aim with the right stick, a touch or the device's motion as well as a light gun or mouse.

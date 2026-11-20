@@ -5,6 +5,7 @@
 #include "snes.h"
 #include "fastppu.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <strings.h>
@@ -25,6 +26,20 @@ static retro_input_poll_t inputPollFrontend;
 static retro_input_state_t inputState;
 static retro_log_printf_t logPrintf;
 
+// Why a game didn't load, in the log and on screen.
+static void loadError(const char* format, ...) {
+	char text[512];
+	va_list list;
+	va_start(list, format);
+	vsnprintf(text, sizeof(text), format, list);
+	va_end(list);
+	if (logPrintf) {
+		logPrintf(RETRO_LOG_ERROR, "armSNES: %s\n", text);
+	}
+	struct retro_message message = { text, 360 };
+	environment(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+}
+
 static u8* game;
 static bool loaded;
 static bool bitmasks;
@@ -38,6 +53,8 @@ static u16* output = outputs[0];
 static unsigned outputWidth = 256, outputHeight = 224;
 static bool crosshair = true;
 static bool outputReady;
+// The picture last given to the frontend.
+static const u16* shown;
 
 // A pixel of the canvas, four bits of brightness over 15 bits of color, as RGB565. Brightness 0 isn't
 // black but much darker than a linear scale would make it, as ares shows it.
@@ -177,8 +194,15 @@ static void lineDrawn(u32* at, const u32* pixels) {
 static u16 moved[OUTPUT_WIDTH * OUTPUT_HEIGHT];
 static bool movedWide[OUTPUT_HEIGHT];
 
+// The frontend won't show this frame (run-ahead, fast-forward): nothing is converted from the canvas.
+static bool pictureUnseen;
+
 // The part of the canvas a television shows, as ares crops it without overscan.
 void videoFrame(const u32* canvas) {
+	if (pictureUnseen) {
+		stamp++;
+		return;
+	}
 	output = outputs[stamp & 1];
 	bool interlace = ppu.state.interlace;
 	u32 yScale = interlace ? 2 : 1;
@@ -604,6 +628,13 @@ void retro_run(void) {
 	readPads();
 	outputReady = false;
 	soundCount = 0;
+	int av = RETRO_AV_ENABLE_VIDEO | RETRO_AV_ENABLE_AUDIO;
+	if (!environment(RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE, &av)) {
+		av = RETRO_AV_ENABLE_VIDEO | RETRO_AV_ENABLE_AUDIO;
+	}
+	bool dupe = false;
+	environment(RETRO_ENVIRONMENT_GET_CAN_DUPE, &dupe);
+	pictureUnseen = dupe && !(av & RETRO_AV_ENABLE_VIDEO);
 
 	systemRunFrame();
 
@@ -611,11 +642,12 @@ void retro_run(void) {
 		if (inputGuns && crosshair) {
 			drawCrosshairs();
 		}
-		videoRefresh(output, outputWidth, outputHeight, OUTPUT_WIDTH * sizeof(u16));
-	} else {
-		videoRefresh(NULL, outputWidth, outputHeight, OUTPUT_WIDTH * sizeof(u16));
+		shown = output;
 	}
-	if (soundCount) {
+	// Without a new picture the last one is given again, unless the frontend repeats it itself.
+	const u16* picture = outputReady || !dupe ? (shown ? shown : output) : NULL;
+	videoRefresh(picture, outputWidth, outputHeight, OUTPUT_WIDTH * sizeof(u16));
+	if (soundCount && (av & RETRO_AV_ENABLE_AUDIO)) {
 		audioBatch(sound, soundCount);
 	}
 	if (rtcPresent()) {
@@ -687,6 +719,28 @@ static void readOptions(void) {
 	crosshair = !environment(RETRO_ENVIRONMENT_GET_VARIABLE, &cross) || !cross.value || strcmp(cross.value, "Off");
 }
 
+// Where the work RAM, the cartridge's RAM and the SA-1's I-RAM sit, for achievements and cheat
+// searches: the cartridge's RAM and the I-RAM above the 24-bit bus, where rcheevos looks for them.
+static void setMemoryMaps(void) {
+	static struct retro_memory_descriptor descriptors[3];
+	static struct retro_memory_map map;
+	unsigned count = 0;
+	descriptors[count++] = (struct retro_memory_descriptor) { RETRO_MEMDESC_SYSTEM_RAM, cpu.wram, 0, 0x7e0000, 0, 0, sizeof(cpu.wram), "WRAM" };
+	u8* ram = cart.ramSize ? cart.ram : cart.saveRam;
+	size_t ramSize = cart.ramSize ? cart.ramSize : cart.saveRamSize;
+	if (ram && ramSize) {
+		descriptors[count++] = (struct retro_memory_descriptor) { RETRO_MEMDESC_SAVE_RAM, ram, 0, 0x1000000, 0, 0, ramSize, "SRAM" };
+	}
+	if (cart.sa1) {
+		descriptors[count++] = (struct retro_memory_descriptor) { RETRO_MEMDESC_SYSTEM_RAM, sa1.iram, 0, 0x1080000, 0, 0, sizeof(sa1.iram), "IRAM" };
+	}
+	map.descriptors = descriptors;
+	map.num_descriptors = count;
+	environment(RETRO_ENVIRONMENT_SET_MEMORY_MAPS, &map);
+	bool achievements = true;
+	environment(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
+}
+
 bool retro_load_game(const struct retro_game_info* info) {
 	netplaySeen = false;
 	if (!info || !info->data) {
@@ -708,9 +762,7 @@ bool retro_load_game(const struct retro_game_info* info) {
 	u8* boot = gameBoy ? systemFile("sgb1.boot.rom", &bootSize) : NULL;
 	if (gameBoy && (!boot || bootSize != 256)) {
 		free(boot);
-		if (logPrintf) {
-			logPrintf(RETRO_LOG_ERROR, "armSNES: a Game Boy game needs sgb1.boot.rom in the system folder\n");
-		}
+		loadError("A Game Boy game needs sgb1.boot.rom in the system folder");
 		return false;
 	}
 	if (pack || sufami || gameBoy) {
@@ -723,9 +775,7 @@ bool retro_load_game(const struct retro_game_info* info) {
 		}
 		if (!game) {
 			free(boot);
-			if (logPrintf) {
-				logPrintf(RETRO_LOG_ERROR, "armSNES: this needs %s in the system folder\n", base);
-			}
+			loadError("This game needs %s in the system folder", base);
 			return false;
 		}
 	} else {
@@ -736,8 +786,10 @@ bool retro_load_game(const struct retro_game_info* info) {
 	    (sufami && !cartInsertSufami(0, info->data, info->size)) ||
 	    (gameBoy && !cartInsertGameBoy(info->data, info->size, boot, bootSize))) {
 		free(boot);
-		if (logPrintf) {
-			logPrintf(RETRO_LOG_ERROR, "armSNES: the %s board can't be loaded without %s\n", cart.board, cart.missing);
+		if (cart.missing[0]) {
+			loadError("The %s board needs %s in the system folder", cart.board, cart.missing);
+		} else {
+			loadError("This game couldn't be loaded");
 		}
 		free(game);
 		game = NULL;
@@ -798,11 +850,13 @@ bool retro_load_game(const struct retro_game_info* info) {
 	readOptions();
 	systemLoad(cart.pal);
 	systemPower(false);
+	setMemoryMaps();
 	if (rtcPresent()) {
 		rtcSave(rtcMemory, (s64) time(NULL));
 		memcpy(rtcStart, rtcMemory, sizeof(rtcStart));
 	}
 	rtcApplied = false;
+	shown = NULL;
 	loaded = true;
 	return true;
 }

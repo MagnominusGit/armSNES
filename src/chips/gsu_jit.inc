@@ -1955,5 +1955,11 @@ static inline void gsuJitPass(void) {
 }
 static void gsuJitDrop(void) {
 }
+static bool gsuJitRun(u32 pc, u8 pipe, u64 until) {
+	(void) pc;
+	(void) pipe;
+	(void) until;
+	return false;
+}
 bool gsuJitEnabled;
 #endif

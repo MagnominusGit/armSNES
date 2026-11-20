@@ -195,6 +195,8 @@ static void lineDrawn(u32* at, const u32* pixels) {
 static u16 moved[OUTPUT_WIDTH * OUTPUT_HEIGHT];
 static bool movedWide[OUTPUT_HEIGHT];
 
+static bool overscanShown;
+
 // The frontend won't show this frame (run-ahead, fast-forward): nothing is converted from the canvas.
 static bool pictureUnseen;
 
@@ -211,6 +213,11 @@ void videoFrame(const u32* canvas) {
 	u32 x = 26;
 	u32 y = 9 * yScale;
 	u32 h = height - 18;
+	// NTSC's overscan lines as PAL shows them: all 239 the game draws.
+	if (overscanShown && !sys.pal && ppu.state.overscan) {
+		y = yScale;
+		h = 239;
+	}
 	if (sys.pal) {
 		x -= 4;
 		y += 12 * yScale;
@@ -534,6 +541,21 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armsnes_sa1_clock", "SA-1 Clock", NULL,
 		"The SA-1 chip's speed, for its games: above 100% less slowdown.",
 		NULL, "system", CLOCK_VALUES, "100%" },
+	{ "armsnes_aspect", "Aspect Ratio", NULL,
+		"The console's own pixel shape (8:7, about 11:8 on PAL), 4:3 as a TV showed it, or square pixels.",
+		NULL, "video", { { "8:7 PAR", "Console pixels (8:7)" }, { "4:3", NULL }, { "1:1", "Square pixels" }, { NULL, NULL } }, "8:7 PAR" },
+	{ "armsnes_overscan", "Overscan Lines", NULL,
+		"The 15 lines more a game in overscan mode draws, which an NTSC TV hid. PAL shows them always.",
+		NULL, "video", { { "Hidden", NULL }, { "Shown", NULL }, { NULL, NULL } }, "Hidden" },
+	{ "armsnes_crop_vertical", "Crop Top and Bottom", NULL,
+		"Pixels hidden at the top and bottom.",
+		NULL, "video", { { "0", NULL }, { "4", NULL }, { "8", NULL }, { "12", NULL }, { "16", NULL }, { NULL, NULL } }, "0" },
+	{ "armsnes_crop_horizontal", "Crop Sides", NULL,
+		"Pixels hidden at the left and right edges.",
+		NULL, "video", { { "0", NULL }, { "4", NULL }, { "8", NULL }, { "12", NULL }, { "16", NULL }, { NULL, NULL } }, "0" },
+	{ "armsnes_sgb_border", "Super Game Boy Border", NULL,
+		"The border round a Game Boy game, or the Game Boy's screen alone.",
+		NULL, "video", { { "Shown", NULL }, { "Hidden", NULL }, { NULL, NULL } }, "Shown" },
 	{ "armsnes_turbo_buttons", "Turbo Buttons", NULL,
 		"Buttons that press and release over and over while held.",
 		NULL, "input", { { "Off", NULL }, { "A", NULL }, { "B", NULL }, { "X", NULL }, { "Y", NULL }, { "A and B", NULL },
@@ -554,6 +576,7 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 
 static struct retro_core_option_v2_category categories[] = {
 	{ "system", "System", "The core's mode and threads, the console's region, its memory at power-on and its chips' speeds." },
+	{ "video", "Video", "The picture's shape and edges." },
 	{ "input", "Input", "Turbo, the D-pad and the light guns." },
 	{ NULL, NULL, NULL },
 };
@@ -570,6 +593,7 @@ static bool showOptions(void) {
 		{ "armsnes_superfx_clock", !loaded || cart.gsu },
 		{ "armsnes_sa1_clock", !loaded || cart.sa1 },
 		{ "armsnes_crosshair", !loaded || inputGuns },
+		{ "armsnes_sgb_border", !loaded || cart.icd },
 	};
 	for (size_t i = 0; i < sizeof(shown) / sizeof(*shown); ++i) {
 		struct retro_core_option_display display = { shown[i].key, shown[i].show };
@@ -684,14 +708,60 @@ void retro_get_system_info(struct retro_system_info* info) {
 	info->block_extract = false;
 }
 
+enum { ASPECT_PAR, ASPECT_4_3, ASPECT_SQUARE };
+static int aspect;
+static u32 cropTopBottom, cropSides;
+static bool sgbBorderHidden;
+
+// The ratio of a picture of so many of the console's pixels across and lines down.
+static float aspectOf(u32 width, u32 lines) {
+	if (aspect == ASPECT_4_3) {
+		return 4.0f / 3.0f;
+	}
+	double pixel = aspect == ASPECT_SQUARE ? 1.0 : sys.pal ? 1.3889 : 8.0 / 7.0;
+	return (float) (width * pixel / lines);
+}
+
+// The part of the output shown: the crops, or the Game Boy's screen without the Super Game Boy's border.
+struct Shown {
+	u32 x, y, width, height;
+};
+
+static struct Shown shownPart(void) {
+	u32 xScale = outputWidth / (OUTPUT_WIDTH / 2), yScale = outputHeight > 240 ? 2 : 1;
+	u32 lines = outputHeight / yScale;
+	struct Shown part = { cropSides, cropTopBottom, 256 - 2 * cropSides, lines > 2 * cropTopBottom ? lines - 2 * cropTopBottom : lines };
+	if (sgbBorderHidden && cart.icd && lines >= 144) {
+		part = (struct Shown) { 48, (lines - 144) / 2, 160, 144 };
+	}
+	part.x *= xScale;
+	part.width *= xScale;
+	part.y *= yScale;
+	part.height *= yScale;
+	return part;
+}
+
+static struct retro_game_geometry given;
+
+// The frontend is told when the picture's shape changes, in the console's pixels and lines.
+static void giveGeometry(const struct Shown* part) {
+	u32 xScale = outputWidth / (OUTPUT_WIDTH / 2), yScale = outputHeight > 240 ? 2 : 1;
+	u32 width = part->width / xScale, lines = part->height / yScale;
+	struct retro_game_geometry geometry = { width, lines, OUTPUT_WIDTH, OUTPUT_HEIGHT, aspectOf(width, lines) };
+	if (geometry.base_width != given.base_width || geometry.base_height != given.base_height || geometry.aspect_ratio != given.aspect_ratio) {
+		given = geometry;
+		environment(RETRO_ENVIRONMENT_SET_GEOMETRY, &given);
+	}
+}
+
 void retro_get_system_av_info(struct retro_system_av_info* info) {
 	memset(info, 0, sizeof(*info));
 	info->geometry.base_width = OUTPUT_WIDTH / 2;
 	info->geometry.base_height = sys.pal ? 239 : 224;
 	info->geometry.max_width = OUTPUT_WIDTH;
 	info->geometry.max_height = OUTPUT_HEIGHT;
-	// SNES pixels are 8:7 on an NTSC television.
-	info->geometry.aspect_ratio = sys.pal ? 256.0 * 1.3889 / 239.0 : 256.0 * 8.0 / 7.0 / 224.0;
+	info->geometry.aspect_ratio = aspectOf(256, sys.pal ? 239 : 224);
+	given = info->geometry;
 	// A frame is 262 lines of 1364 clocks, less 4 clocks every other frame; PAL's is 312 lines.
 	info->timing.fps = sys.pal ? sys.cpuFrequency / (1364.0 * 312.0) : sys.cpuFrequency / (1364.0 * 262.0 - 2.0);
 	info->timing.sample_rate = sys.apuFrequency / 768.0;
@@ -754,7 +824,9 @@ void retro_run(void) {
 	}
 	// Without a new picture the last one is given again, unless the frontend repeats it itself.
 	const u16* picture = outputReady || !dupe ? (shown ? shown : output) : NULL;
-	videoRefresh(picture, outputWidth, outputHeight, OUTPUT_WIDTH * sizeof(u16));
+	struct Shown part = shownPart();
+	giveGeometry(&part);
+	videoRefresh(picture ? picture + part.y * OUTPUT_WIDTH + part.x : NULL, part.width, part.height, OUTPUT_WIDTH * sizeof(u16));
 	if (soundCount && (av & RETRO_AV_ENABLE_AUDIO)) {
 		audioBatch(sound, soundCount);
 	}
@@ -850,6 +922,14 @@ static void readOptions(void) {
 		retro_get_system_av_info(&av);
 		environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av);
 	}
+	static const struct OptionChoice aspects[] = { { "8:7 PAR", ASPECT_PAR }, { "4:3", ASPECT_4_3 }, { "1:1", ASPECT_SQUARE } };
+	aspect = optionChoice(environment, "armsnes_aspect", aspects, 3, ASPECT_PAR);
+	overscanShown = optionIs(environment, "armsnes_overscan", "Shown");
+	const char* crop = optionValue(environment, "armsnes_crop_vertical");
+	cropTopBottom = crop ? (u32) atoi(crop) % 17 : 0;
+	crop = optionValue(environment, "armsnes_crop_horizontal");
+	cropSides = crop ? (u32) atoi(crop) % 17 : 0;
+	sgbBorderHidden = optionIs(environment, "armsnes_sgb_border", "Hidden");
 	allowOpposing = optionIs(environment, "armsnes_opposing", "On");
 	leftStickDpad = !optionIs(environment, "armsnes_left_stick_dpad", "Off");
 	struct retro_variable cross = { "armsnes_crosshair", NULL };

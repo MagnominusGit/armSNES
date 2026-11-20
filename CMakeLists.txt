@@ -70,9 +70,9 @@ target_link_libraries(armsnes-dot gambatte Threads::Threads)
 add_executable(snesrun-dot EXCLUDE_FROM_ALL tests/snesrun.c)
 target_link_libraries(snesrun-dot armsnes-dot)
 
-# The libretro core, with the Armulators pieces it uses (libretro.h) copied into shared/ so it builds
-# without the submodule.
-add_library(armsnes_libretro SHARED libretro/libretro.c)
+# The libretro core, with the Armulators pieces it uses (libretro.h, core options) copied into shared/
+# so it builds without the submodule.
+add_library(armsnes_libretro SHARED libretro/libretro.c shared/libretro/options.c)
 target_include_directories(armsnes_libretro PRIVATE src shared/libretro)
 target_link_libraries(armsnes_libretro armsnes)
 set_target_properties(armsnes_libretro PROPERTIES PREFIX "" C_VISIBILITY_PRESET hidden)

@@ -4,6 +4,7 @@
 #include "libretro.h"
 #include "snes.h"
 #include "fastppu.h"
+#include "options.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -479,6 +480,66 @@ static void drawCrosshairs(void) {
 	}
 }
 
+#define CLOCK_VALUES \
+	{ { "25%", NULL }, { "50%", NULL }, { "75%", NULL }, { "100%", NULL }, { "125%", NULL }, { "150%", NULL }, \
+	  { "175%", NULL }, { "200%", NULL }, { "225%", NULL }, { "250%", NULL }, { "275%", NULL }, { "300%", NULL }, \
+	  { "325%", NULL }, { "350%", NULL }, { "375%", NULL }, { "400%", NULL }, { NULL, NULL } }
+
+static struct retro_core_option_v2_definition optionDefinitions[] = {
+	{ "armsnes_mode", "Mode", NULL,
+		"Exact runs as ares does, clock for clock. Balanced gives the same results with coarser timing, "
+		"faster. Fast draws the picture with its own renderer, fastest; its timing differences are too small "
+		"to see. Saved states load in any mode.",
+		NULL, "system", { { "Fast", NULL }, { "Balanced", NULL }, { "Exact", NULL }, { NULL, NULL } }, "Fast" },
+	{ "armsnes_threads", "Fast Mode Threads", NULL,
+		"Fast mode's sound and picture on threads of their own, as the device's cores allow. Picture Only "
+		"keeps the sound on the main thread, Off keeps both there, for devices whose cores are busy.",
+		NULL, "system", { { "All", NULL }, { "Picture Only", NULL }, { "Off", NULL }, { NULL, NULL } }, "All" },
+	{ "armsnes_power_on_ram", "Power-On RAM", NULL,
+		"The work RAM as the console is switched on: all zero, which some unlicensed games and prototypes "
+		"need, or ares's stripes of two values.",
+		NULL, "system", { { "Cleared", NULL }, { "Patterned", NULL }, { NULL, NULL } }, "Cleared" },
+	{ "armsnes_cpu_clock", "CPU Clock", NULL,
+		"The console's CPU speed. Above 100% less slowdown; above 200% some games don't start.",
+		NULL, "system", CLOCK_VALUES, "100%" },
+	{ "armsnes_superfx_clock", "Super FX Clock", NULL,
+		"The Super FX chip's speed, for its games: above 100% a smoother frame rate.",
+		NULL, "system", CLOCK_VALUES, "100%" },
+	{ "armsnes_sa1_clock", "SA-1 Clock", NULL,
+		"The SA-1 chip's speed, for its games: above 100% less slowdown.",
+		NULL, "system", CLOCK_VALUES, "100%" },
+	{ "armsnes_crosshair", "Light Gun Crosshair", NULL,
+		"A cross where the Super Scope or Justifier points.",
+		NULL, "input", { { "On", NULL }, { "Off", NULL }, { NULL, NULL } }, "On" },
+	{ NULL, NULL, NULL, NULL, NULL, NULL, { { NULL, NULL } }, NULL },
+};
+
+static struct retro_core_option_v2_category categories[] = {
+	{ "system", "System", "The core's mode and threads, the console's memory at power-on and its chips' speeds." },
+	{ "input", "Input", "The controllers and light guns." },
+	{ NULL, NULL, NULL },
+};
+
+static struct retro_core_options_v2 options = { categories, optionDefinitions };
+
+// Options for chips and controllers the game doesn't have are hidden.
+static bool showOptions(void) {
+	const struct {
+		const char* key;
+		bool show;
+	} shown[] = {
+		{ "armsnes_threads", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
+		{ "armsnes_superfx_clock", !loaded || cart.gsu },
+		{ "armsnes_sa1_clock", !loaded || cart.sa1 },
+		{ "armsnes_crosshair", !loaded || inputGuns },
+	};
+	for (size_t i = 0; i < sizeof(shown) / sizeof(*shown); ++i) {
+		struct retro_core_option_display display = { shown[i].key, shown[i].show };
+		environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &display);
+	}
+	return true;
+}
+
 void retro_set_environment(retro_environment_t callback) {
 	environment = callback;
 	bool noGame = false;
@@ -488,18 +549,6 @@ void retro_set_environment(retro_environment_t callback) {
 		logPrintf = log.log;
 	}
 
-	// The first value is the default.
-	static const struct retro_variable variables[] = {
-		{ "armsnes_mode", "Mode; Fast|Balanced|Exact" },
-		{ "armsnes_power_on_ram", "Power-On RAM; Cleared|Patterned" },
-		{ "armsnes_crosshair", "Light Gun Crosshair; On|Off" },
-		{ "armsnes_threads", "Fast Mode Threads; All|Picture Only|Off" },
-		{ "armsnes_cpu_clock", "CPU Clock; 100%|125%|150%|175%|200%|225%|250%|275%|300%|325%|350%|375%|400%|25%|50%|75%" },
-		{ "armsnes_superfx_clock", "Super FX Clock; 100%|125%|150%|175%|200%|225%|250%|275%|300%|325%|350%|375%|400%|25%|50%|75%" },
-		{ "armsnes_sa1_clock", "SA-1 Clock; 100%|125%|150%|175%|200%|225%|250%|275%|300%|325%|350%|375%|400%|25%|50%|75%" },
-		{ NULL, NULL },
-	};
-	callback(RETRO_ENVIRONMENT_SET_VARIABLES, (void*) variables);
 
 	static const struct retro_controller_description first[] = {
 		{ "SNES Controller", RETRO_DEVICE_JOYPAD },
@@ -529,6 +578,9 @@ void retro_set_environment(retro_environment_t callback) {
 		{ NULL, 0 },
 	};
 	callback(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void*) ports);
+	optionsGive(callback, &options);
+	static struct retro_core_options_update_display_callback update = { showOptions };
+	callback(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK, &update);
 }
 
 void retro_set_video_refresh(retro_video_refresh_t callback) {
@@ -603,6 +655,7 @@ void retro_set_controller_port_device(unsigned port, unsigned device) {
 	case DEVICE_LR_JUSTIFIERS: inputSetDevice(port, DEVICE_JUSTIFIERS); break;
 	default: inputSetDevice(port, DEVICE_PAD); break;
 	}
+	showOptions();
 }
 
 void retro_reset(void) {
@@ -858,6 +911,7 @@ bool retro_load_game(const struct retro_game_info* info) {
 	rtcApplied = false;
 	shown = NULL;
 	loaded = true;
+	showOptions();
 	return true;
 }
 

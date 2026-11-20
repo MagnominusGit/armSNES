@@ -1376,6 +1376,7 @@ extern struct St018 st018;
 void st018Load(const u8* firmware);
 void st018Power(void);
 void st018Run(void);
+void st018Loaded(void);
 u8 st018Read(u32 address, u8 data);
 void st018Write(u32 address, u8 data);
 

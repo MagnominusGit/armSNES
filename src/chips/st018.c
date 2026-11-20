@@ -298,6 +298,9 @@ static u32 armGet(u32 mode, u32 address) {
 	return 0;
 }
 
+// A write since the turn of a loop began changed the RAM or the bridge (loopCheck).
+static bool loopChanged;
+
 static void armSet(u32 mode, u32 address, u32 word) {
 	switch (address & 0xe0000000) {
 	case 0x40000000:
@@ -307,11 +310,11 @@ static void armSet(u32 mode, u32 address, u32 word) {
 		address &= 0x3fff;
 		if (mode & WORD) {
 			memory += address & ~3u;
-			memory[0] = word;
-			memory[1] = word >> 8;
-			memory[2] = word >> 16;
-			memory[3] = word >> 24;
+			u8 bytes[4] = { (u8) word, (u8) (word >> 8), (u8) (word >> 16), (u8) (word >> 24) };
+			loopChanged |= memcmp(memory, bytes, 4) != 0;
+			memcpy(memory, bytes, 4);
 		} else if (mode & BYTE) {
+			loopChanged |= memory[address] != (u8) word;
 			memory[address] = word;
 		}
 		return;
@@ -321,6 +324,8 @@ static void armSet(u32 mode, u32 address, u32 word) {
 	}
 	address &= 0xe000003f;
 	word &= 0xff;
+	u32 latch = S.bridge.timerlatch;
+	loopChanged |= address == 0x40000000 || address == 0x40000010 || address == 0x4000002c;
 	if (address == 0x40000000) {
 		S.bridge.armtocpuReady = true;
 		S.bridge.armtocpuData = word;
@@ -330,6 +335,7 @@ static void armSet(u32 mode, u32 address, u32 word) {
 	if (address == 0x40000024) S.bridge.timerlatch = (S.bridge.timerlatch & ~0x00ff00u) | word << 8;
 	if (address == 0x40000028) S.bridge.timerlatch = (S.bridge.timerlatch & ~0xff0000u) | word << 16;
 	if (address == 0x4000002c) S.bridge.timer = S.bridge.timerlatch;
+	loopChanged |= S.bridge.timerlatch != latch;
 }
 
 // A loaded word turned to the bytes asked for: a halfword or byte zero- or sign-extended, and the
@@ -514,12 +520,81 @@ static void armInitialize(void) {
 
 enum { BOOT, MAIN, FIRST_HANDLER = 16, FIRST_LABEL = 64 };
 
+// The steps taken (loopCheck counts a turn's).
+static u32 stepCount;
+
 // A clock step: the timer counts down once per step, whatever its length.
 static void stepClocks(u32 clocks) {
 	if (S.bridge.timer) {
 		--S.bridge.timer;
 	}
 	S.th.clock += S.th.scalar * clocks;
+	stepCount++;
+}
+
+// A loop's turn that leaves everything but the clock and the timer as it found it is the same again
+// from the same state: as many more as end by the S-CPU's clock, which st018Run would run before it
+// stopped, are taken at once. A turn is from an instruction's start to the next at the same address
+// with the registers, the pipeline and the bridge as they were, and no write changing anything.
+#define LOOP_FROM offsetof(struct St018, r)
+#define LOOP_SIZE (offsetof(struct St018, bridge) - LOOP_FROM)
+static struct {
+	bool valid;
+	u32 pc, instructions, steps;
+	u64 clock;
+	u8 regs[LOOP_SIZE];
+	bool cputoarmReady, armtocpuReady, reset, ready, signal;
+	u8 cputoarmData, armtocpuData;
+	u32 timerlatch;
+} loop;
+
+static void loopMark(void) {
+	loop.valid = true;
+	loop.pc = S.r[15];
+	loop.instructions = 0;
+	loop.steps = stepCount;
+	loop.clock = S.th.clock;
+	memcpy(loop.regs, (const u8*) &S + LOOP_FROM, LOOP_SIZE);
+	loop.cputoarmReady = S.bridge.cputoarmReady;
+	loop.armtocpuReady = S.bridge.armtocpuReady;
+	loop.reset = S.bridge.reset;
+	loop.ready = S.bridge.ready;
+	loop.signal = S.bridge.signal;
+	loop.cputoarmData = S.bridge.cputoarmData;
+	loop.armtocpuData = S.bridge.armtocpuData;
+	loop.timerlatch = S.bridge.timerlatch;
+	loopChanged = false;
+}
+
+static void loopCheck(void) {
+	if (!loop.valid) {
+		loopMark();
+		return;
+	}
+	if (S.r[15] != loop.pc) {
+		// A turn this long isn't looked for.
+		if (++loop.instructions > 256) {
+			loopMark();
+		}
+		return;
+	}
+	if (!loopChanged && !memcmp(loop.regs, (const u8*) &S + LOOP_FROM, LOOP_SIZE) && loop.cputoarmReady == S.bridge.cputoarmReady &&
+	    loop.armtocpuReady == S.bridge.armtocpuReady && loop.reset == S.bridge.reset && loop.ready == S.bridge.ready &&
+	    loop.signal == S.bridge.signal && loop.cputoarmData == S.bridge.cputoarmData && loop.armtocpuData == S.bridge.armtocpuData &&
+	    loop.timerlatch == S.bridge.timerlatch) {
+		u64 turn = S.th.clock - loop.clock;
+		if (turn && S.th.clock <= cpu.th.clock) {
+			u64 turns = (cpu.th.clock - S.th.clock) / turn;
+			u64 down = turns * (stepCount - loop.steps);
+			S.th.clock += turns * turn;
+			S.bridge.timer = S.bridge.timer > down ? S.bridge.timer - (u32) down : 0;
+		}
+	}
+	loopMark();
+}
+
+void st018Loaded(void) {
+	loop.valid = false;
 }
 
 #define STOP_(n) \
@@ -605,6 +680,7 @@ dispatch:
 		goto done;
 
 	case MAIN:
+		loopCheck();
 		S.cpsr.t = 0;
 		if (S.pipeline.reload) {
 			S.pipeline.reload = false;
@@ -928,6 +1004,7 @@ static void syncFromCpu(void) {
 // The ARM held in reset: the processor at its reset state, its thread back at the start, the bridge
 // cleared. The thread's clock starts again from 0, as ares creates it anew.
 static void armReset(void) {
+	loop.valid = false;
 	memset(S.r, 0, sizeof(S.r));
 	memset(S.fiq, 0, sizeof(S.fiq));
 	memset(S.irqBank, 0, sizeof(S.irqBank));

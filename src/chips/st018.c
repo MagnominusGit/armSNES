@@ -57,15 +57,21 @@ static inline u32* reg(u32 i) {
 	return regTable[S.cpsr.m & 31][i];
 }
 
+// A block transfer's next register: the lowest in the list from index on, 16 for none.
+static inline u32 listFrom(u32 list, u32 index) {
+	u32 rest = index < 16 ? list >> index << index : 0;
+	return rest ? (u32) __builtin_ctz(rest) : 16;
+}
+
 static inline u32 getR(u32 i) {
 	return *reg(i);
 }
 
 // Writing the program counter refills the pipeline; the register of a mode with none stays zero.
-static void setR(u32 i, u32 value) {
+static inline void setR(u32 i, u32 value) {
 	u32* p = reg(i);
 	*p = value;
-	if (p == &S.r[15]) {
+	if (i == 15) {
 		S.r[15] &= ~1u;
 		S.pipeline.reload = true;
 	} else if (p == &S.rNull) {
@@ -896,10 +902,7 @@ dispatch:
 		if (!S.list) {
 			S.list = 0x8000;
 		}
-		for (S.index = 0; S.index < 16; ++S.index) {
-			if (!(S.list >> S.index & 1)) {
-				continue;
-			}
+		for (S.index = listFrom(S.list, 0); S.index < 16; S.index = listFrom(S.list, S.index + 1)) {
 			if (FLAG(20)) {
 				READ(S.value, WORD, S.rn);
 				setR(S.index, S.value);

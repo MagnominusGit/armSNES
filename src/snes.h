@@ -285,6 +285,12 @@ static inline bool dspEchoPage(u16 address) {
 void dspLoaded(void);
 u8 dspRead(u8 address);
 void dspWrite(u8 address, u8 data);
+// What is heard, not what the game sees: the voices' interpolation and each voice's volume (0-100), the
+// Super Game Boy's and the MSU-1's. With anything but Gaussian and 100 the voices are mixed a second
+// time for the output; the echo is what the DSP writes, the voices' as the DSP has them.
+enum { INTERPOLATE_GAUSSIAN, INTERPOLATE_CUBIC, INTERPOLATE_LINEAR, INTERPOLATE_NONE };
+extern u8 dspInterpolation, dspVoiceVolume[8], dspGameBoyVolume, dspMsu1Volume;
+void dspListenUpdate(void);
 
 // The frontend's: one stereo sample at the DSP's rate (the APU crystal / 768).
 void audioSample(s16 left, s16 right);
@@ -1473,8 +1479,8 @@ struct Mixer {
 
 // Each input sample moves the phase on by step; a DSP sample is due each time it reaches rate.
 void mixerInput(struct Mixer* m, s16 left, s16 right, u32 step, u32 rate);
-// Adds the next sample, if there is one, to a DSP sample.
-void mixerOutput(struct Mixer* m, s32* left, s32* right);
+// Adds the next sample, if there is one, to a DSP sample, at volume percent.
+void mixerOutput(struct Mixer* m, s32* left, s32* right, u32 volume);
 
 // --- The Super Game Boy's ICD2 ---
 

@@ -26,13 +26,13 @@ void mixerInput(struct Mixer* m, s16 left, s16 right, u32 step, u32 rate) {
 	m->summed = 0;
 }
 
-void mixerOutput(struct Mixer* m, s32* left, s32* right) {
+void mixerOutput(struct Mixer* m, s32* left, s32* right, u32 volume) {
 	if (m->read == m->write) {
 		return;
 	}
 	u32 slot = m->read++ % MIXER_SAMPLES;
-	s32 l = *left + m->samples[slot][0];
-	s32 r = *right + m->samples[slot][1];
+	s32 l = *left + m->samples[slot][0] * (s32) volume / 100;
+	s32 r = *right + m->samples[slot][1] * (s32) volume / 100;
 	*left = l > 32767 ? 32767 : l < -32768 ? -32768 : l;
 	*right = r > 32767 ? 32767 : r < -32768 ? -32768 : r;
 }

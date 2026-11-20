@@ -546,6 +546,13 @@ static void drawCrosshairs(void) {
 	  { "175%", NULL }, { "200%", NULL }, { "225%", NULL }, { "250%", NULL }, { "275%", NULL }, { "300%", NULL }, \
 	  { "325%", NULL }, { "350%", NULL }, { "375%", NULL }, { "400%", NULL }, { NULL, NULL } }
 
+#define VOLUME_VALUES \
+	{ { "0%", NULL }, { "10%", NULL }, { "20%", NULL }, { "30%", NULL }, { "40%", NULL }, { "50%", NULL }, { "60%", NULL }, \
+	  { "70%", NULL }, { "80%", NULL }, { "90%", NULL }, { "100%", NULL }, { NULL, NULL } }
+#define VOICE_OPTION(n) \
+	{ "armsnes_volume_voice" #n, "Voice " #n " Volume", NULL, \
+	  (n) == 1 ? "Each of the sound chip's eight voices. A voice's echo stays as loud." : NULL, NULL, "audio", VOLUME_VALUES, "100%" }
+
 static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armsnes_mode", "Mode", NULL,
 		"Exact runs as ares does, clock for clock. Balanced gives the same results with coarser timing, "
@@ -599,6 +606,14 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"The console shows 32 sprites and 34 sprite tiles on a line, which games turn into flicker or gaps. "
 		"No limit shows them all; games still see the console's limit. Fast mode only.",
 		NULL, "video", { { "32 per line", NULL }, { "No limit", NULL }, { NULL, NULL } }, "32 per line" },
+	{ "armsnes_interpolation", "Interpolation", NULL,
+		"How the sound chip smooths its samples: Gaussian as the console does, or sharper. Only what is heard "
+		"changes; the echo keeps the console's.",
+		NULL, "audio", { { "Gaussian", NULL }, { "Cubic", NULL }, { "Linear", NULL }, { "None", NULL }, { NULL, NULL } }, "Gaussian" },
+	VOICE_OPTION(1), VOICE_OPTION(2), VOICE_OPTION(3), VOICE_OPTION(4),
+	VOICE_OPTION(5), VOICE_OPTION(6), VOICE_OPTION(7), VOICE_OPTION(8),
+	{ "armsnes_volume_gameboy", "Game Boy Volume", NULL, "The Super Game Boy's Game Boy sound.", NULL, "audio", VOLUME_VALUES, "100%" },
+	{ "armsnes_volume_msu1", "MSU-1 Volume", NULL, "An MSU-1 game's music and sound tracks.", NULL, "audio", VOLUME_VALUES, "100%" },
 	{ "armsnes_turbo_buttons", "Turbo Buttons", NULL,
 		"Buttons that press and release over and over while held.",
 		NULL, "input", { { "Off", NULL }, { "A", NULL }, { "B", NULL }, { "X", NULL }, { "Y", NULL }, { "A and B", NULL },
@@ -620,6 +635,7 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 static struct retro_core_option_v2_category categories[] = {
 	{ "system", "System", "The core's mode and threads, the console's region, its memory at power-on and its chips' speeds." },
 	{ "video", "Video", "The picture's shape, edges and colors." },
+	{ "audio", "Audio", "The sound chip's interpolation and each voice's volume, and the cartridge's own sound." },
 	{ "input", "Input", "Turbo, the D-pad and the light guns." },
 	{ NULL, NULL, NULL },
 };
@@ -637,6 +653,8 @@ static bool showOptions(void) {
 		{ "armsnes_superfx_clock", !loaded || cart.gsu },
 		{ "armsnes_sa1_clock", !loaded || cart.sa1 },
 		{ "armsnes_crosshair", !loaded || inputGuns },
+		{ "armsnes_volume_gameboy", !loaded || cart.icd },
+		{ "armsnes_volume_msu1", !loaded || cart.msu1 },
 		{ "armsnes_sgb_border", !loaded || cart.icd },
 	};
 	for (size_t i = 0; i < sizeof(shown) / sizeof(*shown); ++i) {
@@ -915,6 +933,12 @@ static u8 clockOption(const char* key) {
 // betas need.
 // Exact is ares's timing, Balanced coarser, Fast Balanced's with snes_faust's renderer on a thread of
 // its own (docs/ROADMAP.md). A change takes effect between frames.
+static u8 volumeOption(const char* key) {
+	const char* value = optionValue(environment, key);
+	int percent = value ? atoi(value) : 100;
+	return percent >= 0 && percent <= 100 ? (u8) percent : 100;
+}
+
 static bool regionPal(void) {
 	return optionIs(environment, "armsnes_region", "PAL") || (cart.pal && !optionIs(environment, "armsnes_region", "NTSC"));
 }
@@ -982,6 +1006,17 @@ static void readOptions(void) {
 		deepBlackBoost = boost;
 		makeColors();
 	}
+	static const struct OptionChoice interpolations[] = {
+		{ "Cubic", INTERPOLATE_CUBIC }, { "Linear", INTERPOLATE_LINEAR }, { "None", INTERPOLATE_NONE } };
+	dspInterpolation = (u8) optionChoice(environment, "armsnes_interpolation", interpolations, 3, INTERPOLATE_GAUSSIAN);
+	for (int n = 0; n < 8; ++n) {
+		char key[32];
+		snprintf(key, sizeof(key), "armsnes_volume_voice%d", n + 1);
+		dspVoiceVolume[n] = volumeOption(key);
+	}
+	dspGameBoyVolume = volumeOption("armsnes_volume_gameboy");
+	dspMsu1Volume = volumeOption("armsnes_volume_msu1");
+	dspListenUpdate();
 	allowOpposing = optionIs(environment, "armsnes_opposing", "On");
 	leftStickDpad = !optionIs(environment, "armsnes_left_stick_dpad", "Off");
 	struct retro_variable cross = { "armsnes_crosshair", NULL };

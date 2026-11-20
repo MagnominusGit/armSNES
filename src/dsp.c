@@ -290,6 +290,50 @@ static s32 gaussianInterpolate(const struct DspVoice* v) {
 	return sclamp16(output) & ~1;
 }
 
+u8 dspInterpolation, dspVoiceVolume[8] = { 100, 100, 100, 100, 100, 100, 100, 100 }, dspGameBoyVolume = 100, dspMsu1Volume = 100;
+// The voices mixed again for the output (dspListenUpdate): the voice's sample as heard, and the sum.
+static bool listening;
+static s32 listenOutput, listenMain[2], listenLeft;
+
+void dspListenUpdate(void) {
+	listening = dspInterpolation != INTERPOLATE_GAUSSIAN;
+	for (int n = 0; n < 8; ++n) {
+		listening |= dspVoiceVolume[n] != 100;
+	}
+}
+
+// The four samples Gaussian interpolation takes, between the second and third.
+static s32 otherInterpolate(const struct DspVoice* v) {
+	s32 s[4];
+	u8 offset = (v->bufferOffset + (v->gaussianOffset >> 12)) % 12;
+	for (int n = 0; n < 4; ++n) {
+		s[n] = v->buffer[offset];
+		if (++offset >= 12) {
+			offset = 0;
+		}
+	}
+	s32 f = v->gaussianOffset >> 4 & 0xff;
+	s32 output;
+	switch (dspInterpolation) {
+	case INTERPOLATE_CUBIC: {
+		// Catmull-Rom, with the fraction in 8 bits.
+		s64 a = -s[0] + 3 * s[1] - 3 * s[2] + s[3];
+		s64 b = 2 * s[0] - 5 * s[1] + 4 * s[2] - s[3];
+		s64 c = s[2] - s[0];
+		s64 t = ((a * f >> 8) + b) * f >> 8;
+		output = (s32) ((t + c) * f >> 9) + s[1];
+		break;
+	}
+	case INTERPOLATE_LINEAR:
+		output = s[1] + ((s[2] - s[1]) * f >> 8);
+		break;
+	default:
+		output = s[1];
+		break;
+	}
+	return sclamp16(output) & ~1;
+}
+
 static void brrDecode(struct DspVoice* v) {
 	// brr._byte was read on the clock before.
 	s32 nybbles = dsp.brr._byte << 8 | dsp.apuram[(u16) (v->brrAddress + v->brrOffset + 1)];
@@ -416,8 +460,18 @@ static void echo25(void) {
 	dsp.echo.input[1] = sclamp16(r) & ~1;
 }
 
+// The output with the voices as heard (listenMain) in place of the DSP's.
+static s16 listenEchoOutput(int channel) {
+	s16 mainvolOutput = listenMain[channel] * dsp.mainvol.volume[channel] >> 7;
+	s16 echoOut = dsp.echo.input[channel] * dsp.echo.volume[channel] >> 7;
+	return sclamp16(mainvolOutput + echoOut);
+}
+
 static void echo26(void) {
 	// The left output is kept for the next clock, so both go out together.
+	if (listening) {
+		listenLeft = listenEchoOutput(0);
+	}
 	dsp.mainvol.output[0] = echoOutput(0);
 
 	s32 l = dsp.echo.output[0] + (s16) (dsp.echo.input[0] * dsp.echo.feedback >> 7);
@@ -431,16 +485,21 @@ static void echo27(void) {
 	s32 outr = echoOutput(1);
 	dsp.mainvol.output[0] = 0;
 	dsp.mainvol.output[1] = 0;
+	if (listening) {
+		outl = listenLeft;
+		outr = listenEchoOutput(1);
+	}
+	listenMain[0] = listenMain[1] = 0;
 
 	if (dsp.mainvol.mute) {
 		outl = 0;
 		outr = 0;
 	}
 	if (cart.icd) {
-		mixerOutput(&icd.sound, &outl, &outr);
+		mixerOutput(&icd.sound, &outl, &outr, dspGameBoyVolume);
 	}
 	if (cart.msu1) {
-		mixerOutput(&msu1.sound, &outl, &outr);
+		mixerOutput(&msu1.sound, &outl, &outr, dspMsu1Volume);
 	}
 	audioSample(outl, outr);
 }
@@ -479,6 +538,9 @@ static void voiceOutput(struct DspVoice* v, int channel) {
 	if (v->_echo) {
 		dsp.echo.output[channel] = signedBits(dsp.echo.output[channel] + amp, 17);
 		dsp.echo.output[channel] = sclamp16(dsp.echo.output[channel]);
+	}
+	if (listening) {
+		listenMain[channel] = sclamp16(signedBits(listenMain[channel] + (listenOutput * v->volume[channel] >> 7), 17));
 	}
 }
 
@@ -549,6 +611,10 @@ static void voice3c(struct DspVoice* v) {
 	}
 
 	dsp.latch.output = (output * v->envelope >> 11) & ~1;
+	if (listening) {
+		s32 heard = v->_noise || dspInterpolation == INTERPOLATE_GAUSSIAN ? output : otherInterpolate(v);
+		listenOutput = (heard * v->envelope >> 11 & ~1) * dspVoiceVolume[v->index >> 4] / 100;
+	}
 	v->envx = v->envelope >> 4;
 
 	// Silence at once at the end of a sample or on soft reset.

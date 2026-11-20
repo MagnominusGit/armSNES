@@ -23,14 +23,14 @@ enum { LOAD = 1 << 0, STORE = 1 << 1, PREFETCH = 1 << 2, BYTE = 1 << 3, HALF = 1
 
 // --- Registers ---
 
-static u32* reg(u32 i) {
+static u32* regFor(u32 mode, u32 i) {
 	if (i < 8 || i == 15) {
 		return &S.r[i];
 	}
 	if (i < 13) {
-		return S.cpsr.m == FIQ ? &S.fiq[i - 8] : &S.r[i];
+		return mode == FIQ ? &S.fiq[i - 8] : &S.r[i];
 	}
-	switch (S.cpsr.m) {
+	switch (mode) {
 	case USR:
 	case SYS: return &S.r[i];
 	case FIQ: return &S.fiq[i - 8];
@@ -40,6 +40,21 @@ static u32* reg(u32 i) {
 	case UND: return &S.undBank[i - 13];
 	}
 	return &S.rNull;
+}
+
+// Each mode's registers, as regFor finds them (the mode is always 0x10-0x1f).
+static u32* regTable[32][16];
+
+static void regTableFill(void) {
+	for (u32 mode = 0; mode < 32; ++mode) {
+		for (u32 i = 0; i < 16; ++i) {
+			regTable[mode][i] = regFor(mode, i);
+		}
+	}
+}
+
+static inline u32* reg(u32 i) {
+	return regTable[S.cpsr.m & 31][i];
 }
 
 static inline u32 getR(u32 i) {
@@ -301,6 +316,15 @@ static u32 armGet(u32 mode, u32 address) {
 // A write since the turn of a loop began changed the RAM or the bridge (loopCheck).
 static bool loopChanged;
 
+// armGet, with a word of the program ROM (nearly every fetch) read in place.
+static inline u32 armGetFast(u32 mode, u32 address) {
+	if (!(address & 0xe0000000) && (mode & WORD)) {
+		const u8* word = &programROM[address & 0x1fffc];
+		return word[0] | word[1] << 8 | word[2] << 16 | (u32) word[3] << 24;
+	}
+	return armGet(mode, address);
+}
+
 static void armSet(u32 mode, u32 address, u32 word) {
 	switch (address & 0xe0000000) {
 	case 0x40000000:
@@ -413,6 +437,7 @@ static void bind(u32 opcode, u8 handler) {
 
 // The same encodings as ares binds, in the same loops.
 static void armInitialize(void) {
+	regTableFill();
 	memset(armTable, H_NONE, sizeof(armTable));
 	for (u32 lo = 0; lo < 16; ++lo)
 		for (u32 hi = 0; hi < 16; ++hi)
@@ -617,7 +642,7 @@ void st018Loaded(void) {
 		S.mode = (mode_); \
 		S.address = (address_); \
 		STEP(1); \
-		target_ = armGet(S.mode, S.address); \
+		target_ = armGetFast(S.mode, S.address); \
 		S.nonsequential = false; \
 	} while (0)
 #define WRITE(mode_, address_, word_) \

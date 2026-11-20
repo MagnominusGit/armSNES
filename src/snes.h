@@ -1261,6 +1261,7 @@ extern struct Spc7110 spc7110;
 
 void spc7110Load(void);
 void spc7110Power(void);
+void spc7110Loaded(void);
 void spc7110Run(void);
 u8 spc7110Read(u32 address, u8 data);
 void spc7110Write(u32 address, u8 data);

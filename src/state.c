@@ -241,6 +241,9 @@ bool stateLoad(const void* data, size_t size) {
 	if (cart.sdd1) {
 		sdd1Loaded();
 	}
+	if (cart.spc7110) {
+		spc7110Loaded();
+	}
 
 	sys.pal = pal;
 	if (ppu.drawnTo > CANVAS_WIDTH * CANVAS_HEIGHT) {

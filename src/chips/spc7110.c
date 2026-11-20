@@ -25,6 +25,8 @@ static bool step(u32 clocks) {
 
 // --- The data ROM ---
 
+static void mcuPages(void);
+
 static u8 dataromRead(u32 address) {
 	address &= 0xffffff;
 	u32 mask = 0x100000 * (1 << (spc7110.r4834 & 3)) - 1;
@@ -550,12 +552,56 @@ void spc7110Write(u32 address, u8 data) {
 	case 0x4827: spc7110.r4827 = data; spc7110.r482f |= 0x80; spc7110.divPending = 1; break;
 	case 0x482e: spc7110.r482e = data & 0x01; break;
 
-	case 0x4830: spc7110.r4830 = data & 0x87; break;
-	case 0x4831: spc7110.r4831 = data & 0x07; break;
-	case 0x4832: spc7110.r4832 = data & 0x07; break;
-	case 0x4833: spc7110.r4833 = data & 0x07; break;
-	case 0x4834: spc7110.r4834 = data & 0x07; break;
+	case 0x4830: spc7110.r4830 = data & 0x87; mcuPages(); break;
+	case 0x4831: spc7110.r4831 = data & 0x07; mcuPages(); break;
+	case 0x4832: spc7110.r4832 = data & 0x07; mcuPages(); break;
+	case 0x4833: spc7110.r4833 = data & 0x07; mcuPages(); break;
+	case 0x4834: spc7110.r4834 = data & 0x07; mcuPages(); break;
 	}
+}
+
+// Fast mode: the 256 bytes in one place that a page of the memory controller's banks reads, as
+// spc7110ReadMCU and dataromRead read them (null for a page that doesn't).
+static const u8* pageIn(const u8* memory, u32 size, u32 offset) {
+	if (!size) {
+		return NULL;
+	}
+	u32 first = busMirror(offset, size);
+	return busMirror(offset | 0xff, size) == first + 0xff ? memory + first : NULL;
+}
+
+static const u8* dataromPage(u32 address) {
+	address &= 0xffffff;
+	if ((spc7110.r4834 & 3) != 3 && (address & 0x400000)) {
+		return NULL;
+	}
+	return pageIn(drom, dromSize, address & (0x100000 * (1 << (spc7110.r4834 & 3)) - 1));
+}
+
+static const u8* mcuPage(u32 address) {
+	if (address < 0x100000) {
+		return promSize ? pageIn(cart.rom, promSize, address & 0x0fffff) : dataromPage((address & 0x0fffff) | 0x100000 * (spc7110.r4830 & 7));
+	}
+	if (address < 0x200000) {
+		return spc7110.r4834 & 4 ? pageIn(cart.rom, promSize, 0x100000 + (address & 0x0fffff))
+		                         : dataromPage((address & 0x0fffff) | 0x100000 * (spc7110.r4831 & 7));
+	}
+	if (address < 0x300000) {
+		return dataromPage((address & 0x0fffff) | 0x100000 * (spc7110.r4832 & 7));
+	}
+	if (address < 0x400000) {
+		return dataromPage((address & 0x0fffff) | 0x100000 * (spc7110.r4833 & 7));
+	}
+	return NULL;
+}
+
+// The pages again, after the banks they show change.
+static void mcuPages(void) {
+	busFastMap(spc7110ReadMCU, mcuPage);
+}
+
+void spc7110Loaded(void) {
+	mcuPages();
 }
 
 // The program ROM and the data ROM's banks, as the memory controller maps them: 00-3f,80-bf:8000-ffff
@@ -642,4 +688,5 @@ void spc7110Power(void) {
 	spc7110.r4832 = 0x01;
 	spc7110.r4833 = 0x02;
 	spc7110.r4834 = 0x00;
+	mcuPages();
 }

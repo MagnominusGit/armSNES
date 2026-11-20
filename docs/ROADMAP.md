@@ -121,3 +121,26 @@ Phase 4: cheat codes come from the frontend. A Game Genie code gives its value f
 address, in either half of the banks; a Pro Action Replay code (or "address:value") writes its value
 to the work RAM as each frame begins, and gives it for reads anywhere else. Only the pages with a code
 read through them, so a game without cheats runs as before.
+
+The rest of phase 4, easiest first:
+
+1. The info file says what the core does (cheats, memory maps), and a missing firmware file is named
+   on screen as well as in the log.
+2. A frame the frontend won't show (run-ahead, fast-forward) isn't converted or handed over.
+3. Achievements: the work RAM, cartridge RAM and SA-1 I-RAM where the achievement tools look for them.
+4. Options with categories and help text (version 2), and the older frontends' list made from them.
+5. Input: turbo buttons, the left stick as the D-pad, and opposite directions held at once.
+6. Region: NTSC or PAL whatever the header says.
+7. Picture size: the pixel aspect ratio (8:7, 4:3, square), the overscan lines, the Super Game Boy's
+   border.
+8. Color: a television's gamma, and hi-res pixel pairs blended.
+9. Sprites past the 32 a line or 34 tiles drawn anyway, with the flags games read kept as they are.
+10. Sound: the DSP's interpolation (Gaussian, or cubic or none), each voice's volume, and the MSU-1's
+    and the Game Boy's.
+11. Frame skipping, and pictures left out while fast-forwarding.
+12. Subsystems: a cartridge in Sufami Turbo slot B, a pack in a slotted cartridge, a Game Boy game in a
+    Super Game Boy cartridge chosen from the frontend.
+13. Packs, the BS-X download RAM and a Game Boy cartridge's clock kept between runs.
+14. HD Mode 7: mode 7 drawn at two to four times the resolution.
+
+Rumble isn't on the list: no Super Nintendo controller had it.

@@ -60,14 +60,25 @@ static const u16* shown;
 // A pixel of the canvas, four bits of brightness over 15 bits of color, as RGB565. Brightness 0 isn't
 // black but much darker than a linear scale would make it, as ares shows it.
 static u16 channel[16][32];
+// ares's Deep Black Boost: dark colors darker, as a TV's gamma showed them. Every pixel then goes
+// through the table.
+static bool deepBlackBoost;
+static u32 tableAlways;
 
 static void makeColors(void) {
+	static const u8 gammaRamp[32] = {
+		0x00, 0x01, 0x03, 0x06, 0x0a, 0x0f, 0x15, 0x1c,
+		0x24, 0x2d, 0x37, 0x42, 0x4e, 0x5b, 0x69, 0x78,
+		0x88, 0x90, 0x98, 0xa0, 0xa8, 0xb0, 0xb8, 0xc0,
+		0xc8, 0xd0, 0xd8, 0xe0, 0xe8, 0xf0, 0xf8, 0xff,
+	};
 	for (int l = 0; l < 16; ++l) {
 		double scale = (1.0 + l) / 16.0 * (l ? 1.0 : 0.25);
 		for (int c = 0; c < 32; ++c) {
-			channel[l][c] = (u16) (scale * (c << 3 | c >> 2) + 0.5);
+			channel[l][c] = (u16) (scale * (deepBlackBoost ? gammaRamp[c] : c << 3 | c >> 2) + 0.5);
 		}
 	}
+	tableAlways = deepBlackBoost ? 0x78000 : 0;
 }
 
 static inline u16 rgb565(u32 pixel) {
@@ -84,7 +95,7 @@ static inline u16 rgb565Bright(u32 pixel) {
 }
 
 static void convertWide(const u32* from, u16* to) {
-	u32 dim = 0, mixed = 0;
+	u32 dim = tableAlways, mixed = 0;
 	for (u32 n = 0; n < OUTPUT_WIDTH; ++n) {
 		dim |= ~from[n] & 0x78000;
 		mixed |= from[n] ^ from[0];
@@ -158,6 +169,7 @@ static void convertRow(const u32* from, u16* to, bool* wide) {
 		to[n] = rgb565Bright(pixel);
 	}
 #endif
+	dim |= tableAlways;
 	*wide = pairs != 0;
 	if (pairs) {
 		convertWide(from, to);
@@ -196,6 +208,22 @@ static u16 moved[OUTPUT_WIDTH * OUTPUT_HEIGHT];
 static bool movedWide[OUTPUT_HEIGHT];
 
 static bool overscanShown;
+
+// Hi-res pixel pairs averaged, as a TV's picture blended them; Merge makes the picture 256 wide.
+enum { BLEND_OFF, BLEND_ON, BLEND_MERGE };
+static int hiresBlend;
+
+static void blendRow(u16* row) {
+	for (u32 n = 0; n < OUTPUT_WIDTH / 2; ++n) {
+		u16 a = row[2 * n], b = row[2 * n + 1];
+		u16 mixed = (u16) ((a & b) + (((a ^ b) & 0xf7de) >> 1));
+		if (hiresBlend == BLEND_MERGE) {
+			row[n] = mixed;
+		} else {
+			row[2 * n] = row[2 * n + 1] = mixed;
+		}
+	}
+}
 
 // The frontend won't show this frame (run-ahead, fast-forward): nothing is converted from the canvas.
 static bool pictureUnseen;
@@ -249,9 +277,12 @@ void videoFrame(const u32* canvas) {
 			convertRow(&canvas[(y + row) * CANVAS_WIDTH + x], &output[row * OUTPUT_WIDTH], &rowWide[row]);
 		}
 	}
-	bool wide = inputGuns && crosshair;
+	bool wide = inputGuns && crosshair && hiresBlend != BLEND_MERGE;
 	for (u32 row = 0; row < h; ++row) {
-		wide |= rowWide[row];
+		if (rowWide[row] && hiresBlend != BLEND_OFF) {
+			blendRow(&output[row * OUTPUT_WIDTH]);
+		}
+		wide |= rowWide[row] && hiresBlend != BLEND_MERGE;
 	}
 	if (wide) {
 		for (u32 row = 0; row < h; ++row) {
@@ -486,22 +517,23 @@ static void readPads(void) {
 // A cross where each gun points: white, with a dark edge to show on any picture.
 static void drawCrosshairs(void) {
 	u32 yScale = outputHeight > 240 ? 2 : 1;
+	int xScale = (int) (outputWidth / (OUTPUT_WIDTH / 2));
 	for (int gun = 0; gun < 2; ++gun) {
 		if (gunX[gun] < 0 || gunY[gun] < 0) {
 			continue;
 		}
-		int cx = gunX[gun] * 2;
+		int cx = gunX[gun] * xScale;
 		int cy = gunY[gun] * yScale;
 		for (int d = -7 * 2; d <= 7 * 2; ++d) {
 			for (int w = -1; w <= 1; ++w) {
 				u16 color = w ? 0x0000 : (gun ? 0xf800 : 0xffff);
-				int x = cx + d, y = cy + w * (int) yScale;
-				if (x >= 0 && x < OUTPUT_WIDTH && y >= 0 && y < (int) outputHeight && (d < -3 || d > 3)) {
+				int x = cx + d * xScale / 2, y = cy + w * (int) yScale;
+				if (x >= 0 && x < (int) outputWidth && y >= 0 && y < (int) outputHeight && (d < -3 || d > 3)) {
 					output[y * OUTPUT_WIDTH + x] = color;
 				}
-				x = cx + w * 2;
+				x = cx + w * xScale;
 				y = cy + d / 2 * (int) yScale;
-				if (x >= 0 && x < OUTPUT_WIDTH && y >= 0 && y < (int) outputHeight && (d < -3 || d > 3)) {
+				if (x >= 0 && x < (int) outputWidth && y >= 0 && y < (int) outputHeight && (d < -3 || d > 3)) {
 					output[y * OUTPUT_WIDTH + x] = color;
 				}
 			}
@@ -556,6 +588,13 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armsnes_sgb_border", "Super Game Boy Border", NULL,
 		"The border round a Game Boy game, or the Game Boy's screen alone.",
 		NULL, "video", { { "Shown", NULL }, { "Hidden", NULL }, { NULL, NULL } }, "Shown" },
+	{ "armsnes_deep_black_boost", "Deep Black Boost", NULL,
+		"Dark colors darker, as a TV's gamma showed them (ares's option of the name).",
+		NULL, "video", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armsnes_hires_blend", "Hi-Res Blending", NULL,
+		"The two halves of each hi-res pixel averaged, as a TV blended them: some games draw see-through "
+		"effects that way. Merge also makes the picture 256 pixels wide, for small screens.",
+		NULL, "video", { { "Off", NULL }, { "On", NULL }, { "Merge", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_turbo_buttons", "Turbo Buttons", NULL,
 		"Buttons that press and release over and over while held.",
 		NULL, "input", { { "Off", NULL }, { "A", NULL }, { "B", NULL }, { "X", NULL }, { "Y", NULL }, { "A and B", NULL },
@@ -576,7 +615,7 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 
 static struct retro_core_option_v2_category categories[] = {
 	{ "system", "System", "The core's mode and threads, the console's region, its memory at power-on and its chips' speeds." },
-	{ "video", "Video", "The picture's shape and edges." },
+	{ "video", "Video", "The picture's shape, edges and colors." },
 	{ "input", "Input", "Turbo, the D-pad and the light guns." },
 	{ NULL, NULL, NULL },
 };
@@ -930,6 +969,13 @@ static void readOptions(void) {
 	crop = optionValue(environment, "armsnes_crop_horizontal");
 	cropSides = crop ? (u32) atoi(crop) % 17 : 0;
 	sgbBorderHidden = optionIs(environment, "armsnes_sgb_border", "Hidden");
+	static const struct OptionChoice blends[] = { { "On", BLEND_ON }, { "Merge", BLEND_MERGE } };
+	hiresBlend = optionChoice(environment, "armsnes_hires_blend", blends, 2, BLEND_OFF);
+	bool boost = optionIs(environment, "armsnes_deep_black_boost", "On");
+	if (boost != deepBlackBoost) {
+		deepBlackBoost = boost;
+		makeColors();
+	}
 	allowOpposing = optionIs(environment, "armsnes_opposing", "On");
 	leftStickDpad = !optionIs(environment, "armsnes_left_stick_dpad", "Off");
 	struct retro_variable cross = { "armsnes_crosshair", NULL };

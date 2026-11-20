@@ -58,7 +58,7 @@ static inline u32* reg(u32 i) {
 }
 
 // A block transfer's next register: the lowest in the list from index on, 16 for none.
-static inline u32 listFrom(u32 list, u32 index) {
+static inline __attribute__((always_inline)) u32 listFrom(u32 list, u32 index) {
 	u32 rest = index < 16 ? list >> index << index : 0;
 	return rest ? (u32) __builtin_ctz(rest) : 16;
 }
@@ -210,7 +210,7 @@ static u32 rrx(u32 source) {
 	return (u32) S.cpsr.c << 31 | source >> 1;
 }
 
-static bool test(u32 cond) {
+static inline __attribute__((always_inline)) bool test(u32 cond) {
 	switch (cond & 15) {
 	case 0: return S.cpsr.z;
 	case 1: return !S.cpsr.z;
@@ -323,10 +323,14 @@ static u32 armGet(u32 mode, u32 address) {
 static bool loopChanged;
 
 // armGet, with a word of the program ROM (nearly every fetch) read in place.
-static inline u32 armGetFast(u32 mode, u32 address) {
+static inline __attribute__((always_inline)) u32 armGetFast(u32 mode, u32 address) {
 	if (!(address & 0xe0000000) && (mode & WORD)) {
-		const u8* word = &programROM[address & 0x1fffc];
-		return word[0] | word[1] << 8 | word[2] << 16 | (u32) word[3] << 24;
+		u32 word;
+		__builtin_memcpy(&word, &programROM[address & 0x1fffc], 4);
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+		word = __builtin_bswap32(word);
+#endif
+		return word;
 	}
 	return armGet(mode, address);
 }
@@ -696,6 +700,385 @@ void st018Loaded(void) {
 		READ(S.pipeline.fetch.instruction, PREFETCH | (S.cpsr.t ? HALF : WORD), S.pipeline.fetch.address); \
 	} while (0)
 
+// --- Whole instructions, the registers and the pipeline held in locals ---
+// At an instruction's start, while even the longest instruction would end by the S-CPU's clock (so
+// st018Run couldn't stop inside it), the common ones are run here, as their handlers below run them
+// and leaving what they leave, down to the fields an instruction keeps between its steps. The clock
+// and the timer take the steps when something could see them: a write to the bridge, a loop's check,
+// the end. Anything else goes to its handler, its fetch done.
+enum { ST018_LONGEST = 32 };
+
+static void leanRun(void) {
+	if (cpu.th.clock < S.th.clock) {
+		return;
+	}
+	const u64 scalar = S.th.scalar;
+	u64 limit = (cpu.th.clock - S.th.clock) / scalar;
+	if (limit < ST018_LONGEST) {
+		return;
+	}
+	u32* const* map = regTable[S.cpsr.m & 31];
+	for (u32 i = 0; i < 16; ++i) {
+		if (map[i] == &S.rNull) {
+			return;
+		}
+	}
+	u32 R[16];
+	__typeof__(S.pipeline) P;
+	u32 steps = 0;
+#define LEAN_LOAD() \
+	do { \
+		for (u32 i_ = 0; i_ < 16; ++i_) { \
+			R[i_] = *map[i_]; \
+		} \
+		P = S.pipeline; \
+	} while (0)
+#define LEAN_SAVE() \
+	do { \
+		for (u32 i_ = 0; i_ < 16; ++i_) { \
+			*map[i_] = R[i_]; \
+		} \
+		S.pipeline = P; \
+	} while (0)
+#define LEAN_FLUSH() \
+	do { \
+		if (steps) { \
+			S.th.clock += scalar * steps; \
+			S.bridge.timer = S.bridge.timer > steps ? S.bridge.timer - steps : 0; \
+			stepCount += steps; \
+			limit -= steps; \
+			steps = 0; \
+		} \
+	} while (0)
+#define LEAN_SET(i, v) \
+	do { \
+		u32 v_ = (v); \
+		if ((i) == 15) { \
+			R[15] = v_ & ~1u; \
+			P.reload = true; \
+		} else { \
+			R[i] = v_; \
+		} \
+	} while (0)
+#define LEAN_FETCH(address_) \
+	do { \
+		S.mode = PREFETCH | WORD; \
+		S.address = (address_); \
+		steps++; \
+		P.fetch.instruction = armGetFast(S.mode, S.address); \
+		S.nonsequential = false; \
+	} while (0)
+#define LEAN_PIPE() \
+	do { \
+		P.execute = P.decode; \
+		P.execute.irq = P.execute.irq & S.irq; \
+		P.decode = P.fetch; \
+		P.decode.thumb = S.cpsr.t; \
+		P.decode.irq = !S.cpsr.i; \
+		R[15] += 4; \
+		P.fetch.address = R[15]; \
+		LEAN_FETCH(P.fetch.address); \
+	} while (0)
+#define LEAN_BRIDGE(address_) \
+	do { \
+		if (((address_) & 0xe0000000) == 0x40000000) { \
+			LEAN_FLUSH(); \
+		} \
+	} while (0)
+#define LEAN_ALU(opcode_, d_, rn_, rm_) \
+	do { \
+		u32 rn__ = (rn_), rm__ = (rm_), result_ = 0; \
+		bool write_ = true; \
+		switch (opcode_) { \
+		case 0: result_ = bit(rn__ & rm__); break; \
+		case 1: result_ = bit(rn__ ^ rm__); break; \
+		case 2: result_ = sub(rn__, rm__, 1); break; \
+		case 3: result_ = sub(rm__, rn__, 1); break; \
+		case 4: result_ = add(rn__, rm__, 0); break; \
+		case 5: result_ = add(rn__, rm__, S.cpsr.c); break; \
+		case 6: result_ = sub(rn__, rm__, S.cpsr.c); break; \
+		case 7: result_ = sub(rm__, rn__, S.cpsr.c); break; \
+		case 8: bit(rn__ & rm__); write_ = false; break; \
+		case 9: bit(rn__ ^ rm__); write_ = false; break; \
+		case 10: sub(rn__, rm__, 1); write_ = false; break; \
+		case 11: add(rn__, rm__, 0); write_ = false; break; \
+		case 12: result_ = bit(rn__ | rm__); break; \
+		case 13: result_ = bit(rm__); break; \
+		case 14: result_ = bit(rn__ & ~rm__); break; \
+		case 15: result_ = bit(~rm__); break; \
+		} \
+		if (write_) { \
+			LEAN_SET(d_, result_); \
+		} \
+	} while (0)
+
+	LEAN_LOAD();
+	for (;;) {
+		if (steps + ST018_LONGEST > limit) {
+			break;
+		}
+		// The loop check, as the instruction's start in st018Run makes it.
+		if (loop.valid && R[15] != loop.pc && loop.instructions < 256) {
+			loop.instructions++;
+		} else {
+			LEAN_FLUSH();
+			LEAN_SAVE();
+			loopCheck();
+			limit = (cpu.th.clock - S.th.clock) / scalar;
+			LEAN_LOAD();
+			if (ST018_LONGEST > limit) {
+				break;
+			}
+		}
+		S.cpsr.t = 0;
+		if (P.reload) {
+			P.reload = false;
+			S.nonsequential = true;
+			P.fetch.address = R[15];
+			LEAN_FETCH(P.fetch.address);
+			LEAN_PIPE();
+		}
+		LEAN_PIPE();
+		if (P.execute.irq) {
+			LEAN_FLUSH();
+			LEAN_SAVE();
+			exception(IRQ, 0x18);
+			if (P.execute.thumb) {
+				setR(14, getR(14) + 2);
+			}
+			return;
+		}
+		S.opcode = P.execute.instruction;
+		if (!test(OP >> 28)) {
+			continue;
+		}
+		u32 handler = armTable[(OP & 0x0ff00000) >> 16 | (OP & 0x000000f0) >> 4];
+		switch (handler) {
+		case H_NONE:
+			continue;
+
+		case H_BRANCH: {
+			s32 displacement = (s32) (OP << 8) >> 8;
+			if (FLAG(24)) {
+				LEAN_SET(14, R[15] - 4);
+			}
+			LEAN_SET(15, R[15] + (u32) displacement * 4);
+			continue;
+		}
+
+		case H_DATA_IMM: {
+			if (FIELD(12, 4) == 15 && FLAG(20)) {
+				break;
+			}
+			u32 rn = R[FIELD(16, 4)];
+			u32 data = FIELD(0, 8);
+			S.carry = S.cpsr.c;
+			if (FIELD(8, 4)) {
+				data = ror(data, FIELD(8, 4) << 1);
+			}
+			LEAN_ALU(FIELD(21, 4), FIELD(12, 4), rn, data);
+			continue;
+		}
+
+		case H_DATA_IMM_SHIFT: {
+			if (FIELD(12, 4) == 15 && FLAG(20)) {
+				break;
+			}
+			u32 rn = R[FIELD(16, 4)];
+			u32 rm = R[FIELD(0, 4)];
+			S.carry = S.cpsr.c;
+			rm = shiftImmediate(rm, FIELD(5, 2), FIELD(7, 5));
+			LEAN_ALU(FIELD(21, 4), FIELD(12, 4), rn, rm);
+			continue;
+		}
+
+		case H_DATA_REG_SHIFT: {
+			if (FIELD(12, 4) == 15 && FLAG(20)) {
+				break;
+			}
+			S.nonsequential = true;
+			steps++;
+			u8 rs = R[FIELD(8, 4)];
+			u32 n = FIELD(16, 4), m = FIELD(0, 4);
+			u32 rn = R[n] + (n == 15 ? 4 : 0);
+			u32 rm = R[m] + (m == 15 ? 4 : 0);
+			S.carry = S.cpsr.c;
+			switch (FIELD(5, 2)) {
+			case 0: rm = lsl(rm, rs); break;
+			case 1: rm = lsr(rm, rs); break;
+			case 2: rm = asr(rm, rs); break;
+			case 3: rm = ror(rm, rs); break;
+			}
+			LEAN_ALU(FIELD(21, 4), FIELD(12, 4), rn, rm);
+			continue;
+		}
+
+		case H_MOVE_IMM:
+		case H_MOVE_REG: {
+			u32 d = FIELD(12, 4);
+			if (handler == H_MOVE_IMM) {
+				S.offset = FIELD(0, 12);
+			} else {
+				u32 rm = R[FIELD(0, 4)];
+				S.carry = S.cpsr.c;
+				S.offset = shiftImmediate(rm, FIELD(5, 2), FIELD(7, 5));
+			}
+			S.access = FLAG(22) ? BYTE : WORD;
+			S.value = R[d] + (d == 15 ? 4 : 0);
+			S.rn = R[FIELD(16, 4)];
+			if (FLAG(24)) {
+				S.rn = FLAG(23) ? S.rn + S.offset : S.rn - S.offset;
+			}
+			S.nonsequential = true;
+			S.mode = S.access;
+			S.address = S.rn;
+			if (FLAG(20)) {
+				steps++;
+				S.value = loadFinish(S.mode, S.address, armGet(LOAD | S.mode, S.address));
+			} else {
+				S.word = storeWord(S.mode, S.value);
+				steps++;
+				LEAN_BRIDGE(S.address);
+				armSet(STORE | S.mode, S.address, S.word);
+			}
+			if (!FLAG(24)) {
+				S.rn = FLAG(23) ? S.rn + S.offset : S.rn - S.offset;
+			}
+			if (!FLAG(24) || FLAG(21)) {
+				LEAN_SET(FIELD(16, 4), S.rn);
+			}
+			if (FLAG(20)) {
+				S.nonsequential = true;
+				steps++;
+				LEAN_SET(FIELD(12, 4), S.value);
+			}
+			continue;
+		}
+
+		case H_MULTIPLE: {
+			if (FLAG(22)) {
+				break;
+			}
+			u32 n = FIELD(16, 4);
+			S.list = FIELD(0, 16);
+			S.rn = R[n];
+			u32 bitCount = S.list ? (u32) __builtin_popcount(S.list) : 16;
+			S.rnEnd = FLAG(23) ? R[n] + bitCount * 4 : R[n] - bitCount * 4;
+			if (FLAG(24) && FLAG(23)) S.rn = S.rn + 4;
+			if (FLAG(24) && !FLAG(23)) S.rn = S.rn - bitCount * 4;
+			if (!FLAG(24) && !FLAG(23)) S.rn = S.rn - bitCount * 4 + 4;
+			S.cpsrMode = S.cpsr.m;
+			S.usr = false;
+			if (FLAG(21) && FLAG(20) && !(S.list >> n & 1)) {
+				LEAN_SET(n, S.rnEnd);
+			}
+			S.nonsequential = true;
+			if (!S.list) {
+				S.list = 0x8000;
+			}
+			for (S.index = listFrom(S.list, 0); S.index < 16; S.index = listFrom(S.list, S.index + 1)) {
+				S.mode = WORD;
+				S.address = S.rn;
+				if (FLAG(20)) {
+					steps++;
+					S.value = armGetFast(S.mode, S.address);
+					S.nonsequential = false;
+					LEAN_SET(S.index, S.value);
+				} else {
+					S.word = R[S.index] + (S.index == 15 ? 4 : 0);
+					steps++;
+					LEAN_BRIDGE(S.address);
+					armSet(S.mode, S.address, S.word);
+					S.nonsequential = false;
+					if (FLAG(21) && n != 15) {
+						LEAN_SET(n, S.rnEnd);
+					}
+				}
+				S.rn += 4;
+			}
+			S.nonsequential = true;
+			if (FLAG(20)) {
+				steps++;
+			}
+			continue;
+		}
+
+		case H_MOV_REG_REG:
+			LEAN_SET(FIELD(12, 4), R[FIELD(16, 4)]);
+			continue;
+
+		case H_MUL: {
+			u32 multiplier = R[FIELD(8, 4)];
+			u32 idles = FLAG(21) + 1;
+			if (multiplier >> 8 && multiplier >> 8 != 0xffffff) idles++;
+			if (multiplier >> 16 && multiplier >> 16 != 0xffff) idles++;
+			if (multiplier >> 24 && multiplier >> 24 != 0xff) idles++;
+			S.idles = 0;
+			S.nonsequential = true;
+			steps += idles;
+			u32 product = (FLAG(21) ? R[FIELD(12, 4)] : 0) + R[FIELD(0, 4)] * R[FIELD(8, 4)];
+			if (SAVE_FLAGS) {
+				S.cpsr.z = product == 0;
+				S.cpsr.n = product >> 31;
+			}
+			if (FIELD(16, 4) != 15) {
+				LEAN_SET(FIELD(16, 4), product);
+			}
+			continue;
+		}
+
+		case H_MULL: {
+			u64 rs = R[FIELD(8, 4)];
+			u32 idles = 2 + FLAG(21);
+			if (FLAG(22)) {
+				if (rs >> 8 && rs >> 8 != 0xffffff) idles++;
+				if (rs >> 16 && rs >> 16 != 0xffff) idles++;
+				if (rs >> 24 && rs >> 24 != 0xff) idles++;
+			} else {
+				if (rs >> 8) idles++;
+				if (rs >> 16) idles++;
+				if (rs >> 24) idles++;
+			}
+			S.idles = 0;
+			S.nonsequential = true;
+			steps += idles;
+			u64 rm = R[FIELD(0, 4)];
+			if (FLAG(22)) {
+				rm = (u64) (s64) (s32) rm;
+				rs = (u64) (s64) (s32) rs;
+			}
+			u64 rd = rm * rs;
+			u32 l = FIELD(12, 4), h = FIELD(16, 4);
+			if (FLAG(21)) {
+				rd += (u64) R[h] << 32 | R[l];
+			}
+			if (l != 15) LEAN_SET(l, (u32) rd);
+			if (h != 15) LEAN_SET(h, (u32) (rd >> 32));
+			if (FLAG(20)) {
+				S.cpsr.z = rd == 0;
+				S.cpsr.n = rd >> 63;
+			}
+			continue;
+		}
+		}
+		// Its handler runs it.
+		LEAN_FLUSH();
+		LEAN_SAVE();
+		S.state = FIRST_HANDLER + handler;
+		return;
+	}
+	LEAN_FLUSH();
+	LEAN_SAVE();
+#undef LEAN_LOAD
+#undef LEAN_SAVE
+#undef LEAN_FLUSH
+#undef LEAN_SET
+#undef LEAN_FETCH
+#undef LEAN_PIPE
+#undef LEAN_BRIDGE
+#undef LEAN_ALU
+}
+
 void st018Run(void) {
 dispatch:
 	switch (S.state) {
@@ -711,6 +1094,10 @@ dispatch:
 		goto done;
 
 	case MAIN:
+		leanRun();
+		if (S.state != MAIN) {
+			goto dispatch;
+		}
 		loopCheck();
 		S.cpsr.t = 0;
 		if (S.pipeline.reload) {

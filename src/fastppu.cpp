@@ -236,7 +236,7 @@ void Start(void)
  unsigned wanted = Wanted;
 
  if(!wanted)
-  wanted = sysconf(_SC_NPROCESSORS_ONLN) >= 4 ? 2 : 1;
+  wanted = fastPpuCores() >= 4 ? 2 : 1;
  Count = 0;
  for(unsigned n = 0; n < wanted && n < THREADS; n++)
  {
@@ -319,6 +319,17 @@ extern "C" void fastPpuSetSink(void (*sink)(uint32_t* at, const uint32_t* pixels
 {
  fastPpuStop();
  Sink = sink;
+}
+
+extern "C" unsigned fastPpuCores(void)
+{
+#if defined(__linux__)
+ cpu_set_t set;
+ if(!sched_getaffinity(0, sizeof(set), &set) && CPU_COUNT(&set) > 0)
+  return CPU_COUNT(&set);
+#endif
+ long cores = sysconf(_SC_NPROCESSORS_ONLN);
+ return cores > 0 ? (unsigned)cores : 1;
 }
 
 extern "C" bool fastPpuDirect(void)

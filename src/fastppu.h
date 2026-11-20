@@ -72,6 +72,8 @@ void fastPpuThreads(unsigned count);
 // returns.
 void fastPpuSetSink(void (*sink)(uint32_t* at, const uint32_t* pixels));
 bool fastPpuDirect(void);
+// The cores this process may run on (its affinity), else those online.
+unsigned fastPpuCores(void);
 
 #ifdef __cplusplus
 }

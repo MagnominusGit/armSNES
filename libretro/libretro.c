@@ -672,8 +672,10 @@ static void readOptions(void) {
 	// cores are busy.
 	struct retro_variable threads = { "armsnes_threads", NULL };
 	const char* threading = environment(RETRO_ENVIRONMENT_GET_VARIABLE, &threads) && threads.value ? threads.value : "All";
-	systemSoundThread = !strcmp(threading, "All");
-	systemPictureThread = strcmp(threading, "Off") != 0;
+	// All: as many as the cores the frontend gives the core allow, the sound's with three or more.
+	unsigned cores = fastPpuCores();
+	systemSoundThread = !strcmp(threading, "All") && cores >= 3;
+	systemPictureThread = strcmp(threading, "Off") != 0 && cores >= 2;
 	struct retro_variable variable = { "armsnes_power_on_ram", NULL };
 	systemClearPowerOn = !environment(RETRO_ENVIRONMENT_GET_VARIABLE, &variable) || !variable.value ||
 	                     strcmp(variable.value, "Patterned");

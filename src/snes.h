@@ -95,6 +95,8 @@ extern bool ppuNoSpriteLimit;
 // Fast mode: the frame isn't drawn (the frontend won't show it). Cleared as the frame ends, so lines
 // past it are drawn.
 extern bool ppuSkipPicture;
+// Fast mode's HD mode 7: mode 7 lines drawn 2 to 4 times finer each way (fastPpuSetHdSink), 0 for none.
+extern u8 ppuHdScale;
 // Fast mode's sound, and its lines, on threads of their own: the same output, on other cores.
 extern bool systemSoundThread;
 extern bool systemPictureThread;

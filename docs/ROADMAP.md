@@ -124,7 +124,7 @@ address, in either half of the banks; a Pro Action Replay code (or "address:valu
 to the work RAM as each frame begins, and gives it for reads anywhere else. Only the pages with a code
 read through them, so a game without cheats runs as before.
 
-The rest of phase 4, easiest first:
+The rest of phase 4, easiest first, all in now:
 
 1. The info file says what the core does (cheats, memory maps), and a missing firmware file is named
    on screen as well as in the log.

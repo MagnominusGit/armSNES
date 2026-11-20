@@ -54,6 +54,10 @@ unsigned WindowPieces[5];
 uint8 CGWSEL;
 uint8 CGADSUB;
 uint16 FixedColor;
+// armSNES: HD mode 7, the point inside each pixel mode 7 is sampled at, in 1/M7SubN of a pixel (M7SubN 0:
+// the pixel's corner, as the console samples).
+int M7SubX, M7SubY;
+int M7SubN;
 
 struct
 {
@@ -543,6 +547,13 @@ static MDFN_HOT MDFN_FASTCALL void DrawMODE7(unsigned line_y, uint16 prio_or, ui
 
   xinc = -xinc;
   yinc = -yinc;
+ }
+
+ if(M7SubN > 1)
+ {
+  const int dy = v_flip ? -M7SubY : M7SubY;
+  x += (M7Matrix[1] * dy + (int)xinc * M7SubX) / M7SubN;
+  y += (M7Matrix[3] * dy + (int)yinc * M7SubX) / M7SubN;
  }
 
  for(unsigned i = 0; i < 256; i++)
@@ -1328,4 +1339,29 @@ const uint32* Line(const FastPpuLine* l, bool direct)
  if(l->hiresFirstBlack)
   out[0] = l->brightness;
  return out;
+}
+
+// armSNES: HD mode 7, the line drawn again for each point of a grid of scale by scale inside its
+// pixels: scale rows of 256 * scale.
+static uint32 HdBlock[4 * 256 * 4];
+
+const uint32* LineHd(const FastPpuLine* l)
+{
+ const int n = l->hdScale;
+
+ for(int j = 0; j < n; j++)
+ {
+  for(int i = 0; i < n; i++)
+  {
+   M7SubX = i;
+   M7SubY = j;
+   M7SubN = n;
+   const uint32* pixels = Line(l, true);
+   uint32* to = HdBlock + j * 256 * n + i;
+   for(unsigned x = 0; x < 256; x++)
+    to[x * n] = pixels[2 * x];
+  }
+ }
+ M7SubN = 0;
+ return HdBlock;
 }

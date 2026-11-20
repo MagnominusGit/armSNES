@@ -49,6 +49,8 @@ struct FastPpuLine {
 	uint8_t screenMode;     // $2133
 	bool hiresFirstBlack;   // the first column's sub screen pixel is black
 
+	uint8_t hdScale;        // HD mode 7: 2 to 4 for a mode 7 line drawn that much finer, else 0
+
 	uint32_t spriteCount;
 	// 34 as the S-PPU fetches them, more when its limits are lifted (ppuNoSpriteLimit).
 	struct FastPpuSprite sprites[FAST_PPU_SPRITES];
@@ -75,6 +77,9 @@ void fastPpuThreads(unsigned count);
 // returns.
 void fastPpuSetSink(void (*sink)(uint32_t* at, const uint32_t* pixels));
 bool fastPpuDirect(void);
+// HD mode 7: a line with hdScale gets a second call, with its pixels hdScale times finer each way: hdScale
+// rows of 256 * hdScale pixels, the mode 7 layer sampled at each point and the others as they are.
+void fastPpuSetHdSink(void (*sink)(uint32_t* at, const uint32_t* block, unsigned scale));
 // The cores this process may run on (its affinity), else those online.
 unsigned fastPpuCores(void);
 

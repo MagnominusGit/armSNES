@@ -55,8 +55,9 @@ static u16* output = outputs[0];
 static unsigned outputWidth = 256, outputHeight = 224;
 static bool crosshair = true;
 static bool outputReady;
-// The picture last given to the frontend.
+// The picture last given to the frontend, and its rows' length.
 static const u16* shown;
+static u32 shownPitch;
 
 // A pixel of the canvas, four bits of brightness over 15 bits of color, as RGB565. Brightness 0 isn't
 // black but much darker than a linear scale would make it, as ares shows it.
@@ -204,6 +205,66 @@ static void lineDrawn(u32* at, const u32* pixels) {
 	}
 }
 
+// HD mode 7 (Fast mode): a frame with mode 7 lines is given hdScale times larger each way, those lines
+// drawn finer (fastPpuSetHdSink) and the others' pixels made larger. Two pictures, as with outputs.
+enum { HD_WIDTH = 256 * 4, HD_HEIGHT = 239 * 4 };
+static u16 hdOutputs[2][HD_WIDTH * HD_HEIGHT];
+static u32 hdRowStamp[CANVAS_HEIGHT];
+static u8 hdScale;
+
+static void hdLineDrawn(u32* at, const u32* block, unsigned scale) {
+	u32 row = (u32) (at - ppuCanvas) / CANVAS_WIDTH;
+	if (scale != hdScale || row - cropY >= cropHeight || at != &ppuCanvas[row * CANVAS_WIDTH + cropX]) {
+		return;
+	}
+	u16* to = &hdOutputs[stamp & 1][(row - cropY) * scale * HD_WIDTH];
+	for (u32 j = 0; j < scale; ++j) {
+		const u32* from = block + j * 256 * scale;
+		for (u32 n = 0; n < 256 * scale; ++n) {
+			u32 pixel = from[n];
+			to[j * HD_WIDTH + n] = (pixel & 0x78000) == 0x78000 && !tableAlways ? rgb565Bright(pixel) : rgb565(pixel);
+		}
+	}
+	hdRowStamp[row] = stamp;
+}
+
+// The picture given: the output, or the HD picture; its rows' length in pixels, and how many of its
+// rows and columns a console pixel takes.
+static const u16* framePicture;
+static u32 framePitch = OUTPUT_WIDTH, frameScaleY = 1;
+
+// The HD picture of the frame when it has HD lines: the others made larger from the output.
+static bool hdFrame(u32 y, u32 h) {
+	u32 n = hdScale, lines = 0;
+	for (u32 row = 0; row < h; ++row) {
+		lines += hdRowStamp[y + row] == stamp;
+	}
+	if (n < 2 || !lines) {
+		return false;
+	}
+	u16* hd = hdOutputs[stamp & 1];
+	u32 width = 256 * n;
+	for (u32 row = 0; row < h; ++row) {
+		if (hdRowStamp[y + row] == stamp) {
+			continue;
+		}
+		const u16* from = &output[row * OUTPUT_WIDTH];
+		u16* to = &hd[row * n * HD_WIDTH];
+		for (u32 x = 0; x < width; ++x) {
+			to[x] = from[x * outputWidth / width];
+		}
+		for (u32 j = 1; j < n; ++j) {
+			memcpy(&to[j * HD_WIDTH], to, width * sizeof(u16));
+		}
+	}
+	framePicture = hd;
+	framePitch = HD_WIDTH;
+	frameScaleY = n;
+	outputWidth = width;
+	outputHeight = h * n;
+	return true;
+}
+
 // The rows converted as they were drawn, where the last crop put them in the output.
 static u16 moved[OUTPUT_WIDTH * OUTPUT_HEIGHT];
 static bool movedWide[OUTPUT_HEIGHT];
@@ -294,11 +355,17 @@ void videoFrame(const u32* canvas) {
 		}
 	}
 	outputWidth = wide ? OUTPUT_WIDTH : OUTPUT_WIDTH / 2;
+	outputHeight = h;
+	framePicture = output;
+	framePitch = OUTPUT_WIDTH;
+	frameScaleY = yScale;
+	if (sameCrop && !interlace) {
+		hdFrame(y, h);
+	}
 	cropX = x;
 	cropY = y;
 	cropHeight = h;
 	stamp++;
-	outputHeight = h;
 	outputReady = true;
 }
 
@@ -517,7 +584,8 @@ static void readPads(void) {
 
 // A cross where each gun points: white, with a dark edge to show on any picture.
 static void drawCrosshairs(void) {
-	u32 yScale = outputHeight > 240 ? 2 : 1;
+	u16* picture = (u16*) framePicture;
+	u32 yScale = frameScaleY;
 	int xScale = (int) (outputWidth / (OUTPUT_WIDTH / 2));
 	for (int gun = 0; gun < 2; ++gun) {
 		if (gunX[gun] < 0 || gunY[gun] < 0) {
@@ -530,12 +598,12 @@ static void drawCrosshairs(void) {
 				u16 color = w ? 0x0000 : (gun ? 0xf800 : 0xffff);
 				int x = cx + d * xScale / 2, y = cy + w * (int) yScale;
 				if (x >= 0 && x < (int) outputWidth && y >= 0 && y < (int) outputHeight && (d < -3 || d > 3)) {
-					output[y * OUTPUT_WIDTH + x] = color;
+					picture[y * framePitch + x] = color;
 				}
 				x = cx + w * xScale;
 				y = cy + d / 2 * (int) yScale;
 				if (x >= 0 && x < (int) outputWidth && y >= 0 && y < (int) outputHeight && (d < -3 || d > 3)) {
-					output[y * OUTPUT_WIDTH + x] = color;
+					picture[y * framePitch + x] = color;
 				}
 			}
 		}
@@ -607,6 +675,10 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"The two halves of each hi-res pixel averaged, as a TV blended them: some games draw see-through "
 		"effects that way. Merge also makes the picture 256 pixels wide, for small screens.",
 		NULL, "video", { { "Off", NULL }, { "On", NULL }, { "Merge", NULL }, { NULL, NULL } }, "Off" },
+	{ "armsnes_hd_mode7", "HD Mode 7", NULL,
+		"Mode 7's rotated and scaled layer drawn 2 to 4 times finer each way, the rest of the picture as it "
+		"is. Each step takes much more time. Fast mode only.",
+		NULL, "video", { { "Off", NULL }, { "2x", NULL }, { "3x", NULL }, { "4x", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_sprite_limit", "Sprite Limit", NULL,
 		"The console shows 32 sprites and 34 sprite tiles on a line, which games turn into flicker or gaps. "
 		"No limit shows them all; games still see the console's limit. Fast mode only.",
@@ -655,6 +727,7 @@ static bool showOptions(void) {
 	} shown[] = {
 		{ "armsnes_threads", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_frame_skip", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
+		{ "armsnes_hd_mode7", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_sprite_limit", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_superfx_clock", !loaded || cart.gsu },
 		{ "armsnes_sa1_clock", !loaded || cart.sa1 },
@@ -784,6 +857,7 @@ unsigned retro_api_version(void) {
 void retro_init(void) {
 	makeColors();
 	fastPpuSetSink(lineDrawn);
+	fastPpuSetHdSink(hdLineDrawn);
 	bitmasks = environment(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL);
 }
 
@@ -821,13 +895,21 @@ static float aspectOf(u32 width, u32 lines) {
 	return (float) (width * pixel / lines);
 }
 
+static unsigned maxWidth(void) {
+	return hdScale > 2 ? 256u * hdScale : OUTPUT_WIDTH;
+}
+
+static unsigned maxHeight(void) {
+	return hdScale > 2 ? 239u * hdScale : OUTPUT_HEIGHT;
+}
+
 // The part of the output shown: the crops, or the Game Boy's screen without the Super Game Boy's border.
 struct Shown {
 	u32 x, y, width, height;
 };
 
 static struct Shown shownPart(void) {
-	u32 xScale = outputWidth / (OUTPUT_WIDTH / 2), yScale = outputHeight > 240 ? 2 : 1;
+	u32 xScale = outputWidth / (OUTPUT_WIDTH / 2), yScale = frameScaleY;
 	u32 lines = outputHeight / yScale;
 	struct Shown part = { cropSides, cropTopBottom, 256 - 2 * cropSides, lines > 2 * cropTopBottom ? lines - 2 * cropTopBottom : lines };
 	if (sgbBorderHidden && cart.icd && lines >= 144) {
@@ -844,9 +926,9 @@ static struct retro_game_geometry given;
 
 // The frontend is told when the picture's shape changes, in the console's pixels and lines.
 static void giveGeometry(const struct Shown* part) {
-	u32 xScale = outputWidth / (OUTPUT_WIDTH / 2), yScale = outputHeight > 240 ? 2 : 1;
+	u32 xScale = outputWidth / (OUTPUT_WIDTH / 2), yScale = frameScaleY;
 	u32 width = part->width / xScale, lines = part->height / yScale;
-	struct retro_game_geometry geometry = { width, lines, OUTPUT_WIDTH, OUTPUT_HEIGHT, aspectOf(width, lines) };
+	struct retro_game_geometry geometry = { width, lines, maxWidth(), maxHeight(), aspectOf(width, lines) };
 	if (geometry.base_width != given.base_width || geometry.base_height != given.base_height || geometry.aspect_ratio != given.aspect_ratio) {
 		given = geometry;
 		environment(RETRO_ENVIRONMENT_SET_GEOMETRY, &given);
@@ -857,8 +939,8 @@ void retro_get_system_av_info(struct retro_system_av_info* info) {
 	memset(info, 0, sizeof(*info));
 	info->geometry.base_width = OUTPUT_WIDTH / 2;
 	info->geometry.base_height = sys.pal ? 239 : 224;
-	info->geometry.max_width = OUTPUT_WIDTH;
-	info->geometry.max_height = OUTPUT_HEIGHT;
+	info->geometry.max_width = maxWidth();
+	info->geometry.max_height = maxHeight();
 	info->geometry.aspect_ratio = aspectOf(256, sys.pal ? 239 : 224);
 	given = info->geometry;
 	// A frame is 262 lines of 1364 clocks, less 4 clocks every other frame; PAL's is 312 lines.
@@ -991,13 +1073,15 @@ void retro_run(void) {
 		if (inputGuns && crosshair) {
 			drawCrosshairs();
 		}
-		shown = output;
+		shown = framePicture;
+		shownPitch = framePitch;
 	}
 	// Without a new picture the last one is given again, unless the frontend repeats it itself.
 	const u16* picture = outputReady || !dupe ? (shown ? shown : output) : NULL;
 	struct Shown part = shownPart();
 	giveGeometry(&part);
-	videoRefresh(picture ? picture + part.y * OUTPUT_WIDTH + part.x : NULL, part.width, part.height, OUTPUT_WIDTH * sizeof(u16));
+	u32 pitch = shown ? shownPitch : OUTPUT_WIDTH;
+	videoRefresh(picture ? picture + part.y * pitch + part.x : NULL, part.width, part.height, pitch * sizeof(u16));
 	if (soundCount && (av & RETRO_AV_ENABLE_AUDIO)) {
 		audioBatch(sound, soundCount);
 	}
@@ -1116,6 +1200,18 @@ static void readOptions(void) {
 	cropSides = crop ? (u32) atoi(crop) % 17 : 0;
 	sgbBorderHidden = optionIs(environment, "armsnes_sgb_border", "Hidden");
 	ppuNoSpriteLimit = optionIs(environment, "armsnes_sprite_limit", "No limit");
+	static const struct OptionChoice hdScales[] = { { "2x", 2 }, { "3x", 3 }, { "4x", 4 } };
+	u8 scale = (u8) optionChoice(environment, "armsnes_hd_mode7", hdScales, 3, 0);
+	if (scale != hdScale) {
+		bool larger = maxWidth() < (scale > 2 ? 256u * scale : OUTPUT_WIDTH);
+		hdScale = ppuHdScale = scale;
+		// A larger picture than the frontend was told of needs a new AV info.
+		if (loaded && larger) {
+			struct retro_system_av_info av;
+			retro_get_system_av_info(&av);
+			environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av);
+		}
+	}
 	static const struct OptionChoice skips[] = { { "Auto", -1 }, { "1", 1 }, { "2", 2 }, { "3", 3 } };
 	frameSkip = optionChoice(environment, "armsnes_frame_skip", skips, 4, 0);
 	struct retro_audio_buffer_status_callback status = { frameSkip < 0 ? soundBufferStatus : NULL };

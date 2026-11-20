@@ -74,9 +74,11 @@ namespace A1 {
 #pragma GCC pop_options
 
 static const uint32* (*const LineFor[2][2])(const FastPpuLine*, bool) = { { R0::Line, R1::Line }, { A0::Line, A1::Line } };
+static const uint32* (*const LineHdFor[2][2])(const FastPpuLine*) = { { R0::LineHd, R1::LineHd }, { A0::LineHd, A1::LineHd } };
 static const bool Avx2 = (__builtin_cpu_init(), __builtin_cpu_supports("avx2"));
 #else
 static const uint32* (*const LineFor[2][2])(const FastPpuLine*, bool) = { { R0::Line, R1::Line }, { R0::Line, R1::Line } };
+static const uint32* (*const LineHdFor[2][2])(const FastPpuLine*) = { { R0::LineHd, R1::LineHd }, { R0::LineHd, R1::LineHd } };
 static const bool Avx2 = false;
 #endif
 
@@ -103,6 +105,7 @@ alignas(64) uint32 HeadLocal, TailSeen;  // the main thread's: where it has writ
 alignas(64) uint32 LinesGiven;
 alignas(64) uint32 LinesDone[THREADS];
 void (*Sink)(uint32_t* at, const uint32_t* pixels);
+void (*HdSink)(uint32_t* at, const uint32_t* block, unsigned scale);
 FastPpuLine Scratch;
 pthread_t Thread[THREADS];
 unsigned Count, Wanted;  // the threads running, and asked for (0: by the cores there are)
@@ -139,6 +142,8 @@ void* RenderThread(void* arg)
      const uint32* pixels = LineFor[Avx2][id](l, Sink != NULL);
      if(Sink && l->out)
       Sink(l->out, pixels);
+     if(HdSink && l->out && l->hdScale > 1)
+      HdSink(l->out, LineHdFor[Avx2][id](l), l->hdScale);
     }
     __atomic_store_n(&LinesDone[id], LinesDone[id] + 1, __ATOMIC_RELEASE);
    }
@@ -282,6 +287,8 @@ extern "C" void fastPpuSubmit(FastPpuLine* l)
   const uint32* pixels = LineFor[Avx2][0](l, Sink != NULL);
   if(Sink && l->out)
    Sink(l->out, pixels);
+  if(HdSink && l->out && l->hdScale > 1)
+   HdSink(l->out, LineHdFor[Avx2][0](l), l->hdScale);
   return;
  }
 
@@ -330,6 +337,12 @@ extern "C" unsigned fastPpuCores(void)
 #endif
  long cores = sysconf(_SC_NPROCESSORS_ONLN);
  return cores > 0 ? (unsigned)cores : 1;
+}
+
+extern "C" void fastPpuSetHdSink(void (*sink)(uint32_t* at, const uint32_t* block, unsigned scale))
+{
+ fastPpuStop();
+ HdSink = sink;
 }
 
 extern "C" bool fastPpuDirect(void)

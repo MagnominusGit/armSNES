@@ -13,6 +13,7 @@
 struct Ppu ppu;
 u32 ppuCanvas[CANVAS_WIDTH * CANVAS_HEIGHT];
 bool ppuSkipPicture;
+u8 ppuHdScale;
 
 #define VCOUNTER ppu.counter.vcounter
 #define HCOUNTER ppu.counter.hcounter
@@ -3733,6 +3734,7 @@ static void fastWholeLine(void) {
 	}
 	// The first column's sub screen pixel of a line twice as wide is black.
 	line->hiresFirstBlack = !line->blank && (ppu.io.bgMode == 5 || ppu.io.pseudoHires);
+	line->hdScale = ppuHdScale > 1 && ppu.io.bgMode == 7 && !line->blank && !ppu.io.interlace ? ppuHdScale : 0;
 	fastPpuSubmit(line);
 }
 

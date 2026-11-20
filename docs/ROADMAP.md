@@ -158,6 +158,8 @@ by default (the others keep black sides), or every line for games patched for wi
 past the 256 columns hidden or shown. IPS, UPS and BPS patches already reach the core: RetroArch and
 the Armulators app apply them before giving it the game.
 
-Layers: each background, the sprites and color math can be left out of the picture, for screenshots
-and rips. A line is put together as usual and then again without them for the picture, so the game
-runs the same with them hidden.
+Layers and channels, set out as armNES has them: Layer Selection shows a switch for each background,
+the sprites and color math, to leave them out of the picture for screenshots and rips. A line is put
+together as usual and then again without them for the picture, so the game runs the same with them
+hidden. Channel Selection shows a switch for each voice, the Game Boy and the MSU-1, which keeps the
+volume set above for when it's back on.

@@ -1010,8 +1010,11 @@ static void drawCrosshairs(void) {
 	{ "armsnes_volume_voice" #n, "Voice " #n " Volume", NULL, \
 	  (n) == 1 ? "Each of the sound chip's eight voices. A voice's echo stays as loud." : NULL, NULL, "audio", VOLUME_VALUES, "100%" }
 
+// A layer's switch under Layer Selection, and a voice's or sound source's under Channel Selection
 #define LAYER_OPTION(key, name, info) \
-	{ "armsnes_layer_" key, name, NULL, info, NULL, "layers", { { "Shown", NULL }, { "Hidden", NULL }, { NULL, NULL } }, "Shown" }
+	{ "armsnes_layer_" key, name, NULL, info, NULL, "video", { { "Shown", NULL }, { "Hidden", NULL }, { NULL, NULL } }, "Shown" }
+#define CHANNEL_OPTION(key, name) \
+	{ "armsnes_channel_" key, name, NULL, NULL, NULL, "audio", { { "On", NULL }, { "Off", NULL }, { NULL, NULL } }, "On" }
 
 static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armsnes_mode", "Mode", NULL,
@@ -1089,12 +1092,16 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"The console shows 32 sprites and 34 sprite tiles on a line, which games turn into flicker or gaps. "
 		"No limit shows them all; games still see the console's limit. Fast mode only.",
 		NULL, "video", { { "32 per line", NULL }, { "No limit", NULL }, { NULL, NULL } }, "32 per line" },
-	LAYER_OPTION("bg1", "Background 1",
-		"Layers left out of the picture, for screenshots and rips. The game runs as it would with them shown."),
+	{ "armsnes_layer_selection", "Layer Selection", NULL,
+		"Shows switches below that hide the backgrounds, the sprites or color math, to see one on its own: for "
+		"ripping graphics or a closer look. Only the picture changes; the game plays on the same, so run-ahead "
+		"and states aren't affected. Off shows everything.",
+		NULL, "video", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	LAYER_OPTION("bg1", "Background 1", "Which background is the playfield, the scenery or the status bar differs from game to game."),
 	LAYER_OPTION("bg2", "Background 2", NULL),
 	LAYER_OPTION("bg3", "Background 3", NULL),
 	LAYER_OPTION("bg4", "Background 4", NULL),
-	LAYER_OPTION("sprites", "Sprites", NULL),
+	LAYER_OPTION("sprites", "Sprites", "Characters, enemies and shots."),
 	LAYER_OPTION("color_math", "Color Math", "Transparency and the other blends of the two screens. Hidden shows the main screen alone."),
 	{ "armsnes_interpolation", "Interpolation", NULL,
 		"How the sound chip smooths its samples: Gaussian as the console does, or sharper. Only what is heard "
@@ -1104,6 +1111,16 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armsnes_volume_msu1", "MSU-1 Volume", NULL, "An MSU-1 game's music and sound tracks.", NULL, "audio", VOLUME_VALUES, "100%" },
 	VOICE_OPTION(1), VOICE_OPTION(2), VOICE_OPTION(3), VOICE_OPTION(4),
 	VOICE_OPTION(5), VOICE_OPTION(6), VOICE_OPTION(7), VOICE_OPTION(8),
+	{ "armsnes_channel_selection", "Channel Selection", NULL,
+		"Shows a switch below for each voice and sound source, to hear one or a few on their own: for ripping "
+		"music or a closer listen. A channel switched off keeps its volume for when it's back on, and a voice's "
+		"echo still plays, as the game's memory holds it. Only the sound changes; the game plays on the same, "
+		"so netplay, run-ahead and states aren't affected. Off plays everything.",
+		NULL, "audio", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	CHANNEL_OPTION("gameboy", "Game Boy"), CHANNEL_OPTION("msu1", "MSU-1"),
+	CHANNEL_OPTION("voice1", "Voice 1"), CHANNEL_OPTION("voice2", "Voice 2"), CHANNEL_OPTION("voice3", "Voice 3"),
+	CHANNEL_OPTION("voice4", "Voice 4"), CHANNEL_OPTION("voice5", "Voice 5"), CHANNEL_OPTION("voice6", "Voice 6"),
+	CHANNEL_OPTION("voice7", "Voice 7"), CHANNEL_OPTION("voice8", "Voice 8"),
 	{ "armsnes_turbo_buttons", "Turbo Buttons", NULL,
 		"Buttons that press and release over and over while held.",
 		NULL, "input", { { "Off", NULL }, { "A", NULL }, { "B", NULL }, { "X", NULL }, { "Y", NULL }, { "A and B", NULL },
@@ -1164,9 +1181,8 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 
 static struct retro_core_option_v2_category categories[] = {
 	{ "system", "System", "The core's mode, threads and frame skip, the console's region, its memory at power-on and its chips' speeds." },
-	{ "video", "Video", "The picture's shape, edges and colors." },
-	{ "layers", "Layers", "Backgrounds, sprites and color math left out of the picture." },
-	{ "audio", "Audio", "The sound chip's interpolation and each voice's volume, and the cartridge's own sound." },
+	{ "video", "Video", "The picture's shape, edges and colors, and which layers it shows." },
+	{ "audio", "Audio", "The sound chip's interpolation, each voice's volume and the cartridge's own sound, and which channels play." },
 	{ "input", "Input", "Turbo, the D-pad and rumble." },
 	{ "aim", "Light Guns and Mouse",
 		"How the Super Scope and Justifiers aim, and the SNES Mouse's speed. The mouse moves with the mouse, "
@@ -1185,6 +1201,8 @@ static bool showOptions(void) {
 	bool motion = stick && !optionIs(environment, "armsnes_motion_sensor", "Off");
 	bool wide = !optionIs(environment, "armsnes_mode", "Exact") && !optionIs(environment, "armsnes_widescreen", "Off") &&
 	            !(loaded && cart.icd);
+	bool layers = optionIs(environment, "armsnes_layer_selection", "On");
+	bool channels = optionIs(environment, "armsnes_channel_selection", "On");
 	const struct {
 		const char* key;
 		bool show;
@@ -1210,6 +1228,22 @@ static bool showOptions(void) {
 		{ "armsnes_volume_gameboy", !loaded || cart.icd },
 		{ "armsnes_volume_msu1", !loaded || cart.msu1 },
 		{ "armsnes_sgb_border", !loaded || cart.icd },
+		{ "armsnes_layer_bg1", layers },
+		{ "armsnes_layer_bg2", layers },
+		{ "armsnes_layer_bg3", layers },
+		{ "armsnes_layer_bg4", layers },
+		{ "armsnes_layer_sprites", layers },
+		{ "armsnes_layer_color_math", layers },
+		{ "armsnes_channel_voice1", channels },
+		{ "armsnes_channel_voice2", channels },
+		{ "armsnes_channel_voice3", channels },
+		{ "armsnes_channel_voice4", channels },
+		{ "armsnes_channel_voice5", channels },
+		{ "armsnes_channel_voice6", channels },
+		{ "armsnes_channel_voice7", channels },
+		{ "armsnes_channel_voice8", channels },
+		{ "armsnes_channel_gameboy", channels && (!loaded || cart.icd) },
+		{ "armsnes_channel_msu1", channels && (!loaded || cart.msu1) },
 	};
 	for (size_t i = 0; i < sizeof(shown) / sizeof(*shown); ++i) {
 		struct retro_core_option_display display = { shown[i].key, shown[i].show };
@@ -1648,7 +1682,13 @@ static u8 clockOption(const char* key) {
 // betas need.
 // Exact is ares's timing, Balanced coarser, Fast Balanced's with snes_faust's renderer on a thread of
 // its own (docs/ROADMAP.md). A change takes effect between frames.
-static u8 volumeOption(const char* key) {
+// A volume, 0 while its channel is switched off under Channel Selection.
+static u8 volumeOption(const char* key, const char* channel) {
+	char channelKey[40];
+	snprintf(channelKey, sizeof(channelKey), "armsnes_channel_%s", channel);
+	if (optionIs(environment, "armsnes_channel_selection", "On") && optionIs(environment, channelKey, "Off")) {
+		return 0;
+	}
 	const char* value = optionValue(environment, key);
 	int percent = value ? atoi(value) : 100;
 	return percent >= 0 && percent <= 100 ? (u8) percent : 100;
@@ -1716,7 +1756,7 @@ static void readOptions(void) {
 	ppuNoSpriteLimit = optionIs(environment, "armsnes_sprite_limit", "No limit");
 	static const char* const layerKeys[6] = { "bg1", "bg2", "bg3", "bg4", "sprites", "color_math" };
 	ppuHidden = 0;
-	for (u32 n = 0; n < 6; ++n) {
+	for (u32 n = 0; n < 6 && optionIs(environment, "armsnes_layer_selection", "On"); ++n) {
 		char layerKey[40];
 		snprintf(layerKey, sizeof(layerKey), "armsnes_layer_%s", layerKeys[n]);
 		ppuHidden |= optionIs(environment, layerKey, "Hidden") << n;
@@ -1763,12 +1803,13 @@ static void readOptions(void) {
 		{ "Cubic", INTERPOLATE_CUBIC }, { "Linear", INTERPOLATE_LINEAR }, { "None", INTERPOLATE_NONE } };
 	dspInterpolation = (u8) optionChoice(environment, "armsnes_interpolation", interpolations, 3, INTERPOLATE_GAUSSIAN);
 	for (int n = 0; n < 8; ++n) {
-		char key[32];
+		char key[32], channel[8];
 		snprintf(key, sizeof(key), "armsnes_volume_voice%d", n + 1);
-		dspVoiceVolume[n] = volumeOption(key);
+		snprintf(channel, sizeof(channel), "voice%d", n + 1);
+		dspVoiceVolume[n] = volumeOption(key, channel);
 	}
-	dspGameBoyVolume = volumeOption("armsnes_volume_gameboy");
-	dspMsu1Volume = volumeOption("armsnes_volume_msu1");
+	dspGameBoyVolume = volumeOption("armsnes_volume_gameboy", "gameboy");
+	dspMsu1Volume = volumeOption("armsnes_volume_msu1", "msu1");
 	dspListenUpdate();
 	allowOpposing = optionIs(environment, "armsnes_opposing", "On");
 	leftStickDpad = !optionIs(environment, "armsnes_left_stick_dpad", "Off");

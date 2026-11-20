@@ -467,9 +467,9 @@ static s16 listenEchoOutput(int channel) {
 	return sclamp16(mainvolOutput + echoOut);
 }
 
-static void echo26(void) {
+static void echo26(bool listen) {
 	// The left output is kept for the next clock, so both go out together.
-	if (listening) {
+	if (listen) {
 		listenLeft = listenEchoOutput(0);
 	}
 	dsp.mainvol.output[0] = echoOutput(0);
@@ -480,12 +480,12 @@ static void echo26(void) {
 	dsp.echo.output[1] = sclamp16(r) & ~1;
 }
 
-static void echo27(void) {
+static void echo27(bool listen) {
 	s32 outl = dsp.mainvol.output[0];
 	s32 outr = echoOutput(1);
 	dsp.mainvol.output[0] = 0;
 	dsp.mainvol.output[1] = 0;
-	if (listening) {
+	if (listen) {
 		outl = listenLeft;
 		outr = listenEchoOutput(1);
 	}
@@ -529,7 +529,7 @@ static void echo30(void) {
 
 // Voices
 
-static void voiceOutput(struct DspVoice* v, int channel) {
+static inline __attribute__((always_inline)) void voiceOutput(struct DspVoice* v, int channel, bool listen) {
 	s32 amp = dsp.latch.output * v->volume[channel] >> 7;
 
 	dsp.mainvol.output[channel] = signedBits(dsp.mainvol.output[channel] + amp, 17);
@@ -539,7 +539,7 @@ static void voiceOutput(struct DspVoice* v, int channel) {
 		dsp.echo.output[channel] = signedBits(dsp.echo.output[channel] + amp, 17);
 		dsp.echo.output[channel] = sclamp16(dsp.echo.output[channel]);
 	}
-	if (listening) {
+	if (listen) {
 		listenMain[channel] = sclamp16(signedBits(listenMain[channel] + (listenOutput * v->volume[channel] >> 7), 17));
 	}
 }
@@ -574,7 +574,7 @@ static void voice3b(struct DspVoice* v) {
 	dsp.brr._header = dsp.apuram[v->brrAddress];
 }
 
-static void voice3c(struct DspVoice* v) {
+static void voice3c(struct DspVoice* v, bool listen) {
 	// Pitch modulation by the voice before.
 	if (v->_modulate) {
 		dsp.latch.pitch = (dsp.latch.pitch + ((dsp.latch.output >> 5) * dsp.latch.pitch >> 10)) & 0x7fff;
@@ -611,7 +611,7 @@ static void voice3c(struct DspVoice* v) {
 	}
 
 	dsp.latch.output = (output * v->envelope >> 11) & ~1;
-	if (listening) {
+	if (listen) {
 		s32 heard = v->_noise || dspInterpolation == INTERPOLATE_GAUSSIAN ? output : otherInterpolate(v);
 		listenOutput = (heard * v->envelope >> 11 & ~1) * dspVoiceVolume[v->index >> 4] / 100;
 	}
@@ -639,13 +639,13 @@ static void voice3c(struct DspVoice* v) {
 	}
 }
 
-static void voice3(struct DspVoice* v) {
+static void voice3(struct DspVoice* v, bool listen) {
 	voice3a(v);
 	voice3b(v);
-	voice3c(v);
+	voice3c(v, listen);
 }
 
-static void voice4(struct DspVoice* v) {
+static void voice4(struct DspVoice* v, bool listen) {
 	v->_looped = 0;
 	if (v->gaussianOffset >= 0x4000) {
 		brrDecode(v);
@@ -668,11 +668,11 @@ static void voice4(struct DspVoice* v) {
 		v->gaussianOffset = 0x7fff;
 	}
 
-	voiceOutput(v, 0);
+	voiceOutput(v, 0, listen);
 }
 
-static void voice5(struct DspVoice* v) {
-	voiceOutput(v, 1);
+static void voice5(struct DspVoice* v, bool listen) {
+	voiceOutput(v, 1, listen);
 
 	// ENDX, OUTX and ENVX don't update if they were written one or two clocks earlier.
 	v->_end |= v->_looped;
@@ -744,41 +744,41 @@ static void misc30(void) {
 	}
 }
 
-static inline __attribute__((always_inline)) void step(int phase) {
+static inline __attribute__((always_inline)) void step(int phase, bool listen) {
 	struct DspVoice* voice = dsp.voice;
 	switch (phase) {
-	case 0: voice5(&voice[0]); voice2(&voice[1]); break;
-	case 1: voice6(&voice[0]); voice3(&voice[1]); break;
-	case 2: voice7(&voice[0]); voice4(&voice[1]); voice1(&voice[3]); break;
-	case 3: voice8(&voice[0]); voice5(&voice[1]); voice2(&voice[2]); break;
-	case 4: voice9(&voice[0]); voice6(&voice[1]); voice3(&voice[2]); break;
-	case 5: voice7(&voice[1]); voice4(&voice[2]); voice1(&voice[4]); break;
-	case 6: voice8(&voice[1]); voice5(&voice[2]); voice2(&voice[3]); break;
-	case 7: voice9(&voice[1]); voice6(&voice[2]); voice3(&voice[3]); break;
-	case 8: voice7(&voice[2]); voice4(&voice[3]); voice1(&voice[5]); break;
-	case 9: voice8(&voice[2]); voice5(&voice[3]); voice2(&voice[4]); break;
-	case 10: voice9(&voice[2]); voice6(&voice[3]); voice3(&voice[4]); break;
-	case 11: voice7(&voice[3]); voice4(&voice[4]); voice1(&voice[6]); break;
-	case 12: voice8(&voice[3]); voice5(&voice[4]); voice2(&voice[5]); break;
-	case 13: voice9(&voice[3]); voice6(&voice[4]); voice3(&voice[5]); break;
-	case 14: voice7(&voice[4]); voice4(&voice[5]); voice1(&voice[7]); break;
-	case 15: voice8(&voice[4]); voice5(&voice[5]); voice2(&voice[6]); break;
-	case 16: voice9(&voice[4]); voice6(&voice[5]); voice3(&voice[6]); break;
-	case 17: voice1(&voice[0]); voice7(&voice[5]); voice4(&voice[6]); break;
-	case 18: voice8(&voice[5]); voice5(&voice[6]); voice2(&voice[7]); break;
-	case 19: voice9(&voice[5]); voice6(&voice[6]); voice3(&voice[7]); break;
-	case 20: voice1(&voice[1]); voice7(&voice[6]); voice4(&voice[7]); break;
-	case 21: voice8(&voice[6]); voice5(&voice[7]); voice2(&voice[0]); break;
+	case 0: voice5(&voice[0], listen); voice2(&voice[1]); break;
+	case 1: voice6(&voice[0]); voice3(&voice[1], listen); break;
+	case 2: voice7(&voice[0]); voice4(&voice[1], listen); voice1(&voice[3]); break;
+	case 3: voice8(&voice[0]); voice5(&voice[1], listen); voice2(&voice[2]); break;
+	case 4: voice9(&voice[0]); voice6(&voice[1]); voice3(&voice[2], listen); break;
+	case 5: voice7(&voice[1]); voice4(&voice[2], listen); voice1(&voice[4]); break;
+	case 6: voice8(&voice[1]); voice5(&voice[2], listen); voice2(&voice[3]); break;
+	case 7: voice9(&voice[1]); voice6(&voice[2]); voice3(&voice[3], listen); break;
+	case 8: voice7(&voice[2]); voice4(&voice[3], listen); voice1(&voice[5]); break;
+	case 9: voice8(&voice[2]); voice5(&voice[3], listen); voice2(&voice[4]); break;
+	case 10: voice9(&voice[2]); voice6(&voice[3]); voice3(&voice[4], listen); break;
+	case 11: voice7(&voice[3]); voice4(&voice[4], listen); voice1(&voice[6]); break;
+	case 12: voice8(&voice[3]); voice5(&voice[4], listen); voice2(&voice[5]); break;
+	case 13: voice9(&voice[3]); voice6(&voice[4]); voice3(&voice[5], listen); break;
+	case 14: voice7(&voice[4]); voice4(&voice[5], listen); voice1(&voice[7]); break;
+	case 15: voice8(&voice[4]); voice5(&voice[5], listen); voice2(&voice[6]); break;
+	case 16: voice9(&voice[4]); voice6(&voice[5]); voice3(&voice[6], listen); break;
+	case 17: voice1(&voice[0]); voice7(&voice[5]); voice4(&voice[6], listen); break;
+	case 18: voice8(&voice[5]); voice5(&voice[6], listen); voice2(&voice[7]); break;
+	case 19: voice9(&voice[5]); voice6(&voice[6]); voice3(&voice[7], listen); break;
+	case 20: voice1(&voice[1]); voice7(&voice[6]); voice4(&voice[7], listen); break;
+	case 21: voice8(&voice[6]); voice5(&voice[7], listen); voice2(&voice[0]); break;
 	case 22: voice3a(&voice[0]); voice9(&voice[6]); voice6(&voice[7]); echo22(); break;
 	case 23: voice7(&voice[7]); echo23(); break;
 	case 24: voice8(&voice[7]); echo24(); break;
 	case 25: voice3b(&voice[0]); voice9(&voice[7]); echo25(); break;
-	case 26: echo26(); break;
-	case 27: misc27(); echo27(); break;
+	case 26: echo26(listen); break;
+	case 27: misc27(); echo27(listen); break;
 	case 28: misc28(); echo28(); break;
 	case 29: misc29(); echo29(); break;
-	case 30: misc30(); voice3c(&voice[0]); echo30(); break;
-	case 31: voice4(&voice[0]); voice1(&voice[2]); break;
+	case 30: misc30(); voice3c(&voice[0], listen); echo30(); break;
+	case 31: voice4(&voice[0], listen); voice1(&voice[2]); break;
 	}
 }
 
@@ -842,12 +842,22 @@ bool dspWillReadOnPage(u16 address) {
 	return false;
 }
 
-// A sample's 32 phases in order.
-static void stepSample(void) {
-	step(0), step(1), step(2), step(3), step(4), step(5), step(6), step(7);
-	step(8), step(9), step(10), step(11), step(12), step(13), step(14), step(15);
-	step(16), step(17), step(18), step(19), step(20), step(21), step(22), step(23);
-	step(24), step(25), step(26), step(27), step(28), step(29), step(30), step(31);
+// A sample's 32 phases in order, with the voices mixed again for the output or not.
+static inline __attribute__((always_inline)) void stepSample(bool listen) {
+	step(0, listen), step(1, listen), step(2, listen), step(3, listen), step(4, listen), step(5, listen);
+	step(6, listen), step(7, listen), step(8, listen), step(9, listen), step(10, listen), step(11, listen);
+	step(12, listen), step(13, listen), step(14, listen), step(15, listen), step(16, listen), step(17, listen);
+	step(18, listen), step(19, listen), step(20, listen), step(21, listen), step(22, listen), step(23, listen);
+	step(24, listen), step(25, listen), step(26, listen), step(27, listen), step(28, listen), step(29, listen);
+	step(30, listen), step(31, listen);
+}
+
+static void stepSamplePlain(void) {
+	stepSample(false);
+}
+
+static void stepSampleListening(void) {
+	stepSample(true);
 }
 
 void dspRun(void) {
@@ -855,11 +865,15 @@ void dspRun(void) {
 	do {
 		// A whole sample that the phases would all be run for goes straight through.
 		if (dsp.phase == 0 && dsp.th.clock + 31 * phaseClocks <= smp.th.clock) {
-			stepSample();
+			if (listening) {
+				stepSampleListening();
+			} else {
+				stepSamplePlain();
+			}
 			dsp.th.clock += 32 * phaseClocks;
 			continue;
 		}
-		step(dsp.phase);
+		step(dsp.phase, listening);
 		dsp.phase = (dsp.phase + 1) & 31;
 		threadStep(&dsp.th, 3 * 8);
 	} while (!(smp.th.clock < dsp.th.clock));

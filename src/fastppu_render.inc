@@ -892,6 +892,23 @@ static INLINE void DoBGLayer(unsigned n, uint32 bgprio)
   DoXMosaic(n, &linebuf.bg[n][8]);
   DoWindow(n, &linebuf.bg[n][8]);
  }
+
+ // armSNES: widescreen, as bsnes-hd does it: a layer one screen wide at no scroll is taken for a status
+ // bar, kept to the console's 256 columns.
+ if(XShift && !(BGSC[n] & 0x1) && !BGHOFS[n] && !BGVOFS[n])
+ {
+  uint32* buf = hires ? &linebuf.bghr[n][8] : &linebuf.bg[n][8];
+  for(int c = 0; c < 256; c++)
+  {
+   if((unsigned)(c + XShift) >= 256)
+   {
+    if(hires)
+     buf[2 * c] = buf[2 * c + 1] = 0;
+    else
+     buf[c] = 0;
+   }
+  }
+ }
 }
 
 template<bool half, bool subtract>

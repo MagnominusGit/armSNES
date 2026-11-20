@@ -73,24 +73,26 @@ Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips 
   stop points), with a 7 MiB dump's expansion ROM;
 - the ST018, ares's ARM7TDMI in ARM state, with a stop point at each clock step (every memory access
   and idle cycle), its firmware from `st018.rom` or the end of the dump;
-- the BS-X cartridge's memory controller (MCC) and the memory pack slot on its board and the BS-LOROM,
-  BS-HIROM and BS-SA1 boards, with flash packs and their command set. A `.bs` pack loads into the BS-X
-  cartridge (`BS-X.bin` from the system folder). The base cartridge matches ares; a pack's own program
-  is still to be tried by hand. The pack and the 512 KiB download RAM aren't kept between runs, the
-  three mask-ROM packs are run as flash and a slotted game cartridge can't be given a pack from the
-  frontend yet. The base unit's receiver is there with the BS-X cartridge, as ares has it: its
-  registers and its clock, with nothing broadcast. The cartridge's first screens are the same with
-  it; past them it is still to be tried by hand;
-- the Sufami Turbo's two slots. A `.st` cartridge loads into slot A of the base (`STBIOS.bin` from the
-  system folder), and its save RAM is the game's save. Slot B maps its own save RAM where ares maps
-  the slot's ROM; with that one difference copied, two cartridges match ares. The frontend can't put
-  a cartridge in slot B yet;
+- the BS-X cartridge's memory controller (MCC) and the memory pack slot on its board and the
+  BS-LOROM, BS-HIROM and BS-SA1 boards, with flash packs and their command set. A `.bs` pack loads
+  into the BS-X cartridge (`BS-X.bin` from the system folder). The base cartridge matches ares; a
+  pack's own program is still to be tried by hand. A pack loaded on its own keeps what is written to
+  it in the save folder (pack.flash); the 512 KiB download RAM is PSRAM, empty at power on as on the
+  console. The three mask-ROM packs are run as flash. A slotted game cartridge takes a pack through
+  the Cartridge with Memory Pack subsystem. The base unit's receiver is there with the BS-X
+  cartridge, as ares has it: its registers and its clock, with nothing broadcast. The cartridge's
+  first screens are the same with it; past them it is still to be tried by hand;
+- the Sufami Turbo's two slots. A `.st` cartridge loads into slot A of the base (`STBIOS.bin` from
+  the system folder), and its save RAM is the game's save. Slot B maps its own save RAM where ares
+  maps the slot's ROM; with that one difference copied, two cartridges match ares. The Sufami Turbo
+  subsystem puts one in slot B;
 - the Super Game Boy's ICD2, with Gambatte as its Game Boy. A `.gb` or `.gbc` game loads with
-  `SGB1.sfc` and `sgb1.boot.rom` from the system folder, and the game's save RAM is the save. Gambatte
-  tells the ICD2 of each line as its pixels are done and of each JOYP write. Next to ares the picture
-  is the same until the two Game Boys' timing parts, a few hundred frames in, and looks the same after.
-  The Game Boy's sound is averaged down to the DSP's rate and added to it. The SGB2 runs on its own
-  oscillator; a cartridge's clock (MBC3, HuC3) isn't given to the frontend yet;
+  `SGB1.sfc` and `sgb1.boot.rom` from the system folder, and the game's save RAM is the save.
+  Gambatte tells the ICD2 of each line as its pixels are done and of each JOYP write. Next to ares
+  the picture is the same until the two Game Boys' timing parts, a few hundred frames in, and looks
+  the same after. The Game Boy's sound is averaged down to the DSP's rate and added to it. The SGB2
+  runs on its own oscillator; a cartridge's clock (MBC3, HuC3) is kept as armGBA's .rtc file. The
+  Super Game Boy subsystem takes any Game Boy game;
 - the MSU-1, for a game with `game.msu` beside it (its tracks `game-1.pcm` and on). Its 44.1 kHz
   tracks are averaged down to the DSP's rate and added to it, muted while the DSP is, as on ares. Only
   a small test cartridge was compared with ares: its picture matches and its track plays. A Super
@@ -140,7 +142,8 @@ The rest of phase 4, easiest first:
 11. Frame skipping, and pictures left out while fast-forwarding.
 12. Subsystems: a cartridge in Sufami Turbo slot B, a pack in a slotted cartridge, a Game Boy game in a
     Super Game Boy cartridge chosen from the frontend.
-13. Packs, the BS-X download RAM and a Game Boy cartridge's clock kept between runs.
+13. Packs and a Game Boy cartridge's clock kept between runs (the BS-X download RAM is PSRAM,
+    lost at power off on the console).
 14. HD Mode 7: mode 7 drawn at two to four times the resolution.
 
 Rumble isn't on the list: no Super Nintendo controller had it.

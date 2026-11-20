@@ -5,6 +5,7 @@
 #include "snes.h"
 #include "fastppu.h"
 #include "options.h"
+#include "chips/gb.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -672,12 +673,13 @@ static bool showOptions(void) {
 // Loads of two files: a Sufami Turbo's two cartridges, a cartridge with a memory pack in its slot,
 // and a Super Game Boy cartridge with a Game Boy game. Each file's save memory is kept beside it.
 enum { SUBSYSTEM_SUFAMI = 0x101, SUBSYSTEM_PACK, SUBSYSTEM_GAME_BOY };
-enum { MEMORY_SUFAMI_A = 0x101, MEMORY_SUFAMI_B, MEMORY_CARTRIDGE, MEMORY_GAME_BOY };
+enum { MEMORY_SUFAMI_A = 0x101, MEMORY_SUFAMI_B, MEMORY_CARTRIDGE, MEMORY_GAME_BOY, MEMORY_GAME_BOY_CLOCK, MEMORY_PACK };
 
 static const struct retro_subsystem_memory_info sufamiAMemory[] = { { "srm", MEMORY_SUFAMI_A } };
 static const struct retro_subsystem_memory_info sufamiBMemory[] = { { "srm", MEMORY_SUFAMI_B } };
 static const struct retro_subsystem_memory_info cartridgeMemory[] = { { "srm", MEMORY_CARTRIDGE } };
-static const struct retro_subsystem_memory_info gameBoyMemory[] = { { "srm", MEMORY_GAME_BOY } };
+static const struct retro_subsystem_memory_info gameBoyMemory[] = { { "srm", MEMORY_GAME_BOY }, { "rtc", MEMORY_GAME_BOY_CLOCK } };
+static const struct retro_subsystem_memory_info packMemory[] = { { "flash", MEMORY_PACK } };
 
 static const struct retro_subsystem_rom_info sufamiRoms[] = {
 	{ "Slot A", "st", false, false, true, sufamiAMemory, 1 },
@@ -685,11 +687,11 @@ static const struct retro_subsystem_rom_info sufamiRoms[] = {
 };
 static const struct retro_subsystem_rom_info packRoms[] = {
 	{ "Cartridge", "sfc|smc", false, false, true, cartridgeMemory, 1 },
-	{ "Memory Pack", "bs", false, false, true, NULL, 0 },
+	{ "Memory Pack", "bs", false, false, true, packMemory, 1 },
 };
 static const struct retro_subsystem_rom_info gameBoyRoms[] = {
 	{ "Super Game Boy", "sfc|smc", false, false, true, NULL, 0 },
-	{ "Game Boy", "gb|gbc", false, false, true, gameBoyMemory, 1 },
+	{ "Game Boy", "gb|gbc", false, false, true, gameBoyMemory, 2 },
 };
 static const struct retro_subsystem_info subsystems[] = {
 	{ "Sufami Turbo", "sufami", sufamiRoms, 2, SUBSYSTEM_SUFAMI },
@@ -886,6 +888,52 @@ void retro_reset(void) {
 	}
 }
 
+// A memory pack loaded on its own keeps what is written to it in the save folder, as <pack>.flash (the
+// name the frontend gives it for the Cartridge with Memory Pack subsystem), written when it changes.
+static char packPath[4096];
+static u8* packKept;
+
+static void packKeep(void) {
+	u32 size = 0;
+	u8* data = bsData(&size);
+	if (!packKept || !size || !memcmp(packKept, data, size)) {
+		return;
+	}
+	FILE* file = fopen(packPath, "wb");
+	if (file) {
+		if (fwrite(data, 1, size, file) == size) {
+			memcpy(packKept, data, size);
+		}
+		fclose(file);
+	}
+}
+
+static void packOpen(const char* path) {
+	free(packKept);
+	packKept = NULL;
+	const char* folder = NULL;
+	u32 size = 0;
+	u8* data = bsData(&size);
+	if (!size || !path || !environment(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &folder) || !folder) {
+		return;
+	}
+	const char* name = strrchr(path, '/');
+	name = name ? name + 1 : path;
+	snprintf(packPath, sizeof(packPath) - 8, "%s/%s", folder, name);
+	char* dot = strrchr(packPath, '.');
+	strcpy(dot && dot > strrchr(packPath, '/') ? dot : packPath + strlen(packPath), ".flash");
+	size_t kept = 0;
+	u8* saved = readFile(packPath, &kept);
+	if (saved && kept == size) {
+		memcpy(data, saved, size);
+	}
+	free(saved);
+	packKept = malloc(size);
+	if (packKept) {
+		memcpy(packKept, data, size);
+	}
+}
+
 static void readOptions(void);
 
 // Frame Skip (Fast mode): Auto skips while the frontend's sound is about to run short, up to three in a
@@ -920,6 +968,9 @@ void retro_run(void) {
 		if (rtcPresent() && memcmp(rtcMemory, rtcStart, sizeof(rtcMemory))) {
 			rtcLoad(rtcMemory, (s64) time(NULL));
 		}
+		if (cart.icd) {
+			gbRtcRead();
+		}
 	}
 	satellaviewNow = (s64) time(NULL);
 	readPads();
@@ -953,6 +1004,12 @@ void retro_run(void) {
 	if (rtcPresent()) {
 		rtcSave(rtcMemory, (s64) time(NULL));
 	}
+	if (cart.icd) {
+		gbRtcWrite();
+	}
+	if (sys.frames % 300 == 0) {
+		packKeep();
+	}
 }
 
 size_t retro_serialize_size(void) {
@@ -966,6 +1023,8 @@ bool retro_serialize(void* data, size_t size) {
 
 bool retro_unserialize(const void* data, size_t size) {
 	checkNetplay();
+	// A state loaded before the first frame has the clocks the files would have set.
+	rtcApplied = true;
 	return loaded && stateLoad(data, size);
 }
 
@@ -1232,6 +1291,9 @@ bool retro_load_game(const struct retro_game_info* info) {
 		free(boot);
 		free(gb);
 	}
+	if (pack) {
+		packOpen(info->path);
+	}
 	return loadFinish(info->path);
 }
 
@@ -1319,6 +1381,9 @@ void retro_unload_game(void) {
 		setFastForward(false);
 	}
 	stopThreads();
+	packKeep();
+	free(packKept);
+	packKept = NULL;
 	loaded = false;
 	cheatReset();
 	free(game);
@@ -1336,7 +1401,20 @@ void* retro_get_memory_data(unsigned id) {
 	case RETRO_MEMORY_SYSTEM_RAM:
 		return cpu.wram;
 	case RETRO_MEMORY_RTC:
-		return rtcPresent() ? rtcMemory : NULL;
+		if (rtcPresent()) {
+			return rtcMemory;
+		}
+		// Fall through.
+	case MEMORY_GAME_BOY_CLOCK: {
+		// A Super Game Boy's Game Boy cartridge's clock.
+		size_t size = 0;
+		return cart.icd ? gbRtc(&size) : NULL;
+	}
+	case MEMORY_PACK: {
+		u32 size = 0;
+		u8* data = bsData(&size);
+		return size ? data : NULL;
+	}
 	case MEMORY_SUFAMI_A:
 	case MEMORY_SUFAMI_B: {
 		u32 size = 0;
@@ -1356,7 +1434,19 @@ size_t retro_get_memory_size(unsigned id) {
 	case RETRO_MEMORY_SYSTEM_RAM:
 		return sizeof(cpu.wram);
 	case RETRO_MEMORY_RTC:
-		return rtcPresent() ? sizeof(rtcMemory) : 0;
+		if (rtcPresent()) {
+			return sizeof(rtcMemory);
+		}
+		// Fall through.
+	case MEMORY_GAME_BOY_CLOCK: {
+		size_t size = 0;
+		return cart.icd && gbRtc(&size) ? size : 0;
+	}
+	case MEMORY_PACK: {
+		u32 size = 0;
+		bsData(&size);
+		return size;
+	}
 	case MEMORY_SUFAMI_A:
 	case MEMORY_SUFAMI_B: {
 		u32 size = 0;

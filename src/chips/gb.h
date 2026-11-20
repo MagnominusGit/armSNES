@@ -20,6 +20,12 @@ void gbReset(void);
 // one for every two dots: left in the low 16 bits, right in the high.
 unsigned gbRun(unsigned dots, unsigned* samples, const unsigned** audio);
 unsigned char* gbSaveRam(unsigned* size);
+// The cartridge's clock (MBC3 or HuC3) as armGBA's .rtc file, whose parts gambatte-libretro and mGBA
+// read too: the frontend fills it after the game is loaded, gbRtcRead sets the clock from it, moved on
+// by the time the game was off, and gbRtcWrite brings it up to date. NULL without a clock.
+unsigned char* gbRtc(size_t* size);
+void gbRtcRead(void);
+void gbRtcWrite(void);
 size_t gbStateSize(void);
 void gbStateSave(void* data);
 bool gbStateLoad(const void* data, size_t size);

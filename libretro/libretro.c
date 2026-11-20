@@ -517,6 +517,10 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"Fast mode's sound and picture on threads of their own, as the device's cores allow. Picture Only "
 		"keeps the sound on the main thread, Off keeps both there, for devices whose cores are busy.",
 		NULL, "system", { { "All", NULL }, { "Picture Only", NULL }, { "Off", NULL }, { NULL, NULL } }, "All" },
+	{ "armsnes_region", "Region", NULL,
+		"The console's region: NTSC at 60 frames a second, PAL at 50. Auto follows the game's header. Changing "
+		"it restarts the game.",
+		NULL, "system", { { "Auto", NULL }, { "NTSC", NULL }, { "PAL", NULL }, { NULL, NULL } }, "Auto" },
 	{ "armsnes_power_on_ram", "Power-On RAM", NULL,
 		"The work RAM as the console is switched on: all zero, which some unlicensed games and prototypes "
 		"need, or ares's stripes of two values.",
@@ -549,7 +553,7 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 };
 
 static struct retro_core_option_v2_category categories[] = {
-	{ "system", "System", "The core's mode and threads, the console's memory at power-on and its chips' speeds." },
+	{ "system", "System", "The core's mode and threads, the console's region, its memory at power-on and its chips' speeds." },
 	{ "input", "Input", "Turbo, the D-pad and the light guns." },
 	{ NULL, NULL, NULL },
 };
@@ -660,11 +664,15 @@ void retro_init(void) {
 	bitmasks = environment(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL);
 }
 
-void retro_deinit(void) {
+static void stopThreads(void) {
 	fastPpuStop();
 	smpStop();
 	gsuStop();
 	st018Stop();
+}
+
+void retro_deinit(void) {
+	stopThreads();
 }
 
 void retro_get_system_info(struct retro_system_info* info) {
@@ -791,6 +799,10 @@ static u8 clockOption(const char* key) {
 // betas need.
 // Exact is ares's timing, Balanced coarser, Fast Balanced's with snes_faust's renderer on a thread of
 // its own (docs/ROADMAP.md). A change takes effect between frames.
+static bool regionPal(void) {
+	return optionIs(environment, "armsnes_region", "PAL") || (cart.pal && !optionIs(environment, "armsnes_region", "NTSC"));
+}
+
 static void readOptions(void) {
 	struct retro_variable mode = { "armsnes_mode", NULL };
 	const char* value = environment(RETRO_ENVIRONMENT_GET_VARIABLE, &mode) && mode.value ? mode.value : "Fast";
@@ -829,6 +841,14 @@ static void readOptions(void) {
 	turboPeriod = period ? (u32) atoi(period) : 4;
 	if (turboPeriod < TURBO_FEWEST || turboPeriod > TURBO_MOST) {
 		turboPeriod = 4;
+	}
+	if (loaded && regionPal() != sys.pal) {
+		stopThreads();
+		systemLoad(regionPal());
+		systemPower(false);
+		struct retro_system_av_info av;
+		retro_get_system_av_info(&av);
+		environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av);
 	}
 	allowOpposing = optionIs(environment, "armsnes_opposing", "On");
 	leftStickDpad = !optionIs(environment, "armsnes_left_stick_dpad", "Off");
@@ -965,7 +985,7 @@ bool retro_load_game(const struct retro_game_info* info) {
 	environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void*) descriptors);
 
 	readOptions();
-	systemLoad(cart.pal);
+	systemLoad(regionPal());
 	systemPower(false);
 	setMemoryMaps();
 	if (rtcPresent()) {
@@ -990,10 +1010,7 @@ void retro_unload_game(void) {
 	if (fastForwardHeld) {
 		setFastForward(false);
 	}
-	fastPpuStop();
-	smpStop();
-	gsuStop();
-	st018Stop();
+	stopThreads();
 	loaded = false;
 	cheatReset();
 	free(game);

@@ -145,6 +145,10 @@ static void mouseLatch(struct Mouse* mouse, int port, bool data) {
 	}
 	mouse->latched = data;
 	mouse->counter = 0;
+	// What it moved is taken as the latch falls, before the game reads it.
+	if (data) {
+		return;
+	}
 
 	// Left and up are below 0.
 	int x = 0, y = 0;

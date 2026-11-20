@@ -12,6 +12,7 @@
 
 struct Ppu ppu;
 u32 ppuCanvas[CANVAS_WIDTH * CANVAS_HEIGHT];
+bool ppuSkipPicture;
 
 #define VCOUNTER ppu.counter.vcounter
 #define HCOUNTER ppu.counter.hcounter
@@ -1176,6 +1177,7 @@ static void frameOut(void) {
 	// The next frame starts on a black canvas, so lines it doesn't draw stay black.
 	fastPpuFence();
 	videoFrame(ppuCanvas);
+	ppuSkipPicture = false;
 	for (u32 row = 0; row * CANVAS_WIDTH < ppu.drawnTo; ++row) {
 		if (canvasKept[row] != canvasFrame) {
 			u32 end = (row + 1) * CANVAS_WIDTH < ppu.drawnTo ? (row + 1) * CANVAS_WIDTH : ppu.drawnTo;
@@ -3648,6 +3650,10 @@ static void fetchMoreSprites(void) {
 
 // Fast mode: a whole line by snes_faust's renderer, from the registers as they are now.
 static void fastWholeLine(void) {
+	if (ppuSkipPicture) {
+		moreSpritesReady = false;
+		return;
+	}
 	if (systemPictureThread && fastStale) {
 		fastPpuResync(ppu.vram, ppu.cgram);
 		fastStale = false;

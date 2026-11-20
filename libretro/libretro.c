@@ -580,6 +580,10 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armsnes_sa1_clock", "SA-1 Clock", NULL,
 		"The SA-1 chip's speed, for its games: above 100% less slowdown.",
 		NULL, "system", CLOCK_VALUES, "100%" },
+	{ "armsnes_frame_skip", "Frame Skip", NULL,
+		"Skips drawing frames to keep up: Auto when the sound is about to run short, or this many after each "
+		"frame shown. Fast mode only, not in netplay.",
+		NULL, "video", { { "Off", NULL }, { "Auto", NULL }, { "1", NULL }, { "2", NULL }, { "3", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_aspect", "Aspect Ratio", NULL,
 		"The console's own pixel shape (8:7, about 11:8 on PAL), 4:3 as a TV showed it, or square pixels.",
 		NULL, "video", { { "8:7 PAR", "Console pixels (8:7)" }, { "4:3", NULL }, { "1:1", "Square pixels" }, { NULL, NULL } }, "8:7 PAR" },
@@ -649,6 +653,7 @@ static bool showOptions(void) {
 		bool show;
 	} shown[] = {
 		{ "armsnes_threads", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
+		{ "armsnes_frame_skip", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_sprite_limit", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_superfx_clock", !loaded || cart.gsu },
 		{ "armsnes_sa1_clock", !loaded || cart.sa1 },
@@ -853,6 +858,28 @@ void retro_reset(void) {
 
 static void readOptions(void);
 
+// Frame Skip (Fast mode): Auto skips while the frontend's sound is about to run short, up to three in a
+// row; a number skips that many after each frame shown. Not in netplay, where the others would wait.
+static int frameSkip;
+static bool soundActive, soundShort;
+static unsigned soundFull = 100;
+
+static void soundBufferStatus(bool active, unsigned occupancy, bool underrunLikely) {
+	soundActive = active;
+	soundFull = occupancy;
+	soundShort = underrunLikely;
+}
+
+static bool skipThisFrame(void) {
+	static int run;
+	bool skip = false;
+	if (frameSkip && systemFast && !netplaySeen) {
+		skip = frameSkip < 0 ? soundActive && (soundShort || soundFull <= 33) && run < 3 : run < frameSkip;
+	}
+	run = skip ? run + 1 : 0;
+	return skip;
+}
+
 void retro_run(void) {
 	bool updated = false;
 	if (environment(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
@@ -874,7 +901,8 @@ void retro_run(void) {
 	}
 	bool dupe = false;
 	environment(RETRO_ENVIRONMENT_GET_CAN_DUPE, &dupe);
-	pictureUnseen = dupe && !(av & RETRO_AV_ENABLE_VIDEO);
+	pictureUnseen = dupe && (!(av & RETRO_AV_ENABLE_VIDEO) || skipThisFrame());
+	ppuSkipPicture = pictureUnseen && systemFast;
 
 	systemRunFrame();
 
@@ -999,6 +1027,12 @@ static void readOptions(void) {
 	cropSides = crop ? (u32) atoi(crop) % 17 : 0;
 	sgbBorderHidden = optionIs(environment, "armsnes_sgb_border", "Hidden");
 	ppuNoSpriteLimit = optionIs(environment, "armsnes_sprite_limit", "No limit");
+	static const struct OptionChoice skips[] = { { "Auto", -1 }, { "1", 1 }, { "2", 2 }, { "3", 3 } };
+	frameSkip = optionChoice(environment, "armsnes_frame_skip", skips, 4, 0);
+	struct retro_audio_buffer_status_callback status = { frameSkip < 0 ? soundBufferStatus : NULL };
+	if (!environment(RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK, &status) && frameSkip < 0) {
+		frameSkip = 0;
+	}
 	static const struct OptionChoice blends[] = { { "On", BLEND_ON }, { "Merge", BLEND_MERGE } };
 	hiresBlend = optionChoice(environment, "armsnes_hires_blend", blends, 2, BLEND_OFF);
 	bool boost = optionIs(environment, "armsnes_deep_black_boost", "On");

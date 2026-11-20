@@ -92,6 +92,9 @@ extern bool systemFast;
 // Fast mode: a line's sprites past the 32 and tiles past the 34 the S-PPU takes are drawn anyway. What
 // the game reads (the range and time over flags) is the same.
 extern bool ppuNoSpriteLimit;
+// Fast mode: the frame isn't drawn (the frontend won't show it). Cleared as the frame ends, so lines
+// past it are drawn.
+extern bool ppuSkipPicture;
 // Fast mode's sound, and its lines, on threads of their own: the same output, on other cores.
 extern bool systemSoundThread;
 extern bool systemPictureThread;

@@ -14,6 +14,8 @@ struct Ppu ppu;
 u32 ppuCanvas[CANVAS_WIDTH * CANVAS_HEIGHT];
 bool ppuSkipPicture;
 u8 ppuHdScale;
+u8 ppuWide;
+bool ppuWideAll, ppuWideSprites;
 
 #define VCOUNTER ppu.counter.vcounter
 #define HCOUNTER ppu.counter.hcounter
@@ -527,6 +529,9 @@ static u8 objItemsUsed[2], objTilesUsed[2];
 static struct FastPpuSprite moreSprites[FAST_PPU_SPRITES];
 static u32 moreSpriteCount;
 static bool moreSpritesReady;
+// Widescreen: the line's sprite tiles past the console's 256 columns (fetchWideSprites).
+static struct FastPpuSprite wideSprites[FAST_PPU_SPRITES];
+static u32 wideSpriteCount;
 #endif
 
 static void objScanline(void) {
@@ -552,16 +557,20 @@ static void objScanline(void) {
 	}
 }
 
-static bool objOnScanline(const struct OamObject* sprite) {
-	if (sprite->x > 256 && sprite->x + objectWidth(sprite) - 1 < 512) {
-		return false;
-	}
+static bool objOnLine(const struct OamObject* sprite) {
 	u32 height = objectHeight(sprite) >> ppu.obj.io.interlace;
 	s32 index = (s32) (ppu.obj.y % 256) - sprite->y;
 	if (index < 0) {
 		index += 256;
 	}
 	return (u32) index < height;
+}
+
+static bool objOnScanline(const struct OamObject* sprite) {
+	if (sprite->x > 256 && sprite->x + objectWidth(sprite) - 1 < 512) {
+		return false;
+	}
+	return objOnLine(sprite);
 }
 
 static void objEvaluate(u8 index) {
@@ -1194,6 +1203,7 @@ void ppuLoaded(void) {
 	memset(canvasKept, 0, sizeof(canvasKept));
 #if !defined(ARMSNES_DOT)
 	moreSpritesReady = false;
+	wideSpriteCount = 0;
 #endif
 	objItemsUsed[0] = objItemsUsed[1] = 32;
 	objTilesUsed[0] = objTilesUsed[1] = 34;
@@ -3582,6 +3592,38 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 bool ppuNoSpriteLimit;
 
 
+// A sprite's tile on the next line, as ppu_fetch.inc fetches it: its four bitplanes, a byte each.
+static u32 objTileData(const struct OamObject* sprite, u32 tx) {
+	u32 tileWidth = objectWidth(sprite) >> 3;
+	u32 y = (ppu.obj.y - sprite->y) & 255;
+	if (ppu.obj.io.interlace) {
+		y <<= 1;
+	}
+	if (sprite->vflip) {
+		if (objectWidth(sprite) == objectHeight(sprite)) {
+			y = objectHeight(sprite) - 1 - y;
+		} else if (y < objectWidth(sprite)) {
+			y = objectWidth(sprite) - 1 - y;
+		} else {
+			y = objectWidth(sprite) + (objectWidth(sprite) - 1) - (y - objectWidth(sprite));
+		}
+	}
+	if (ppu.obj.io.interlace) {
+		y = !sprite->vflip ? y + ppu.counter.field : y - ppu.counter.field;
+	}
+	y &= 255;
+	u32 tiledataAddress = ppu.obj.io.tiledataAddress;
+	if (sprite->nameselect) {
+		tiledataAddress += (1 + ppu.obj.io.nameselect) << 12;
+	}
+	u32 chrx = sprite->character & 15;
+	u32 chry = (((sprite->character >> 4) + (y >> 3)) & 15) << 4;
+	u32 mx = !sprite->hflip ? tx : tileWidth - 1 - tx;
+	u32 pos = tiledataAddress + ((chry + ((chrx + mx) & 15)) << 4);
+	u32 address = (pos & 0xfff0) + (y & 7);
+	return *vramAt(address) | (u32) *vramAt(address + 8) << 16;
+}
+
 // Fast mode without the sprite limits: the next line's sprite tiles when this line's found more than
 // the S-PPU takes, fetched as ppu_fetch.inc fetches them, the last (the lowest priority) dropped past
 // FAST_PPU_SPRITES.
@@ -3603,50 +3645,58 @@ static void fetchMoreSprites(void) {
 	while (itemCount--) {
 		const struct OamObject* sprite = &ppu.oam[items[itemCount]];
 		u32 tileWidth = objectWidth(sprite) >> 3;
-		u32 x = sprite->x;
-		u32 y = (ppu.obj.y - sprite->y) & 255;
-		if (ppu.obj.io.interlace) {
-			y <<= 1;
-		}
-		if (sprite->vflip) {
-			if (objectWidth(sprite) == objectHeight(sprite)) {
-				y = objectHeight(sprite) - 1 - y;
-			} else if (y < objectWidth(sprite)) {
-				y = objectWidth(sprite) - 1 - y;
-			} else {
-				y = objectWidth(sprite) + (objectWidth(sprite) - 1) - (y - objectWidth(sprite));
-			}
-		}
-		if (ppu.obj.io.interlace) {
-			y = !sprite->vflip ? y + ppu.counter.field : y - ppu.counter.field;
-		}
-		x &= 511;
-		y &= 255;
-		u32 tiledataAddress = ppu.obj.io.tiledataAddress;
-		if (sprite->nameselect) {
-			tiledataAddress += (1 + ppu.obj.io.nameselect) << 12;
-		}
-		u32 chrx = sprite->character & 15;
-		u32 chry = (((sprite->character >> 4) + (y >> 3)) & 15) << 4;
+		u32 x = sprite->x & 511;
 		for (u32 tx = 0; tx < tileWidth; ++tx) {
 			u32 sx = (x + (tx << 3)) & 511;
 			if (x != 256 && sx >= 256 && sx + 7 < 512) {
 				continue;
 			}
-			u32 mx = !sprite->hflip ? tx : tileWidth - 1 - tx;
-			u32 pos = tiledataAddress + ((chry + ((chrx + mx) & 15)) << 4);
-			u32 address = (pos & 0xfff0) + (y & 7);
 			// The list keeps its last FAST_PPU_SPRITES: the higher priority sprites come last.
 			if (count == FAST_PPU_SPRITES) {
 				memmove(moreSprites, moreSprites + 1, (FAST_PPU_SPRITES - 1) * sizeof(*moreSprites));
 				count--;
 			}
 			moreSprites[count++] = (struct FastPpuSprite) { signedBits(sx, 9), sprite->priority, 128 + (sprite->palette << 4),
-				sprite->hflip, *vramAt(address) | (u32) *vramAt(address + 8) << 16 };
+				sprite->hflip, objTileData(sprite, tx) };
 		}
 	}
 	moreSpriteCount = count;
 	moreSpritesReady = true;
+}
+
+// Widescreen with the sprites shown: the next line's sprite tiles past the console's 256 columns,
+// which it doesn't fetch, from every sprite on the line (lowest priority first), its limits not
+// counting them. A tile from 256 to the right edge is there, one further on wraps round to the left.
+static void fetchWideSprites(void) {
+	wideSpriteCount = 0;
+	if (!ppuWide || !ppuWideSprites || !systemFast || ppu.io.displayDisable || VCOUNTER >= ppu.state.vdisp - 1u) {
+		return;
+	}
+	s32 right = 256 + ppuWide, left = -(s32) ppuWide;
+	u32 count = 0;
+	for (u32 n = 128; n--;) {
+		const struct OamObject* sprite = &ppu.oam[(ppu.obj.latchFirstSprite + n) & 127];
+		if (!objOnLine(sprite)) {
+			continue;
+		}
+		u32 tileWidth = objectWidth(sprite) >> 3;
+		for (u32 tx = 0; tx < tileWidth; ++tx) {
+			s32 sx = (s32) ((sprite->x + (tx << 3)) & 511);
+			if (sx >= right) {
+				sx -= 512;
+			}
+			if (!(sx >= 256 || (sx <= -8 && sx > left - 8))) {
+				continue;
+			}
+			if (count == FAST_PPU_SPRITES) {
+				memmove(wideSprites, wideSprites + 1, (FAST_PPU_SPRITES - 1) * sizeof(*wideSprites));
+				count--;
+			}
+			wideSprites[count++] = (struct FastPpuSprite) { (int16_t) sx, sprite->priority, 128 + (sprite->palette << 4),
+				sprite->hflip, objTileData(sprite, tx) };
+		}
+	}
+	wideSpriteCount = count;
 }
 
 // Fast mode: a whole line by snes_faust's renderer, from the registers as they are now.
@@ -3721,9 +3771,16 @@ static void fastWholeLine(void) {
 	line->fixedColor = fixedColor();
 	line->screenMode = ppu.io.interlace | ppu.obj.io.interlace << 1 | ppu.io.overscan << 2 | ppu.io.pseudoHires << 3 | ppu.io.extbg << 6;
 	line->spriteCount = 0;
+	if (ppuWide && ppuWideSprites) {
+		// Under the console's own, which may hide part of them at its edges.
+		u32 room = FAST_PPU_SPRITES - (moreSpritesReady ? moreSpriteCount : 34);
+		u32 skip = wideSpriteCount > room ? wideSpriteCount - room : 0;
+		memcpy(line->sprites, wideSprites + skip, (wideSpriteCount - skip) * sizeof(*wideSprites));
+		line->spriteCount = wideSpriteCount - skip;
+	}
 	if (moreSpritesReady) {
-		memcpy(line->sprites, moreSprites, moreSpriteCount * sizeof(*moreSprites));
-		line->spriteCount = moreSpriteCount;
+		memcpy(line->sprites + line->spriteCount, moreSprites, moreSpriteCount * sizeof(*moreSprites));
+		line->spriteCount += moreSpriteCount;
 	}
 	for (u32 n = 0; n < 34 && !moreSpritesReady; ++n) {
 		const __typeof__(ppu.obj.tile[0][0])* tile = &ppu.obj.tile[!ppu.obj.active][n];
@@ -3735,6 +3792,9 @@ static void fastWholeLine(void) {
 	// The first column's sub screen pixel of a line twice as wide is black.
 	line->hiresFirstBlack = !line->blank && (ppu.io.bgMode == 5 || ppu.io.pseudoHires);
 	line->hdScale = ppuHdScale > 1 && ppu.io.bgMode == 7 && !line->blank && !ppu.io.interlace ? ppuHdScale : 0;
+	line->wide = ppu.io.interlace ? 0 : ppuWide;
+	line->wideLayers = ppuWideAll || ppu.io.bgMode == 7;
+	line->wideSprites = ppuWideSprites;
 	fastPpuSubmit(line);
 }
 
@@ -4001,6 +4061,7 @@ static void fastLine(void) {
 	ppu.obj.io.timeOver |= ppu.obj.tileCount > 34;
 #if !defined(ARMSNES_DOT)
 	fetchMoreSprites();
+	fetchWideSprites();
 #endif
 	ppu.counter.hcounter = BALANCED_DRAW;
 }

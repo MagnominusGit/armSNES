@@ -58,6 +58,12 @@ uint16 FixedColor;
 // the pixel's corner, as the console samples).
 int M7SubX, M7SubY;
 int M7SubN;
+// armSNES: widescreen, the console column the line's first pixel is drawn for; and whether sprites are
+// drawn past the console's 256 columns.
+int XShift;
+bool SpritesWide;
+// armSNES: a window's masks by console column, for a shifted line.
+uint32 WinCol[256];
 
 struct
 {
@@ -86,7 +92,7 @@ template<bool size16, bool mode4 = false>
 static MDFN_HOT MDFN_FASTCALL void GetOPTStrip(const unsigned n)
 {
  unsigned VOFS = BGVOFS[n];
- unsigned HOFS = BGHOFS[n];
+ unsigned HOFS = BGHOFS[n] + XShift;
  unsigned tm_w_mask = ((BGSC[n] & 0x1) << 10);
  unsigned tm_h_shift = ((BGSC[n] & 0x2) ? ((BGSC[n] & 0x1) ? 3 : 2) : 24);
 
@@ -246,7 +252,7 @@ static MDFN_HOT MDFN_FASTCALL void DrawBG(const unsigned n, const unsigned y, ui
  alignas(4) uint16 tab[16];
  const bool MosaicOn = Mosaic & (1U << n);
  unsigned VOFS = y - (MosaicOn ? MosaicYOffset : 0);
- unsigned HOFS = BGHOFS[n];
+ unsigned HOFS = BGHOFS[n] + XShift;
  unsigned tm_w_mask = ((BGSC[n] & 0x1) << 10);
  unsigned tm_h_shift = ((BGSC[n] & 0x2) ? ((BGSC[n] & 0x1) ? 3 : 2) : 24);
 
@@ -463,6 +469,7 @@ static MDFN_HOT MDFN_FASTCALL void DrawBG(const unsigned n, const unsigned y, ui
    {
     HOFS = (uint16)hvo;
    }
+   HOFS += XShift;
 
    if(hires)
     HOFS <<= 1;
@@ -549,6 +556,9 @@ static MDFN_HOT MDFN_FASTCALL void DrawMODE7(unsigned line_y, uint16 prio_or, ui
   yinc = -yinc;
  }
 
+ x += XShift * (int)xinc;
+ y += XShift * (int)yinc;
+
  if(M7SubN > 1)
  {
   const int dy = v_flip ? -M7SubY : M7SubY;
@@ -596,6 +606,28 @@ static MDFN_HOT MDFN_FASTCALL NO_INLINE void DoXMosaic(unsigned layernum, uint32
 
  if(!hires && !(Mosaic & 0xF0))
   return;
+
+ // armSNES: a shifted line's blocks start on the console's columns; one begun before the line's first
+ // pixel takes that pixel.
+ if(XShift)
+ {
+  const int size = (Mosaic >> 4) + 1;
+  for(int c = 0; c < 256; c++)
+  {
+   int m = (c + XShift) % size;
+   int start = c - (m < 0 ? m + size : m);
+   if(start < 0)
+    start = 0;
+   if(hires)
+   {
+    buf[2 * c + 0] = buf[2 * start];
+    buf[2 * c + 1] = buf[2 * start];
+   }
+   else
+    buf[c] = buf[start];
+  }
+  return;
+ }
 
  if(hires)
  {
@@ -793,6 +825,13 @@ static MDFN_HOT MDFN_FASTCALL void DoWindow(unsigned layernum, uint32* MDFN_REST
    // printf(" Apply mask 0x%08x to %u ... %u --- wir[0]=%u, wir[1]=%u, w=%u\n", masker[w], i, WindowPieces[piece], wir[0], wir[1], w);
    //}
 
+   if(XShift)
+   {
+    for(; i < WindowPieces[piece]; i++)
+     WinCol[i] = masker[w];
+    continue;
+   }
+
    for(uint32 eff_mask = masker[w]; MDFN_LIKELY(i < WindowPieces[piece]); i++)
    {
     if(hires)
@@ -803,6 +842,23 @@ static MDFN_HOT MDFN_FASTCALL void DoWindow(unsigned layernum, uint32* MDFN_REST
     else
      buf[i] &= eff_mask;
    }
+  }
+ }
+
+ // armSNES: past the console's 256 columns, the window is as it is at the nearest one.
+ if(XShift)
+ {
+  for(int c = 0; c < 256; c++)
+  {
+   const int at = c + XShift;
+   const uint32 eff_mask = WinCol[at < 0 ? 0 : at > 255 ? 255 : at];
+   if(hires)
+   {
+    (buf + 0)[c << 1] &= eff_mask;
+    (buf + 1)[c << 1] &= eff_mask;
+   }
+   else
+    buf[c] &= eff_mask;
   }
  }
 }
@@ -1247,10 +1303,11 @@ static INLINE void DrawSprites(const FastPpuLine* l)
  {
   const FastPpuSprite* t = &l->sprites[n];
 
-  if(t->x <= -8 || t->x >= 256)
+  const int x = t->x - XShift;
+  if(x <= -8 || x >= 256)
    continue;
 
-  uint32* tb = PPU.objbuf + 8 + t->x;
+  uint32* tb = PPU.objbuf + 8 + x;
   const uint32 prio_or = ((t->priority + 1) * 0x3030 | ((t->palette & 0x40) >> 6) | 2) & prio_or_mask;
 
 #ifdef FASTPPU_SIMD_TILE
@@ -1264,6 +1321,16 @@ static INLINE void DrawSprites(const FastPpuLine* l)
 
    if(color)
     tb[px] = (CGRAM[(uint8)(t->palette + color)] << 16) | prio_or;
+  }
+ }
+
+ // armSNES: sprites kept to the console's 256 columns.
+ if(XShift && !SpritesWide)
+ {
+  for(int c = 0; c < 256; c++)
+  {
+   if((unsigned)(c + XShift) >= 256)
+    PPU.objbuf[8 + c] = 0;
   }
  }
 }
@@ -1336,32 +1403,71 @@ const uint32* Line(const FastPpuLine* l, bool direct)
  else
   MixMainSub<false, false>(out);
 
- if(l->hiresFirstBlack)
-  out[0] = l->brightness;
+ if(l->hiresFirstBlack && -XShift >= 0 && -XShift < 256)
+  out[2 * -XShift] = l->brightness;
  return out;
 }
 
-// armSNES: HD mode 7, the line drawn again for each point of a grid of scale by scale inside its
-// pixels: scale rows of 256 * scale.
-static uint32 HdBlock[4 * 256 * 4];
+// armSNES: widescreen, one row of a line with wide columns more each side, as hires pairs: drawn in
+// two passes from wide columns left of the console's first, the second overlapping the first by 16, so
+// mosaic blocks and offset-per-tile columns start where they do on the console. The columns between
+// match the line drawn on its own.
+static uint32 WideRow[2 * (256 + 2 * FAST_PPU_WIDE_MOST)];
 
-const uint32* LineHd(const FastPpuLine* l)
+static void DrawWide(const FastPpuLine* l, uint32* row)
 {
- const int n = l->hdScale;
+ const int wide = l->wide;
 
- for(int j = 0; j < n; j++)
+ if(!wide)
  {
-  for(int i = 0; i < n; i++)
+  memcpy(row, Line(l, true), 512 * sizeof(uint32));
+  return;
+ }
+
+ if(!l->wideLayers)
+ {
+  memset(row, 0, 2 * wide * sizeof(uint32));
+  memcpy(row + 2 * wide, Line(l, true), 512 * sizeof(uint32));
+  memset(row + 2 * wide + 512, 0, 2 * wide * sizeof(uint32));
+  return;
+ }
+
+ SpritesWide = l->wideSprites;
+ XShift = -wide;
+ memcpy(row, Line(l, true), 512 * sizeof(uint32));
+ XShift = 256 - wide - 16;
+ memcpy(row + 512, Line(l, true) + 2 * 16, 4 * wide * sizeof(uint32));
+ XShift = 0;
+}
+
+// armSNES: HD mode 7 and widescreen, the line as fastPpuSetHdSink gives it: with HD, drawn again for
+// each point of a grid of scale by scale inside its pixels, scale rows of its columns * scale.
+static uint32 Block[4 * 4 * (256 + 2 * FAST_PPU_WIDE_MOST)];
+
+const uint32* LineBlock(const FastPpuLine* l)
+{
+ const unsigned n = l->hdScale > 1 ? l->hdScale : 1;
+ const unsigned columns = 256 + 2 * l->wide;
+
+ if(n == 1)
+ {
+  DrawWide(l, Block);
+  return Block;
+ }
+
+ for(unsigned j = 0; j < n; j++)
+ {
+  for(unsigned i = 0; i < n; i++)
   {
    M7SubX = i;
    M7SubY = j;
    M7SubN = n;
-   const uint32* pixels = Line(l, true);
-   uint32* to = HdBlock + j * 256 * n + i;
-   for(unsigned x = 0; x < 256; x++)
-    to[x * n] = pixels[2 * x];
+   DrawWide(l, WideRow);
+   uint32* to = Block + j * columns * n + i;
+   for(unsigned x = 0; x < columns; x++)
+    to[x * n] = WideRow[2 * x];
   }
  }
  M7SubN = 0;
- return HdBlock;
+ return Block;
 }

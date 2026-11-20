@@ -14,6 +14,8 @@ extern "C" {
 // Fast mode's line renderer (fastppu.cpp, from Mednafen's snes_faust): one whole line from the
 // registers as the S-PPU's ports would have them written, VRAM and CGRAM, and the line's sprite tiles.
 enum { FAST_PPU_SPRITES = 128 };
+// Widescreen: the most columns added each side.
+enum { FAST_PPU_WIDE_MOST = 112 };
 
 struct FastPpuSprite {
 	int16_t x;
@@ -50,6 +52,9 @@ struct FastPpuLine {
 	bool hiresFirstBlack;   // the first column's sub screen pixel is black
 
 	uint8_t hdScale;        // HD mode 7: 2 to 4 for a mode 7 line drawn that much finer, else 0
+	uint8_t wide;           // widescreen: columns added each side, a multiple of 16, or 0
+	bool wideLayers;        // the added columns drawn, else black
+	bool wideSprites;       // sprites drawn in them, else only in the console's 256
 
 	uint32_t spriteCount;
 	// 34 as the S-PPU fetches them, more when its limits are lifted (ppuNoSpriteLimit).
@@ -77,9 +82,11 @@ void fastPpuThreads(unsigned count);
 // returns.
 void fastPpuSetSink(void (*sink)(uint32_t* at, const uint32_t* pixels));
 bool fastPpuDirect(void);
-// HD mode 7: a line with hdScale gets a second call, with its pixels hdScale times finer each way: hdScale
-// rows of 256 * hdScale pixels, the mode 7 layer sampled at each point and the others as they are.
-void fastPpuSetHdSink(void (*sink)(uint32_t* at, const uint32_t* block, unsigned scale));
+// HD mode 7 and widescreen: a line with hdScale gets a second call, with its pixels hdScale times finer
+// each way: hdScale rows of columns * hdScale pixels, the mode 7 layer sampled at each point and the
+// others as they are. A wide line (columns 256 plus twice wide) gets that call instead of the first:
+// with scale 1, one row of columns * 2 pixels as the canvas has them.
+void fastPpuSetHdSink(void (*sink)(uint32_t* at, const uint32_t* block, unsigned scale, unsigned columns));
 // The cores this process may run on (its affinity), else those online.
 unsigned fastPpuCores(void);
 

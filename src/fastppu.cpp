@@ -74,11 +74,11 @@ namespace A1 {
 #pragma GCC pop_options
 
 static const uint32* (*const LineFor[2][2])(const FastPpuLine*, bool) = { { R0::Line, R1::Line }, { A0::Line, A1::Line } };
-static const uint32* (*const LineHdFor[2][2])(const FastPpuLine*) = { { R0::LineHd, R1::LineHd }, { A0::LineHd, A1::LineHd } };
+static const uint32* (*const LineBlockFor[2][2])(const FastPpuLine*) = { { R0::LineBlock, R1::LineBlock }, { A0::LineBlock, A1::LineBlock } };
 static const bool Avx2 = (__builtin_cpu_init(), __builtin_cpu_supports("avx2"));
 #else
 static const uint32* (*const LineFor[2][2])(const FastPpuLine*, bool) = { { R0::Line, R1::Line }, { R0::Line, R1::Line } };
-static const uint32* (*const LineHdFor[2][2])(const FastPpuLine*) = { { R0::LineHd, R1::LineHd }, { R0::LineHd, R1::LineHd } };
+static const uint32* (*const LineBlockFor[2][2])(const FastPpuLine*) = { { R0::LineBlock, R1::LineBlock }, { R0::LineBlock, R1::LineBlock } };
 static const bool Avx2 = false;
 #endif
 
@@ -105,8 +105,22 @@ alignas(64) uint32 HeadLocal, TailSeen;  // the main thread's: where it has writ
 alignas(64) uint32 LinesGiven;
 alignas(64) uint32 LinesDone[THREADS];
 void (*Sink)(uint32_t* at, const uint32_t* pixels);
-void (*HdSink)(uint32_t* at, const uint32_t* block, unsigned scale);
+void (*HdSink)(uint32_t* at, const uint32_t* block, unsigned scale, unsigned columns);
 FastPpuLine Scratch;
+
+// A line for the sinks: a wide line only as a block, an HD line both ways.
+void Draw(const FastPpuLine* l, unsigned id)
+{
+ const bool block = HdSink && l->out && (l->hdScale > 1 || l->wide);
+ if(!block || !l->wide)
+ {
+  const uint32* pixels = LineFor[Avx2][id](l, Sink != NULL);
+  if(Sink && l->out)
+   Sink(l->out, pixels);
+ }
+ if(block)
+  HdSink(l->out, LineBlockFor[Avx2][id](l), l->hdScale > 1 ? l->hdScale : 1, 256 + 2 * l->wide);
+}
 pthread_t Thread[THREADS];
 unsigned Count, Wanted;  // the threads running, and asked for (0: by the cores there are)
 pthread_mutex_t Lock = PTHREAD_MUTEX_INITIALIZER;
@@ -139,11 +153,7 @@ void* RenderThread(void* arg)
      FastPpuLine* l = &Pool[slot];
      l->vram = VramCopy[id];
      l->cgram = CgramCopy[id];
-     const uint32* pixels = LineFor[Avx2][id](l, Sink != NULL);
-     if(Sink && l->out)
-      Sink(l->out, pixels);
-     if(HdSink && l->out && l->hdScale > 1)
-      HdSink(l->out, LineHdFor[Avx2][id](l), l->hdScale);
+     Draw(l, id);
     }
     __atomic_store_n(&LinesDone[id], LinesDone[id] + 1, __ATOMIC_RELEASE);
    }
@@ -284,11 +294,7 @@ extern "C" void fastPpuSubmit(FastPpuLine* l)
 {
  if(l == &Scratch)
  {
-  const uint32* pixels = LineFor[Avx2][0](l, Sink != NULL);
-  if(Sink && l->out)
-   Sink(l->out, pixels);
-  if(HdSink && l->out && l->hdScale > 1)
-   HdSink(l->out, LineHdFor[Avx2][0](l), l->hdScale);
+  Draw(l, 0);
   return;
  }
 
@@ -339,7 +345,7 @@ extern "C" unsigned fastPpuCores(void)
  return cores > 0 ? (unsigned)cores : 1;
 }
 
-extern "C" void fastPpuSetHdSink(void (*sink)(uint32_t* at, const uint32_t* block, unsigned scale))
+extern "C" void fastPpuSetHdSink(void (*sink)(uint32_t* at, const uint32_t* block, unsigned scale, unsigned columns))
 {
  fastPpuStop();
  HdSink = sink;

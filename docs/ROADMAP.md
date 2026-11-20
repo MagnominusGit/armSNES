@@ -150,3 +150,9 @@ Then the controllers ares has that were missing: rumble for homebrew (an option,
 NTT Data Keypad (its number keys from the keyboard), the Twin Tap and a Super Multitap in either port.
 The light guns and the mouse aim with the right stick, a touch or the device's motion as well as a
 light gun or mouse, as armNES's Zapper does, with L2 for fine aim.
+
+Widescreen (Fast mode): 16:10 to 21:9, columns added each side. Each wide line is drawn in two passes
+shifted from the console's columns, so its middle 256 match the picture without it. Mode 7 lines only
+by default (the others keep black sides), or every line for games patched for widescreen; sprites
+past the 256 columns hidden or shown. IPS, UPS and BPS patches already reach the core: RetroArch and
+the Armulators app apply them before giving it the game.

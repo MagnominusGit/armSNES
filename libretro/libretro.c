@@ -206,26 +206,53 @@ static void lineDrawn(u32* at, const u32* pixels) {
 	}
 }
 
-// HD mode 7 (Fast mode): a frame with mode 7 lines is given hdScale times larger each way, those lines
-// drawn finer (fastPpuSetHdSink) and the others' pixels made larger. Two pictures, as with outputs.
-enum { HD_WIDTH = 256 * 4, HD_HEIGHT = 239 * 4 };
+// Hi-res pixel pairs averaged, as a TV's picture blended them; Merge makes the picture 256 wide.
+enum { BLEND_OFF, BLEND_ON, BLEND_MERGE };
+static int hiresBlend;
+
+// HD mode 7 and widescreen (Fast mode): a frame with mode 7 lines is given hdScale times larger each
+// way, those lines drawn finer (fastPpuSetHdSink) and the others' pixels made larger; a widescreen
+// frame is given with its columns more each side. Two pictures, as with outputs.
+enum { WIDE_COLUMNS = 256 + 2 * FAST_PPU_WIDE_MOST, HD_WIDTH = WIDE_COLUMNS * 4, HD_HEIGHT = 239 * 4 };
 static u16 hdOutputs[2][HD_WIDTH * HD_HEIGHT];
 static u32 hdRowStamp[CANVAS_HEIGHT];
+static u8 hdRowScale[CANVAS_HEIGHT];
 static u8 hdScale;
+// Widescreen lines drawn at the console's scale, as hires pairs, and whether each has hires pixels.
+static u16 wideRows[2][OUTPUT_HEIGHT * WIDE_COLUMNS * 2];
+static bool wideRowHires[OUTPUT_HEIGHT];
+static u32 wideColumns = 256;
 
-static void hdLineDrawn(u32* at, const u32* block, unsigned scale) {
+static inline u16 hdColor(u32 pixel) {
+	return (pixel & 0x78000) == 0x78000 && !tableAlways ? rgb565Bright(pixel) : rgb565(pixel);
+}
+
+static void hdLineDrawn(u32* at, const u32* block, unsigned scale, unsigned columns) {
 	u32 row = (u32) (at - ppuCanvas) / CANVAS_WIDTH;
-	if (scale != hdScale || row - cropY >= cropHeight || at != &ppuCanvas[row * CANVAS_WIDTH + cropX]) {
+	if ((scale > 1 && scale != hdScale) || columns != wideColumns || row - cropY >= cropHeight ||
+	    at != &ppuCanvas[row * CANVAS_WIDTH + cropX]) {
 		return;
 	}
-	u16* to = &hdOutputs[stamp & 1][(row - cropY) * scale * HD_WIDTH];
-	for (u32 j = 0; j < scale; ++j) {
-		const u32* from = block + j * 256 * scale;
-		for (u32 n = 0; n < 256 * scale; ++n) {
-			u32 pixel = from[n];
-			to[j * HD_WIDTH + n] = (pixel & 0x78000) == 0x78000 && !tableAlways ? rgb565Bright(pixel) : rgb565(pixel);
+	if (scale == 1) {
+		u16* to = &wideRows[stamp & 1][(row - cropY) * WIDE_COLUMNS * 2];
+		bool hires = false;
+		for (u32 n = 0; n < columns; ++n) {
+			u32 a = block[2 * n], b = block[2 * n + 1];
+			hires |= a != b;
+			to[2 * n] = hdColor(a);
+			to[2 * n + 1] = hdColor(b);
+		}
+		wideRowHires[row - cropY] = hires;
+	} else {
+		u16* to = &hdOutputs[stamp & 1][(row - cropY) * scale * HD_WIDTH];
+		for (u32 j = 0; j < scale; ++j) {
+			const u32* from = block + j * columns * scale;
+			for (u32 n = 0; n < columns * scale; ++n) {
+				to[j * HD_WIDTH + n] = hdColor(from[n]);
+			}
 		}
 	}
+	hdRowScale[row] = (u8) scale;
 	hdRowStamp[row] = stamp;
 }
 
@@ -233,26 +260,50 @@ static void hdLineDrawn(u32* at, const u32* block, unsigned scale) {
 // rows and columns a console pixel takes.
 static const u16* framePicture;
 static u32 framePitch = OUTPUT_WIDTH, frameScaleY = 1;
+// The console columns across the picture given, and how many of them are widescreen's each side.
+static u32 frameColumns = 256, frameExtension;
 
-// The HD picture of the frame when it has HD lines: the others made larger from the output.
+// The HD or widescreen picture of the frame when it has lines drawn so: the others made larger from
+// the output, and set in the middle of a widescreen picture.
 static bool hdFrame(u32 y, u32 h) {
-	u32 n = hdScale, lines = 0;
-	for (u32 row = 0; row < h; ++row) {
-		lines += hdRowStamp[y + row] == stamp;
-	}
-	if (n < 2 || !lines) {
-		return false;
-	}
-	u16* hd = hdOutputs[stamp & 1];
-	u32 width = 256 * n;
+	u32 lines = 0, scaled = 0;
+	bool hires = false;
 	for (u32 row = 0; row < h; ++row) {
 		if (hdRowStamp[y + row] == stamp) {
+			lines++;
+			scaled += hdRowScale[y + row] > 1;
+			hires |= hdRowScale[y + row] == 1 && wideRowHires[row];
+		}
+	}
+	u32 n = scaled ? hdScale : 1, columns = wideColumns, extension = (columns - 256) / 2;
+	if (!lines || (n < 2 && columns == 256)) {
+		return false;
+	}
+	// Hires is kept at the console's scale, unless merged.
+	u32 across = n > 1 ? n : hires && hiresBlend != BLEND_MERGE ? 2 : 1;
+	u32 width = columns * across;
+	u16* hd = hdOutputs[stamp & 1];
+	const u16* wide = wideRows[stamp & 1];
+	for (u32 row = 0; row < h; ++row) {
+		u16* to = &hd[row * n * HD_WIDTH];
+		if (hdRowStamp[y + row] == stamp && hdRowScale[y + row] > 1) {
 			continue;
 		}
-		const u16* from = &output[row * OUTPUT_WIDTH];
-		u16* to = &hd[row * n * HD_WIDTH];
-		for (u32 x = 0; x < width; ++x) {
-			to[x] = from[x * outputWidth / width];
+		if (hdRowStamp[y + row] == stamp) {
+			const u16* from = &wide[row * WIDE_COLUMNS * 2];
+			bool blend = wideRowHires[row] && hiresBlend != BLEND_OFF;
+			for (u32 x = 0; x < width; ++x) {
+				u32 at = x * 2 / across;
+				u16 a = from[at & ~1u], b = from[at | 1];
+				to[x] = blend ? (u16) ((a & b) + (((a ^ b) & 0xf7de) >> 1)) : from[across == 2 ? at : at & ~1u];
+			}
+		} else {
+			// A line not drawn wide (the picture's edge or a line left out): the output's, in the middle.
+			const u16* from = &output[row * OUTPUT_WIDTH];
+			u32 left = extension * across, middle = 256 * across;
+			for (u32 x = 0; x < width; ++x) {
+				to[x] = x >= left && x < left + middle ? from[(x - left) * outputWidth / middle] : 0;
+			}
 		}
 		for (u32 j = 1; j < n; ++j) {
 			memcpy(&to[j * HD_WIDTH], to, width * sizeof(u16));
@@ -261,6 +312,8 @@ static bool hdFrame(u32 y, u32 h) {
 	framePicture = hd;
 	framePitch = HD_WIDTH;
 	frameScaleY = n;
+	frameColumns = columns;
+	frameExtension = extension;
 	outputWidth = width;
 	outputHeight = h * n;
 	return true;
@@ -271,10 +324,6 @@ static u16 moved[OUTPUT_WIDTH * OUTPUT_HEIGHT];
 static bool movedWide[OUTPUT_HEIGHT];
 
 static bool overscanShown;
-
-// Hi-res pixel pairs averaged, as a TV's picture blended them; Merge makes the picture 256 wide.
-enum { BLEND_OFF, BLEND_ON, BLEND_MERGE };
-static int hiresBlend;
 
 static void blendRow(u16* row) {
 	for (u32 n = 0; n < OUTPUT_WIDTH / 2; ++n) {
@@ -360,6 +409,8 @@ void videoFrame(const u32* canvas) {
 	framePicture = output;
 	framePitch = OUTPUT_WIDTH;
 	frameScaleY = yScale;
+	frameColumns = 256;
+	frameExtension = 0;
 	if (sameCrop && !interlace) {
 		hdFrame(y, h);
 	}
@@ -682,7 +733,10 @@ static int fineAim(unsigned player) {
 // light guns; the second Justifier the third's.
 static void aimGun(int gun) {
 	struct Area area = shownArea();
-	int left = area.left << 8, right = (area.left + area.width - 1) << 8;
+	// The crosshair stays on the console's 256 columns; a light gun or a touch on widescreen's shoots off
+	// the screen.
+	int pictureLeft = area.left << 8;
+	int left = area.left > 0 ? area.left << 8 : 0, right = (area.left + area.width - 1 < 255 ? area.left + area.width - 1 : 255) << 8;
 	int top = area.top << 8, bottom = (area.top + area.height - 1) << 8;
 	unsigned players[2] = { gun ? 2u : 0u, gun ? 2u : 1u };
 	bool trigger = false, other = false, turbo = false, pause = false, away = false;
@@ -696,8 +750,9 @@ static void aimGun(int gun) {
 		other = inputState(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_AUX_A);
 		turbo = inputState(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_AUX_B);
 		pause = inputState(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_START);
-		crossX[gun] = left + (x + 0x8000) * area.width / 0x10000 * 256;
+		crossX[gun] = pictureLeft + (x + 0x8000) * area.width / 0x10000 * 256;
 		crossY[gun] = top + (y + 0x8000) * area.height / 0x10000 * 256;
+		away |= crossX[gun] < left || crossX[gun] > right + 255;
 	} else {
 		int fine = fineAim(players[0]), speed = aimSpeed * fine / 256;
 		int pointX = -1, pointY = 0;
@@ -734,7 +789,7 @@ static void aimGun(int gun) {
 				x = x + mx < -0x7fff ? -0x7fff : x + mx > 0x7fff ? 0x7fff : x + mx;
 				y = y + my < -0x7fff ? -0x7fff : y + my > 0x7fff ? 0x7fff : y + my;
 				if (!n || x || y) {
-					pointX = left + (x + 0x8000) * area.width / 0x10000 * 256;
+					pointX = left + (x + 0x8000) * ((right - left) / 256 + 1) / 0x10000 * 256;
 					pointY = top + (y + 0x8000) * area.height / 0x10000 * 256;
 				}
 			} else {
@@ -783,8 +838,9 @@ static void aimGun(int gun) {
 	}
 	if (!gun && touchFrames) {
 		touchFrames--;
-		crossX[gun] = left + (touchX + 0x8000) * area.width / 0x10000 * 256;
+		crossX[gun] = pictureLeft + (touchX + 0x8000) * area.width / 0x10000 * 256;
 		crossY[gun] = top + (touchY + 0x8000) * area.height / 0x10000 * 256;
+		away = crossX[gun] < left || crossX[gun] > right + 255;
 	}
 	crossX[gun] = crossX[gun] < left ? left : crossX[gun] > right ? right : crossX[gun];
 	crossY[gun] = crossY[gun] < top ? top : crossY[gun] > bottom ? bottom : crossY[gun];
@@ -909,12 +965,12 @@ static void readPads(void) {
 static void drawCrosshairs(void) {
 	u16* picture = (u16*) framePicture;
 	u32 yScale = frameScaleY;
-	int xScale = (int) (outputWidth / (OUTPUT_WIDTH / 2));
+	int xScale = (int) (outputWidth / frameColumns);
 	for (int gun = 0; gun < 2; ++gun) {
-		if (gunX[gun] < 0 || gunY[gun] < 0) {
+		if (gunX[gun] < 0 || gunX[gun] > 255 || gunY[gun] < 0) {
 			continue;
 		}
-		int cx = gunX[gun] * xScale;
+		int cx = (gunX[gun] + (int) frameExtension) * xScale;
 		int cy = gunY[gun] * yScale;
 		for (int d = -7 * 2; d <= 7 * 2; ++d) {
 			for (int w = -1; w <= 1; ++w) {
@@ -1002,6 +1058,20 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"Mode 7's rotated and scaled layer drawn 2 to 4 times finer each way, the rest of the picture as it "
 		"is. Each step takes much more time. Fast mode only.",
 		NULL, "video", { { "Off", NULL }, { "2x", NULL }, { "3x", NULL }, { "4x", NULL }, { NULL, NULL } }, "Off" },
+	{ "armsnes_widescreen", "Widescreen", NULL,
+		"Columns added each side to fill a wider screen, of the ratio picked with the Aspect Ratio option's "
+		"pixel shape. The console draws 256: past them, a layer shows what the game left in video memory, "
+		"which looks right on mode 7's plane, often wrong elsewhere unless the game is patched for it. "
+		"Fast mode only; not with the Super Game Boy or interlaced pictures.",
+		NULL, "video", { { "Off", NULL }, { "16:10", NULL }, { "16:9", NULL }, { "2:1", NULL }, { "21:9", NULL }, { NULL, NULL } }, "Off" },
+	{ "armsnes_widescreen_layers", "Widescreen Layers", NULL,
+		"Mode 7 only keeps other lines (and status bars) at the console's width, with black at the sides. All "
+		"widens every line, for games patched for widescreen.",
+		NULL, "video", { { "Mode 7 only", NULL }, { "All", NULL }, { NULL, NULL } }, "Mode 7 only" },
+	{ "armsnes_widescreen_sprites", "Widescreen Sprites", NULL,
+		"Sprites past the console's 256 columns: hidden, as the console has them, or shown. Games often leave "
+		"sprites there they don't expect to be seen.",
+		NULL, "video", { { "Hidden", NULL }, { "Shown", NULL }, { NULL, NULL } }, "Hidden" },
 	{ "armsnes_sprite_limit", "Sprite Limit", NULL,
 		"The console shows 32 sprites and 34 sprite tiles on a line, which games turn into flicker or gaps. "
 		"No limit shows them all; games still see the console's limit. Fast mode only.",
@@ -1092,6 +1162,8 @@ static bool showOptions(void) {
 	bool stick = guns && (optionIs(environment, "armsnes_gun_aim", "Right stick (pan)") ||
 	                      optionIs(environment, "armsnes_gun_aim", "Right stick (absolute)"));
 	bool motion = stick && !optionIs(environment, "armsnes_motion_sensor", "Off");
+	bool wide = !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") &&
+	            !optionIs(environment, "armsnes_widescreen", "Off") && !(loaded && cart.icd);
 	const struct {
 		const char* key;
 		bool show;
@@ -1100,6 +1172,9 @@ static bool showOptions(void) {
 		{ "armsnes_frame_skip", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_hd_mode7", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_sprite_limit", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
+		{ "armsnes_widescreen", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
+		{ "armsnes_widescreen_layers", wide },
+		{ "armsnes_widescreen_sprites", wide },
 		{ "armsnes_superfx_clock", !loaded || cart.gsu },
 		{ "armsnes_sa1_clock", !loaded || cart.sa1 },
 		{ "armsnes_gun_aim", guns },
@@ -1269,14 +1344,15 @@ static bool sgbBorderHidden;
 // The ratio of a picture of so many of the console's pixels across and lines down.
 static float aspectOf(u32 width, u32 lines) {
 	if (aspect == ASPECT_4_3) {
-		return 4.0f / 3.0f;
+		return 4.0f / 3.0f * (float) width / (float) (width - 2 * frameExtension);
 	}
 	double pixel = aspect == ASPECT_SQUARE ? 1.0 : sys.pal ? 1.3889 : 8.0 / 7.0;
 	return (float) (width * pixel / lines);
 }
 
 static unsigned maxWidth(void) {
-	return hdScale > 2 ? 256u * hdScale : OUTPUT_WIDTH;
+	unsigned hd = wideColumns * (hdScale > 2 ? hdScale : 2);
+	return hd > OUTPUT_WIDTH ? hd : OUTPUT_WIDTH;
 }
 
 static unsigned maxHeight(void) {
@@ -1289,9 +1365,9 @@ struct Shown {
 };
 
 static struct Shown shownPart(void) {
-	u32 xScale = outputWidth / (OUTPUT_WIDTH / 2), yScale = frameScaleY;
+	u32 xScale = outputWidth / frameColumns, yScale = frameScaleY;
 	u32 lines = outputHeight / yScale;
-	struct Shown part = { cropSides, cropTopBottom, 256 - 2 * cropSides, lines > 2 * cropTopBottom ? lines - 2 * cropTopBottom : lines };
+	struct Shown part = { cropSides, cropTopBottom, frameColumns - 2 * cropSides, lines > 2 * cropTopBottom ? lines - 2 * cropTopBottom : lines };
 	if (sgbBorderHidden && cart.icd && lines >= 144) {
 		part = (struct Shown) { 48, (lines - 144) / 2, 160, 144 };
 	}
@@ -1304,15 +1380,16 @@ static struct Shown shownPart(void) {
 
 static struct Area shownArea(void) {
 	struct Shown part = shownPart();
-	u32 xScale = outputWidth / (OUTPUT_WIDTH / 2), yScale = frameScaleY;
-	return (struct Area) { (int) (part.x / xScale), (int) (part.y / yScale), (int) (part.width / xScale), (int) (part.height / yScale) };
+	u32 xScale = outputWidth / frameColumns, yScale = frameScaleY;
+	return (struct Area) { (int) (part.x / xScale) - (int) frameExtension, (int) (part.y / yScale), (int) (part.width / xScale),
+	                       (int) (part.height / yScale) };
 }
 
 static struct retro_game_geometry given;
 
 // The frontend is told when the picture's shape changes, in the console's pixels and lines.
 static void giveGeometry(const struct Shown* part) {
-	u32 xScale = outputWidth / (OUTPUT_WIDTH / 2), yScale = frameScaleY;
+	u32 xScale = outputWidth / frameColumns, yScale = frameScaleY;
 	u32 width = part->width / xScale, lines = part->height / yScale;
 	struct retro_game_geometry geometry = { width, lines, maxWidth(), maxHeight(), aspectOf(width, lines) };
 	if (geometry.base_width != given.base_width || geometry.base_height != given.base_height || geometry.aspect_ratio != given.aspect_ratio) {
@@ -1617,16 +1694,29 @@ static void readOptions(void) {
 	sgbBorderHidden = optionIs(environment, "armsnes_sgb_border", "Hidden");
 	ppuNoSpriteLimit = optionIs(environment, "armsnes_sprite_limit", "No limit");
 	static const struct OptionChoice hdScales[] = { { "2x", 2 }, { "3x", 3 }, { "4x", 4 } };
-	u8 scale = (u8) optionChoice(environment, "armsnes_hd_mode7", hdScales, 3, 0);
-	if (scale != hdScale) {
-		bool larger = maxWidth() < (scale > 2 ? 256u * scale : OUTPUT_WIDTH);
-		hdScale = ppuHdScale = scale;
-		// A larger picture than the frontend was told of needs a new AV info.
-		if (loaded && larger) {
-			struct retro_system_av_info av;
-			retro_get_system_av_info(&av);
-			environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av);
-		}
+	unsigned largest = maxWidth() * maxHeight();
+	hdScale = ppuHdScale = (u8) optionChoice(environment, "armsnes_hd_mode7", hdScales, 3, 0);
+	// Widescreen: the columns each side that make the picture that wide, by the pixels' shape, rounded to
+	// 16.
+	static const struct OptionChoice ratios[] = { { "16:10", 1600 }, { "16:9", 1778 }, { "2:1", 2000 }, { "21:9", 2333 } };
+	int ratio = optionChoice(environment, "armsnes_widescreen", ratios, 4, 0);
+	u32 columns = 256;
+	if (ratio && systemFast && !cart.icd) {
+		double lines = regionPal() ? 239.0 : 224.0;
+		double pixel = aspect == ASPECT_SQUARE ? 1.0 : aspect == ASPECT_4_3 ? 4.0 / 3.0 * lines / 256.0 : regionPal() ? 1.3889 : 8.0 / 7.0;
+		int side = (int) ((ratio / 1000.0 * lines / pixel - 256.0) / 2.0 / 16.0 + 0.5) * 16;
+		side = side < 0 ? 0 : side > FAST_PPU_WIDE_MOST ? FAST_PPU_WIDE_MOST : side;
+		columns = 256 + 2 * (u32) side;
+	}
+	ppuWideAll = optionIs(environment, "armsnes_widescreen_layers", "All");
+	ppuWideSprites = optionIs(environment, "armsnes_widescreen_sprites", "Shown");
+	wideColumns = columns;
+	ppuWide = (u8) ((columns - 256) / 2);
+	// A larger picture than the frontend was told of needs a new AV info.
+	if (loaded && maxWidth() * maxHeight() > largest) {
+		struct retro_system_av_info av;
+		retro_get_system_av_info(&av);
+		environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av);
 	}
 	static const struct OptionChoice skips[] = { { "Auto", -1 }, { "1", 1 }, { "2", 2 }, { "3", 3 } };
 	frameSkip = optionChoice(environment, "armsnes_frame_skip", skips, 4, 0);

@@ -400,6 +400,11 @@ static void setFastForward(bool on) {
 	environment(RETRO_ENVIRONMENT_SET_FASTFORWARDING_OVERRIDE, &override);
 }
 
+static u16 turboButtons;
+static u32 turboPeriod = 4;
+static bool allowOpposing;
+static bool leftStickDpad = true;
+
 static void readPads(void) {
 	inputPollFrontend();
 	bool fastForward = !netplaySeen && (inputState(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2) ||
@@ -415,6 +420,23 @@ static void readPads(void) {
 			for (unsigned id = RETRO_DEVICE_ID_JOYPAD_B; id <= RETRO_DEVICE_ID_JOYPAD_R; ++id) {
 				buttons |= (inputState(port, RETRO_DEVICE_JOYPAD, 0, id) ? 1 : 0) << id;
 			}
+		}
+		if (leftStickDpad) {
+			int x = inputState(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X);
+			int y = inputState(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y);
+			buttons |= (y < -0x4000) << RETRO_DEVICE_ID_JOYPAD_UP | (y > 0x4000) << RETRO_DEVICE_ID_JOYPAD_DOWN |
+			           (x < -0x4000) << RETRO_DEVICE_ID_JOYPAD_LEFT | (x > 0x4000) << RETRO_DEVICE_ID_JOYPAD_RIGHT;
+		}
+		// Turbo buttons are held for the first half of each period, counted in the console's frames so
+		// run-ahead and netplay see the same presses.
+		if (turboButtons && sys.frames % turboPeriod >= (turboPeriod + 1) / 2) {
+			buttons &= ~turboButtons;
+		}
+		if (!allowOpposing) {
+			const u16 upDown = 1 << RETRO_DEVICE_ID_JOYPAD_UP | 1 << RETRO_DEVICE_ID_JOYPAD_DOWN;
+			const u16 leftRight = 1 << RETRO_DEVICE_ID_JOYPAD_LEFT | 1 << RETRO_DEVICE_ID_JOYPAD_RIGHT;
+			buttons &= (buttons & upDown) == upDown ? ~upDown : 0xffff;
+			buttons &= (buttons & leftRight) == leftRight ? ~leftRight : 0xffff;
 		}
 		held[port] = buttons & 0xfff;
 	}
@@ -508,6 +530,18 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armsnes_sa1_clock", "SA-1 Clock", NULL,
 		"The SA-1 chip's speed, for its games: above 100% less slowdown.",
 		NULL, "system", CLOCK_VALUES, "100%" },
+	{ "armsnes_turbo_buttons", "Turbo Buttons", NULL,
+		"Buttons that press and release over and over while held.",
+		NULL, "input", { { "Off", NULL }, { "A", NULL }, { "B", NULL }, { "X", NULL }, { "Y", NULL }, { "A and B", NULL },
+		{ "X and Y", NULL }, { "A, B, X and Y", NULL }, { NULL, NULL } }, "Off" },
+	{ "armsnes_turbo_period", "Turbo Period", NULL,
+		"Frames per press and release of a turbo button.",
+		NULL, "input", { { NULL, NULL } }, "4" },
+	{ "armsnes_opposing", "Allow Opposing Directions", NULL,
+		"Left and right (or up and down) held together, which a real pad can't do. Some games glitch.",
+		NULL, "input", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armsnes_left_stick_dpad", "Left Stick as D-Pad", NULL, "The left stick presses the D-pad too.",
+		NULL, "input", { { "On", NULL }, { "Off", NULL }, { NULL, NULL } }, "On" },
 	{ "armsnes_crosshair", "Light Gun Crosshair", NULL,
 		"A cross where the Super Scope or Justifier points.",
 		NULL, "input", { { "On", NULL }, { "Off", NULL }, { NULL, NULL } }, "On" },
@@ -516,7 +550,7 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 
 static struct retro_core_option_v2_category categories[] = {
 	{ "system", "System", "The core's mode and threads, the console's memory at power-on and its chips' speeds." },
-	{ "input", "Input", "The controllers and light guns." },
+	{ "input", "Input", "Turbo, the D-pad and the light guns." },
 	{ NULL, NULL, NULL },
 };
 
@@ -540,8 +574,21 @@ static bool showOptions(void) {
 	return true;
 }
 
+enum { TURBO_FEWEST = 2, TURBO_MOST = 60 };
+
 void retro_set_environment(retro_environment_t callback) {
 	environment = callback;
+	for (struct retro_core_option_v2_definition* d = optionDefinitions; d->key; ++d) {
+		if (!strcmp(d->key, "armsnes_turbo_period")) {
+			static char periods[TURBO_MOST - TURBO_FEWEST + 1][4];
+			static char labels[TURBO_MOST - TURBO_FEWEST + 1][12];
+			for (int i = 0; i <= TURBO_MOST - TURBO_FEWEST; ++i) {
+				snprintf(periods[i], sizeof(periods[i]), "%d", TURBO_FEWEST + i);
+				snprintf(labels[i], sizeof(labels[i]), "%d frames", TURBO_FEWEST + i);
+				d->values[i] = (struct retro_core_option_value) { periods[i], labels[i] };
+			}
+		}
+	}
 	bool noGame = false;
 	callback(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &noGame);
 	struct retro_log_callback log;
@@ -768,6 +815,23 @@ static void readOptions(void) {
 	systemCpuClock = clockOption("armsnes_cpu_clock");
 	systemGsuClock = clockOption("armsnes_superfx_clock");
 	systemSa1Clock = clockOption("armsnes_sa1_clock");
+	static const struct OptionChoice turbo[] = {
+		{ "A", 1 << RETRO_DEVICE_ID_JOYPAD_A },
+		{ "B", 1 << RETRO_DEVICE_ID_JOYPAD_B },
+		{ "X", 1 << RETRO_DEVICE_ID_JOYPAD_X },
+		{ "Y", 1 << RETRO_DEVICE_ID_JOYPAD_Y },
+		{ "A and B", 1 << RETRO_DEVICE_ID_JOYPAD_A | 1 << RETRO_DEVICE_ID_JOYPAD_B },
+		{ "X and Y", 1 << RETRO_DEVICE_ID_JOYPAD_X | 1 << RETRO_DEVICE_ID_JOYPAD_Y },
+		{ "A, B, X and Y", 1 << RETRO_DEVICE_ID_JOYPAD_A | 1 << RETRO_DEVICE_ID_JOYPAD_B | 1 << RETRO_DEVICE_ID_JOYPAD_X | 1 << RETRO_DEVICE_ID_JOYPAD_Y },
+	};
+	turboButtons = (u16) optionChoice(environment, "armsnes_turbo_buttons", turbo, sizeof(turbo) / sizeof(*turbo), 0);
+	const char* period = optionValue(environment, "armsnes_turbo_period");
+	turboPeriod = period ? (u32) atoi(period) : 4;
+	if (turboPeriod < TURBO_FEWEST || turboPeriod > TURBO_MOST) {
+		turboPeriod = 4;
+	}
+	allowOpposing = optionIs(environment, "armsnes_opposing", "On");
+	leftStickDpad = !optionIs(environment, "armsnes_left_stick_dpad", "Off");
 	struct retro_variable cross = { "armsnes_crosshair", NULL };
 	crosshair = !environment(RETRO_ENVIRONMENT_GET_VARIABLE, &cross) || !cross.value || strcmp(cross.value, "Off");
 }

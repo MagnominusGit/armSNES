@@ -157,3 +157,7 @@ Balanced keeps its own middle and takes only the sides, drawn from each line's r
 by default (the others keep black sides), or every line for games patched for widescreen; sprites
 past the 256 columns hidden or shown. IPS, UPS and BPS patches already reach the core: RetroArch and
 the Armulators app apply them before giving it the game.
+
+Layers: each background, the sprites and color math can be left out of the picture, for screenshots
+and rips. A line is put together as usual and then again without them for the picture, so the game
+runs the same with them hidden.

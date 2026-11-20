@@ -17,6 +17,7 @@ u8 ppuHdScale;
 u8 ppuWide;
 bool ppuWideAll, ppuWideSprites;
 bool ppuWideSides[CANVAS_HEIGHT];
+u8 ppuHidden;
 
 #define VCOUNTER ppu.counter.vcounter
 #define HCOUNTER ppu.counter.hcounter
@@ -943,6 +944,9 @@ static u16 blend(u32 x, u32 y) {
 	return ((((diff - borrow) & (borrow - (borrow >> 5))) & 0x7bde) >> 1) & 0x7fff;
 }
 
+// The color math carried from pixel to pixel by the picture put together without the hidden layers.
+static __typeof__(ppu.dac.math) shownMath;
+
 static void dacScanline(void) {
 	ppu.dac.lineValid = false;
 
@@ -973,13 +977,14 @@ static void dacScanline(void) {
 	ppu.dac.math.transparent = true;
 	ppu.dac.math.blendMode = false;
 	ppu.dac.math.colorHalve = ppu.dac.colorHalve && !ppu.dac.blendMode && ppu.dac.math.aboveColorEnable;
+	shownMath = ppu.dac.math;
 }
 
 static inline bool directColorMode(void) {
 	return ppu.dac.directColor && (ppu.io.bgMode == 3 || ppu.io.bgMode == 4 || ppu.io.bgMode == 7);
 }
 
-static u16 dacBelow(bool hires) {
+static inline __attribute__((always_inline)) u16 dacBelow(bool hires) {
 	if (ppu.io.displayDisable || (!ppu.io.overscan && VCOUNTER >= 225)) {
 		return 0;
 	}
@@ -1018,7 +1023,7 @@ static u16 dacBelow(bool hires) {
 	             ppu.dac.math.blendMode ? ppu.dac.math.aboveColor : fixedColor());
 }
 
-static u16 dacAbove(void) {
+static inline __attribute__((always_inline)) u16 dacAbove(void) {
 	if (ppu.io.displayDisable || (!ppu.io.overscan && VCOUNTER >= 225)) {
 		return 0;
 	}
@@ -1070,6 +1075,44 @@ static u16 dacAbove(void) {
 	             ppu.dac.math.blendMode ? ppu.dac.math.belowColor : fixedColor());
 }
 
+// Layers left out by the options are left out of the picture only: the pixel is put together again
+// with their outputs taken away, and what the first time left is put back.
+static __attribute__((noinline)) void dacShown(bool hires, u16* belowColor, u16* aboveColor) {
+	__typeof__(ppu.dac.math) math = ppu.dac.math;
+	u8 latch = ppu.latch.cgramAddress;
+	__typeof__(ppu.obj.above) objAbove = ppu.obj.above, objBelow = ppu.obj.below;
+	bool mathWindow = ppu.window.belowColorEnable;
+	u8 above[4], below[4];
+	for (u32 n = 0; n < 4; ++n) {
+		above[n] = ppu.bg[n].output.above.priority;
+		below[n] = ppu.bg[n].output.below.priority;
+		if (ppuHidden >> n & 1) {
+			ppu.bg[n].output.above.priority = 0;
+			ppu.bg[n].output.below.priority = 0;
+		}
+	}
+	if (ppuHidden & 16) {
+		ppu.obj.above.priority = 0;
+		ppu.obj.below.priority = 0;
+	}
+	if (ppuHidden & 32) {
+		ppu.window.belowColorEnable = false;
+	}
+	ppu.dac.math = shownMath;
+	*belowColor = dacBelow(hires);
+	*aboveColor = dacAbove();
+	shownMath = ppu.dac.math;
+	ppu.dac.math = math;
+	ppu.latch.cgramAddress = latch;
+	ppu.obj.above = objAbove;
+	ppu.obj.below = objBelow;
+	ppu.window.belowColorEnable = mathWindow;
+	for (u32 n = 0; n < 4; ++n) {
+		ppu.bg[n].output.above.priority = above[n];
+		ppu.bg[n].output.below.priority = below[n];
+	}
+}
+
 static void dacRun(void) {
 	if (VCOUNTER == 0) {
 		return;
@@ -1078,6 +1121,9 @@ static void dacRun(void) {
 	bool hires = ppu.io.pseudoHires || ppu.io.bgMode == 5 || ppu.io.bgMode == 6;
 	u16 belowColor = dacBelow(hires);
 	u16 aboveColor = dacAbove();
+	if (ppuHidden) {
+		dacShown(hires, &belowColor, &aboveColor);
+	}
 
 	if (!ppu.dac.lineValid) {
 		return;
@@ -3596,6 +3642,63 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 	}
 }
 
+// What putting a whole line together changes besides the picture.
+struct Composed {
+	__typeof__(ppu.obj) obj;
+	__typeof__(ppu.window) window;
+	__typeof__(ppu.dac) dac;
+	__typeof__(ppu.latch) latch;
+	struct Background bg[4];
+	u32 drawnTo;
+};
+
+static void keepComposed(struct Composed* c) {
+	c->obj = ppu.obj;
+	c->window = ppu.window;
+	c->dac = ppu.dac;
+	c->latch = ppu.latch;
+	memcpy(c->bg, ppu.bg, sizeof(c->bg));
+	c->drawnTo = ppu.drawnTo;
+}
+
+static void putComposed(const struct Composed* c) {
+	ppu.obj = c->obj;
+	ppu.window = c->window;
+	ppu.dac = c->dac;
+	ppu.latch = c->latch;
+	memcpy(ppu.bg, c->bg, sizeof(c->bg));
+	ppu.drawnTo = c->drawnTo;
+}
+
+static void composeWith(const struct WindowEffect effects[4], const u8* objPalette, const u8* objPriority, bool refreshed, bool wide) {
+	if (!(systemBalanced && composeBalanced(effects, objPalette, objPriority, wide))) {
+		composeLine(effects, objPalette, objPriority, refreshed, wide);
+	}
+}
+
+// Layers left out by the options are left out of the picture only: the line is put together, then
+// again from the same start without them for the picture, and what the first time left is put back.
+static void composeWhole(const struct WindowEffect effects[4], const u8* objPalette, const u8* objPriority, bool refreshed, bool wide) {
+	if (!ppuHidden) {
+		composeWith(effects, objPalette, objPriority, refreshed, wide);
+		return;
+	}
+	static struct Composed before, after;
+	keepComposed(&before);
+	composeWith(effects, objPalette, objPriority, refreshed, wide);
+	keepComposed(&after);
+	putComposed(&before);
+	struct WindowEffect shown[4];
+	for (u32 n = 0; n < 4; ++n) {
+		shown[n] = effects[n];
+		shown[n].hideAbove |= ppuHidden & 31;
+		shown[n].hideBelow |= ppuHidden & 31;
+		shown[n].belowColorEnable &= !(ppuHidden & 32);
+	}
+	composeWith(shown, objPalette, objPriority, refreshed, wide);
+	putComposed(&after);
+}
+
 bool ppuNoSpriteLimit;
 
 
@@ -3767,6 +3870,8 @@ static void fastWholeLine(bool sides) {
 		line->msEnable |= (n < 4 ? ppu.bg[n].io.aboveEnable : ppu.obj.io.aboveEnable) << n;
 		line->ssEnable |= (n < 4 ? ppu.bg[n].io.belowEnable : ppu.obj.io.belowEnable) << n;
 	}
+	line->msEnable &= ~ppuHidden & 31;
+	line->ssEnable &= ~ppuHidden & 31;
 	settings[5] = ppu.window.col.oneInvert | ppu.window.col.oneEnable << 1 | ppu.window.col.twoInvert << 2 | ppu.window.col.twoEnable << 3;
 	for (u32 n = 0; n < 3; ++n) {
 		line->wmSettings[n] = settings[n * 2] | settings[n * 2 + 1] << 4;
@@ -3779,6 +3884,9 @@ static void fastWholeLine(bool sides) {
 	line->cgadsub = ppu.dac.objColorEnable << 4 | ppu.dac.backColorEnable << 5 | ppu.dac.colorHalve << 6 | ppu.dac.colorMode << 7;
 	for (u32 n = 0; n < 4; ++n) {
 		line->cgadsub |= ppu.dac.bgColorEnable[n] << n;
+	}
+	if (ppuHidden & 32) {
+		line->cgadsub &= 0xc0;
 	}
 	line->fixedColor = fixedColor();
 	line->screenMode = ppu.io.interlace | ppu.obj.io.interlace << 1 | ppu.io.overscan << 2 | ppu.io.pseudoHires << 3 | ppu.io.extbg << 6;
@@ -3947,11 +4055,7 @@ static void renderSpan(u32 start, u32 end) {
 	// So is one that shows nothing: its backgrounds weren't fetched, and aren't looked at.
 	bool dark = ppu.io.displayDisable || (!ppu.io.overscan && VCOUNTER >= 225);
 	if (objLine && (allLined || (!tiled && dark)) && draws && ppu.window.x == 0) {
-		if (systemBalanced && composeBalanced(effects, objPalette, objPriority, hires || ppu.io.pseudoHires)) {
-			ppu.counter.hcounter = start;
-			return;
-		}
-		composeLine(effects, objPalette, objPriority, tiled, hires || ppu.io.pseudoHires);
+		composeWhole(effects, objPalette, objPriority, tiled, hires || ppu.io.pseudoHires);
 		ppu.counter.hcounter = start;
 		return;
 	}

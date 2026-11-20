@@ -1010,6 +1010,9 @@ static void drawCrosshairs(void) {
 	{ "armsnes_volume_voice" #n, "Voice " #n " Volume", NULL, \
 	  (n) == 1 ? "Each of the sound chip's eight voices. A voice's echo stays as loud." : NULL, NULL, "audio", VOLUME_VALUES, "100%" }
 
+#define LAYER_OPTION(key, name, info) \
+	{ "armsnes_layer_" key, name, NULL, info, NULL, "layers", { { "Shown", NULL }, { "Hidden", NULL }, { NULL, NULL } }, "Shown" }
+
 static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armsnes_mode", "Mode", NULL,
 		"Exact runs as ares does, clock for clock. Balanced gives the same results with coarser timing, "
@@ -1086,6 +1089,13 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"The console shows 32 sprites and 34 sprite tiles on a line, which games turn into flicker or gaps. "
 		"No limit shows them all; games still see the console's limit. Fast mode only.",
 		NULL, "video", { { "32 per line", NULL }, { "No limit", NULL }, { NULL, NULL } }, "32 per line" },
+	LAYER_OPTION("bg1", "Background 1",
+		"Layers left out of the picture, for screenshots and rips. The game runs as it would with them shown."),
+	LAYER_OPTION("bg2", "Background 2", NULL),
+	LAYER_OPTION("bg3", "Background 3", NULL),
+	LAYER_OPTION("bg4", "Background 4", NULL),
+	LAYER_OPTION("sprites", "Sprites", NULL),
+	LAYER_OPTION("color_math", "Color Math", "Transparency and the other blends of the two screens. Hidden shows the main screen alone."),
 	{ "armsnes_interpolation", "Interpolation", NULL,
 		"How the sound chip smooths its samples: Gaussian as the console does, or sharper. Only what is heard "
 		"changes; the echo keeps the console's.",
@@ -1155,6 +1165,7 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 static struct retro_core_option_v2_category categories[] = {
 	{ "system", "System", "The core's mode, threads and frame skip, the console's region, its memory at power-on and its chips' speeds." },
 	{ "video", "Video", "The picture's shape, edges and colors." },
+	{ "layers", "Layers", "Backgrounds, sprites and color math left out of the picture." },
 	{ "audio", "Audio", "The sound chip's interpolation and each voice's volume, and the cartridge's own sound." },
 	{ "input", "Input", "Turbo, the D-pad and rumble." },
 	{ "aim", "Light Guns and Mouse",
@@ -1703,6 +1714,13 @@ static void readOptions(void) {
 	cropSides = crop ? (u32) atoi(crop) % 17 : 0;
 	sgbBorderHidden = optionIs(environment, "armsnes_sgb_border", "Hidden");
 	ppuNoSpriteLimit = optionIs(environment, "armsnes_sprite_limit", "No limit");
+	static const char* const layerKeys[6] = { "bg1", "bg2", "bg3", "bg4", "sprites", "color_math" };
+	ppuHidden = 0;
+	for (u32 n = 0; n < 6; ++n) {
+		char layerKey[40];
+		snprintf(layerKey, sizeof(layerKey), "armsnes_layer_%s", layerKeys[n]);
+		ppuHidden |= optionIs(environment, layerKey, "Hidden") << n;
+	}
 	static const struct OptionChoice hdScales[] = { { "2x", 2 }, { "3x", 3 }, { "4x", 4 } };
 	unsigned largest = maxWidth() * maxHeight();
 	hdScale = ppuHdScale = (u8) optionChoice(environment, "armsnes_hd_mode7", hdScales, 3, 0);

@@ -16,6 +16,7 @@ bool ppuSkipPicture;
 u8 ppuHdScale;
 u8 ppuWide;
 bool ppuWideAll, ppuWideSprites;
+bool ppuWideSides[CANVAS_HEIGHT];
 
 #define VCOUNTER ppu.counter.vcounter
 #define HCOUNTER ppu.counter.hcounter
@@ -1175,6 +1176,12 @@ static u32 vramWrites;
 // Fast mode: VRAM or CGRAM was written while the render thread's copies weren't told.
 static bool fastStale = true;
 
+// The line renderer draws on threads of its own, which take every VRAM and CGRAM write: in Fast mode,
+// and in Balanced with widescreen, which it draws the sides for.
+static bool fastThreaded(void) {
+	return systemPictureThread && (systemFast || (systemBalanced && ppuWide));
+}
+
 // The canvas's rows the frame (canvasFrame) gave to fastPpuSetSink's sink and nothing put in the
 // canvas: still black from the last frame's end.
 static u32 canvasKept[CANVAS_HEIGHT], canvasFrame = 1;
@@ -1220,7 +1227,7 @@ static void writeVRAM(bool byte, u8 data) {
 	u16* word = vramAt(addressVRAM());
 	*word = byte ? (*word & 0x00ff) | data << 8 : (*word & 0xff00) | data;
 	++vramWrites;
-	if (systemFast && systemPictureThread) {
+	if (fastThreaded()) {
 		fastPpuVram(addressVRAM() & ppu.vramMask, *word);
 	} else {
 		fastStale = true;
@@ -1267,7 +1274,7 @@ static void writeCGRAM(u8 address, u16 data) {
 		address = ppu.latch.cgramAddress;
 	}
 	ppu.cgram[address] = data & 0x7fff;
-	if (systemFast && systemPictureThread) {
+	if (fastThreaded()) {
 		fastPpuCgram(address, data & 0x7fff);
 	} else {
 		fastStale = true;
@@ -1870,7 +1877,7 @@ u64 ppuVramDmaUntil(void) {
 
 // Count bytes, each to $2118 or $2119 (high), as writeVRAM would land them.
 void ppuVramDma(const u8* data, const u8* high, u32 count) {
-	bool threaded = systemFast && systemPictureThread;
+	bool threaded = fastThreaded();
 	u16 address = ppu.io.vramAddress, size = ppu.io.vramIncrementSize;
 	u8 mapping = ppu.io.vramMapping, mode = ppu.io.vramIncrementMode;
 	u32 mask = ppu.vramMask;
@@ -3669,7 +3676,7 @@ static void fetchMoreSprites(void) {
 // counting them. A tile from 256 to the right edge is there, one further on wraps round to the left.
 static void fetchWideSprites(void) {
 	wideSpriteCount = 0;
-	if (!ppuWide || !ppuWideSprites || !systemFast || ppu.io.displayDisable || VCOUNTER >= ppu.state.vdisp - 1u) {
+	if (!ppuWide || !ppuWideSprites || !systemBalanced || ppu.io.displayDisable || VCOUNTER >= ppu.state.vdisp - 1u) {
 		return;
 	}
 	s32 right = 256 + ppuWide, left = -(s32) ppuWide;
@@ -3699,21 +3706,26 @@ static void fetchWideSprites(void) {
 	wideSpriteCount = count;
 }
 
-// Fast mode: a whole line by snes_faust's renderer, from the registers as they are now.
-static void fastWholeLine(void) {
+// Fast mode: a whole line by snes_faust's renderer, from the registers as they are now. With sides, only
+// widescreen's sides are wanted from it: the S-PPU draws the line.
+static void fastWholeLine(bool sides) {
 	if (ppuSkipPicture) {
 		moreSpritesReady = false;
 		return;
 	}
-	if (systemPictureThread && fastStale) {
+	bool threaded = fastThreaded();
+	if (threaded && fastStale) {
 		fastPpuResync(ppu.vram, ppu.cgram);
 		fastStale = false;
 	}
-	struct FastPpuLine* line = fastPpuNext(systemPictureThread);
+	struct FastPpuLine* line = fastPpuNext(threaded);
 	line->vram = ppu.vram;
 	line->cgram = ppu.cgram;
 	line->out = ppu.dac.lineValid ? &ppuCanvas[ppu.dac.line] : NULL;
-	if (line->out && fastPpuDirect()) {
+	if (line->out) {
+		ppuWideSides[ppu.dac.line / CANVAS_WIDTH] = sides;
+	}
+	if (line->out && fastPpuDirect() && !sides) {
 		canvasKept[ppu.dac.line / CANVAS_WIDTH] = canvasFrame;
 	}
 	line->brightness = ppu.io.displayBrightness << 15;
@@ -3791,7 +3803,7 @@ static void fastWholeLine(void) {
 	}
 	// The first column's sub screen pixel of a line twice as wide is black.
 	line->hiresFirstBlack = !line->blank && (ppu.io.bgMode == 5 || ppu.io.pseudoHires);
-	line->hdScale = ppuHdScale > 1 && ppu.io.bgMode == 7 && !line->blank && !ppu.io.interlace ? ppuHdScale : 0;
+	line->hdScale = systemFast && ppuHdScale > 1 && ppu.io.bgMode == 7 && !line->blank && !ppu.io.interlace ? ppuHdScale : 0;
 	line->wide = ppu.io.interlace ? 0 : ppuWide;
 	line->wideLayers = ppuWideAll || ppu.io.bgMode == 7;
 	line->wideSprites = ppuWideSprites;
@@ -3805,7 +3817,7 @@ static void renderSpan(u32 start, u32 end) {
 	    ppu.io.bgMode != 6) {
 		objEvaluateLine();
 		if (VCOUNTER != 0) {
-			fastWholeLine();
+			fastWholeLine(false);
 		}
 		ppu.obj.x += 256;
 		if (ppu.dac.lineValid) {
@@ -3825,6 +3837,10 @@ static void renderSpan(u32 start, u32 end) {
 				objEvaluate(at >> 3);
 			}
 		}
+	}
+	// Balanced with widescreen: the line renderer draws the sides, from the registers as the line starts.
+	if (systemBalanced && ppuWide && start == 0 && VCOUNTER != 0 && !ppu.io.interlace && (ppuWideAll || ppu.io.bgMode == 7)) {
+		fastWholeLine(true);
 	}
 
 	static const u8 order[4] = { 2, 0, 1, 3 };

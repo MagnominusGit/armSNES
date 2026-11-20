@@ -267,16 +267,18 @@ static u32 frameColumns = 256, frameExtension;
 // the output, and set in the middle of a widescreen picture.
 static bool hdFrame(u32 y, u32 h) {
 	u32 lines = 0, scaled = 0;
+	// Hires in a row drawn wide, or in the output a row's middle is taken from.
 	bool hires = false;
 	for (u32 row = 0; row < h; ++row) {
-		if (hdRowStamp[y + row] == stamp) {
-			lines++;
-			scaled += hdRowScale[y + row] > 1;
-			hires |= hdRowScale[y + row] == 1 && wideRowHires[row];
-		}
+		bool drawn = hdRowStamp[y + row] == stamp;
+		lines += drawn;
+		scaled += drawn && hdRowScale[y + row] > 1;
+		hires |= (drawn && hdRowScale[y + row] == 1 && wideRowHires[row]) ||
+		         ((!drawn || ppuWideSides[y + row]) && outputWidth == OUTPUT_WIDTH);
 	}
 	u32 n = scaled ? hdScale : 1, columns = wideColumns, extension = (columns - 256) / 2;
-	if (!lines || (n < 2 && columns == 256)) {
+	// A widescreen frame is wide whatever it has drawn, so its shape stays.
+	if (columns == 256 && (!lines || n < 2)) {
 		return false;
 	}
 	// Hires is kept at the console's scale, unless merged.
@@ -289,6 +291,7 @@ static bool hdFrame(u32 y, u32 h) {
 		if (hdRowStamp[y + row] == stamp && hdRowScale[y + row] > 1) {
 			continue;
 		}
+		u32 left = extension * across, middle = 256 * across;
 		if (hdRowStamp[y + row] == stamp) {
 			const u16* from = &wide[row * WIDE_COLUMNS * 2];
 			bool blend = wideRowHires[row] && hiresBlend != BLEND_OFF;
@@ -297,10 +300,16 @@ static bool hdFrame(u32 y, u32 h) {
 				u16 a = from[at & ~1u], b = from[at | 1];
 				to[x] = blend ? (u16) ((a & b) + (((a ^ b) & 0xf7de) >> 1)) : from[across == 2 ? at : at & ~1u];
 			}
+			// A line the S-PPU drew: its middle from the output.
+			if (ppuWideSides[y + row]) {
+				const u16* out = &output[row * OUTPUT_WIDTH];
+				for (u32 x = 0; x < middle; ++x) {
+					to[left + x] = out[x * outputWidth / middle];
+				}
+			}
 		} else {
 			// A line not drawn wide (the picture's edge or a line left out): the output's, in the middle.
 			const u16* from = &output[row * OUTPUT_WIDTH];
-			u32 left = extension * across, middle = 256 * across;
 			for (u32 x = 0; x < width; ++x) {
 				to[x] = x >= left && x < left + middle ? from[(x - left) * outputWidth / middle] : 0;
 			}
@@ -1062,7 +1071,8 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"Columns added each side to fill a wider screen, of the ratio picked with the Aspect Ratio option's "
 		"pixel shape. The console draws 256: past them, a layer shows what the game left in video memory, "
 		"which looks right on mode 7's plane, often wrong elsewhere unless the game is patched for it. "
-		"Fast mode only; not with the Super Game Boy or interlaced pictures.",
+		"Fast and Balanced modes (Balanced draws the sides with Fast mode's renderer, from each line's "
+		"registers as it starts); not with the Super Game Boy or interlaced pictures.",
 		NULL, "video", { { "Off", NULL }, { "16:10", NULL }, { "16:9", NULL }, { "2:1", NULL }, { "21:9", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_widescreen_layers", "Widescreen Layers", NULL,
 		"Mode 7 only keeps other lines (and status bars) at the console's width, with black at the sides. All "
@@ -1162,8 +1172,8 @@ static bool showOptions(void) {
 	bool stick = guns && (optionIs(environment, "armsnes_gun_aim", "Right stick (pan)") ||
 	                      optionIs(environment, "armsnes_gun_aim", "Right stick (absolute)"));
 	bool motion = stick && !optionIs(environment, "armsnes_motion_sensor", "Off");
-	bool wide = !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") &&
-	            !optionIs(environment, "armsnes_widescreen", "Off") && !(loaded && cart.icd);
+	bool wide = !optionIs(environment, "armsnes_mode", "Exact") && !optionIs(environment, "armsnes_widescreen", "Off") &&
+	            !(loaded && cart.icd);
 	const struct {
 		const char* key;
 		bool show;
@@ -1172,7 +1182,7 @@ static bool showOptions(void) {
 		{ "armsnes_frame_skip", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_hd_mode7", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_sprite_limit", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
-		{ "armsnes_widescreen", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
+		{ "armsnes_widescreen", !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_widescreen_layers", wide },
 		{ "armsnes_widescreen_sprites", wide },
 		{ "armsnes_superfx_clock", !loaded || cart.gsu },
@@ -1701,7 +1711,7 @@ static void readOptions(void) {
 	static const struct OptionChoice ratios[] = { { "16:10", 1600 }, { "16:9", 1778 }, { "2:1", 2000 }, { "21:9", 2333 } };
 	int ratio = optionChoice(environment, "armsnes_widescreen", ratios, 4, 0);
 	u32 columns = 256;
-	if (ratio && systemFast && !cart.icd) {
+	if (ratio && systemBalanced && !cart.icd) {
 		double lines = regionPal() ? 239.0 : 224.0;
 		double pixel = aspect == ASPECT_SQUARE ? 1.0 : aspect == ASPECT_4_3 ? 4.0 / 3.0 * lines / 256.0 : regionPal() ? 1.3889 : 8.0 / 7.0;
 		int side = (int) ((ratio / 1000.0 * lines / pixel - 256.0) / 2.0 / 16.0 + 0.5) * 16;

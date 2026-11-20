@@ -101,6 +101,8 @@ extern u8 ppuHdScale;
 // only mode 7's, and with the sprites there or not.
 extern u8 ppuWide;
 extern bool ppuWideAll, ppuWideSprites;
+// Widescreen: the canvas rows the S-PPU drew, whose sides alone are the line renderer's.
+extern bool ppuWideSides[];
 // Fast mode's sound, and its lines, on threads of their own: the same output, on other cores.
 extern bool systemSoundThread;
 extern bool systemPictureThread;

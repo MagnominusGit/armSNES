@@ -959,13 +959,18 @@ static void linePost(u64 until) {
 	lineWakeIfSleeping();
 }
 
-static void lineWait(void) {
+// The thread's runs all done.
+static void lineFinish(void) {
 	if (lineStarted) {
 		while (__atomic_load_n(&lineDone, __ATOMIC_ACQUIRE) != linePosted) {
 			lineWakeIfSleeping();
 			lineRelax();
 		}
 	}
+}
+
+static void lineWait(void) {
+	lineFinish();
 	raiseIrq();
 }
 
@@ -1024,6 +1029,8 @@ void gsuFrameStart(void) {
 		gsuJitDrop();
 	}
 	if (systemFast) {
+		// A run posted past the last frame's end may still be going.
+		lineFinish();
 		lineThreaded = systemSoundThread && frameWaits * 2 < frameLines;
 		frameLines = frameWaits = 0;
 		lineEnd = cpu.th.clock + cpu.th.scalar * (cpu.counter.hperiod - cpu.counter.hcounter);

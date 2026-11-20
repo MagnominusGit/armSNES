@@ -97,7 +97,7 @@ void systemLoad(bool pal) {
 	busFinish();
 	// Fast mode: an SA-1 keeps the CPU's thread busiest, and a second render thread slows it down more
 	// than it helps; otherwise two draw the lines.
-	fastPpuThreads(cart.sa1 ? 1 : 0);
+	fastPpuThreads(cart.sa1 || cart.st018 ? 1 : 0);
 }
 
 // The MSU-1's clock comes after the other chips'.
@@ -147,6 +147,7 @@ void systemPower(bool reset) {
 void systemFrameEvent(void) {
 	smpDrain();
 	gsuSettle();
+	st018Settle();
 	// The clocks a waiting loop's skip keeps are about to drop.
 	cpuFrameStart();
 	u64 minimum = cpu.th.clock - 0;
@@ -248,6 +249,9 @@ void systemRunFrame(void) {
 	}
 	if (cart.gsu) {
 		gsuFrameStart();
+	}
+	if (cart.st018) {
+		st018FrameStart();
 	}
 	// The MSU-1 looks at the DSP as it plays.
 	smpThreaded = smpThreadable = systemFast && systemSoundThread && !cart.msu1 && smpCanThread();

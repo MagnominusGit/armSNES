@@ -131,6 +131,7 @@ bool stateSave(void* data, size_t size) {
 	fastPpuFence();
 	smpDrain();
 	gsuSettle();
+	st018Settle();
 	if (size < stateSize()) {
 		return false;
 	}
@@ -175,6 +176,7 @@ bool stateLoad(const void* data, size_t size) {
 	fastPpuFence();
 	smpDrain();
 	gsuSettle();
+	st018Settle();
 	cpuFastReplan();
 	struct StateHeader header;
 	if (size < sizeof(header)) {

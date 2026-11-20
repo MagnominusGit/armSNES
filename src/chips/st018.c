@@ -4,6 +4,10 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  * Ported from ares (ISC); see LICENSES/ISC-ares.txt. */
 #include "../snes.h"
+#include "../fastppu.h"
+
+#include <pthread.h>
+#include <time.h>
 
 // The ST018: an ARM6 with its own program and data ROM, 16 KiB of RAM, a byte port each way to the
 // S-CPU and a timer. As in ares, it runs the ARM7TDMI's ARM instructions (the Thumb state is turned
@@ -321,6 +325,8 @@ static u32 armGet(u32 mode, u32 address) {
 
 // A write since the turn of a loop began changed the RAM or the bridge (loopCheck).
 static bool loopChanged;
+// The ARM's writes to its two ports to the S-CPU, counted (Fast mode's line runs).
+static u32 armtocpuWrites, signalWrites;
 
 // armGet, with a word of the program ROM (nearly every fetch) read in place.
 static inline __attribute__((always_inline)) u32 armGetFast(u32 mode, u32 address) {
@@ -363,8 +369,12 @@ static void armSet(u32 mode, u32 address, u32 word) {
 	if (address == 0x40000000) {
 		S.bridge.armtocpuReady = true;
 		S.bridge.armtocpuData = word;
+		armtocpuWrites++;
 	}
-	if (address == 0x40000010) S.bridge.signal = true;
+	if (address == 0x40000010) {
+		S.bridge.signal = true;
+		signalWrites++;
+	}
 	if (address == 0x40000020) S.bridge.timerlatch = (S.bridge.timerlatch & ~0x0000ffu) | word;
 	if (address == 0x40000024) S.bridge.timerlatch = (S.bridge.timerlatch & ~0x00ff00u) | word << 8;
 	if (address == 0x40000028) S.bridge.timerlatch = (S.bridge.timerlatch & ~0xff0000u) | word << 16;
@@ -557,6 +567,8 @@ enum { BOOT, MAIN, FIRST_HANDLER = 16, FIRST_LABEL = 64 };
 
 // The steps taken (loopCheck counts a turn's).
 static u32 stepCount;
+// The clock a run goes up to: the S-CPU's, or in Fast mode the end of its line (st018Line).
+static u64 runUntil;
 
 // A clock step: the timer counts down once per step, whatever its length.
 static void stepClocks(u32 clocks) {
@@ -618,8 +630,8 @@ static void loopCheck(void) {
 	    loop.signal == S.bridge.signal && loop.cputoarmData == S.bridge.cputoarmData && loop.armtocpuData == S.bridge.armtocpuData &&
 	    loop.timerlatch == S.bridge.timerlatch) {
 		u64 turn = S.th.clock - loop.clock;
-		if (turn && S.th.clock <= cpu.th.clock) {
-			u64 turns = (cpu.th.clock - S.th.clock) / turn;
+		if (turn && S.th.clock <= runUntil) {
+			u64 turns = (runUntil - S.th.clock) / turn;
 			u64 down = turns * (stepCount - loop.steps);
 			S.th.clock += turns * turn;
 			S.bridge.timer = S.bridge.timer > down ? S.bridge.timer - (u32) down : 0;
@@ -628,8 +640,13 @@ static void loopCheck(void) {
 	loopMark();
 }
 
+static u32 pendingCount;
+static void viewTake(void);
+
 void st018Loaded(void) {
 	loop.valid = false;
+	pendingCount = 0;
+	viewTake();
 }
 
 #define STOP_(n) \
@@ -642,7 +659,7 @@ void st018Loaded(void) {
 #define STEP(clocks) \
 	do { \
 		stepClocks(clocks); \
-		if (cpu.th.clock < S.th.clock) { \
+		if (runUntil < S.th.clock) { \
 			STOP_X(FIRST_LABEL + __COUNTER__); \
 		} \
 	} while (0)
@@ -709,11 +726,11 @@ void st018Loaded(void) {
 enum { ST018_LONGEST = 32 };
 
 static void leanRun(void) {
-	if (cpu.th.clock < S.th.clock) {
+	if (runUntil < S.th.clock) {
 		return;
 	}
 	const u64 scalar = S.th.scalar;
-	u64 limit = (cpu.th.clock - S.th.clock) / scalar;
+	u64 limit = (runUntil - S.th.clock) / scalar;
 	if (limit < ST018_LONGEST) {
 		return;
 	}
@@ -824,7 +841,7 @@ static void leanRun(void) {
 			LEAN_FLUSH();
 			LEAN_SAVE();
 			loopCheck();
-			limit = (cpu.th.clock - S.th.clock) / scalar;
+			limit = (runUntil - S.th.clock) / scalar;
 			LEAN_LOAD();
 			if (ST018_LONGEST > limit) {
 				break;
@@ -1079,7 +1096,7 @@ static void leanRun(void) {
 #undef LEAN_ALU
 }
 
-void st018Run(void) {
+static void armRun(void) {
 dispatch:
 	switch (S.state) {
 	// The reset hold, then the reset sequence's delay.
@@ -1410,10 +1427,239 @@ done:
 	goto dispatch;
 }
 
+void st018Run(void) {
+	runUntil = cpu.th.clock;
+	armRun();
+}
+
 static void syncFromCpu(void) {
 	if (S.th.clock < cpu.th.clock) {
 		st018Run();
 	}
+}
+
+static void armReset(void);
+
+// --- Fast mode: the ARM a line at a time ---
+// The ARM runs to where the S-CPU's line ends, on a thread of its own when there are cores for it (the
+// same runs on the S-CPU's thread when there aren't). The two meet only as a line starts: the S-CPU's
+// port accesses in the line before reach the bridge, and the bridge is copied for it to read in this
+// one. So each sees the other up to a line late. Each run is set from the emulated state alone, so it
+// is the same with the thread or without; none is under way between frames, which a saved state needs.
+
+// What the S-CPU reads: the bridge as the line started, with its own accesses since.
+static struct {
+	bool armtocpuReady, signal, cputoarmReady, ready, reset;
+	u8 armtocpuData;
+	u32 armtocpuWrites, signalWrites;
+} view;
+
+// The S-CPU's accesses in the line, in order. A read of a port the ARM wrote clears only that write.
+enum { ACK_DATA, ACK_SIGNAL, PORT_WRITE, RESET_LINE };
+static struct {
+	u8 kind, data;
+	u32 writes;
+} pending[256];
+static u32 pendingCount;
+
+static void pendingAdd(u8 kind, u8 data, u32 writes) {
+	if (pendingCount) {
+		__typeof__(pending[0])* last = &pending[pendingCount - 1];
+		// The same again changes nothing more; a port written again keeps the later byte.
+		if (last->kind == kind && (kind == PORT_WRITE || last->writes == writes)) {
+			last->data = data;
+			return;
+		}
+	}
+	if (pendingCount == sizeof(pending) / sizeof(*pending)) {
+		pendingCount--;
+	}
+	pending[pendingCount].kind = kind;
+	pending[pendingCount].data = data;
+	pending[pendingCount].writes = writes;
+	pendingCount++;
+}
+
+static void bridgeApply(void) {
+	for (u32 i = 0; i < pendingCount; ++i) {
+		switch (pending[i].kind) {
+		case ACK_DATA:
+			if (armtocpuWrites == pending[i].writes) {
+				S.bridge.armtocpuReady = false;
+			}
+			break;
+		case ACK_SIGNAL:
+			if (signalWrites == pending[i].writes) {
+				S.bridge.signal = false;
+			}
+			break;
+		case PORT_WRITE:
+			S.bridge.cputoarmReady = true;
+			S.bridge.cputoarmData = pending[i].data;
+			break;
+		case RESET_LINE:
+			if (!S.bridge.reset && pending[i].data) {
+				armReset();
+			}
+			S.bridge.reset = pending[i].data;
+			break;
+		}
+	}
+	pendingCount = 0;
+}
+
+static void viewTake(void) {
+	view.armtocpuReady = S.bridge.armtocpuReady;
+	view.signal = S.bridge.signal;
+	view.cputoarmReady = S.bridge.cputoarmReady;
+	view.ready = S.bridge.ready;
+	view.reset = S.bridge.reset;
+	view.armtocpuData = S.bridge.armtocpuData;
+	view.armtocpuWrites = armtocpuWrites;
+	view.signalWrites = signalWrites;
+}
+
+static void lineRun(u64 until) {
+	runUntil = until;
+	if (S.th.clock < until) {
+		armRun();
+	}
+}
+
+static pthread_t lineThread;
+static pthread_mutex_t lineLock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t lineWake = PTHREAD_COND_INITIALIZER;
+static bool lineStarted, lineStopping, lineThreaded;
+static u64 linePostUntil;
+// On cache lines of their own, as each is written by one thread and read by the other.
+static _Alignas(64) u32 linePosted;  // by the S-CPU's thread
+static _Alignas(64) u32 lineDone;    // by the ARM's
+static _Alignas(64) bool lineSleeping;
+
+static inline void lineRelax(void) {
+#if defined(__aarch64__) || defined(__arm__)
+	__asm__ volatile("yield");
+#elif defined(__x86_64__) || defined(__i386__)
+	__builtin_ia32_pause();
+#endif
+}
+
+static u64 lineNanoseconds(void) {
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return (u64) now.tv_sec * 1000000000u + (u64) now.tv_nsec;
+}
+
+static void* lineMain(void* unused) {
+	(void) unused;
+	u32 done = lineDone;
+	for (;;) {
+		// The next line is looked for at once for 0.2 ms before the thread gives way.
+		for (u64 since = lineNanoseconds(); done == __atomic_load_n(&linePosted, __ATOMIC_ACQUIRE);) {
+			for (u32 spin = 0; spin < 64 && done == __atomic_load_n(&linePosted, __ATOMIC_ACQUIRE); spin++) {
+				lineRelax();
+			}
+			if (lineNanoseconds() - since > 200000) {
+				break;
+			}
+		}
+		// Sleeping is set before the post is looked at again, and linePost looks at it after it posts,
+		// both in one order for both threads: one of them sees the other.
+		if (done == __atomic_load_n(&linePosted, __ATOMIC_ACQUIRE)) {
+			pthread_mutex_lock(&lineLock);
+			__atomic_store_n(&lineSleeping, true, __ATOMIC_SEQ_CST);
+			while (done == __atomic_load_n(&linePosted, __ATOMIC_SEQ_CST) && !lineStopping) {
+				pthread_cond_wait(&lineWake, &lineLock);
+			}
+			__atomic_store_n(&lineSleeping, false, __ATOMIC_SEQ_CST);
+			bool stop = lineStopping && done == __atomic_load_n(&linePosted, __ATOMIC_SEQ_CST);
+			pthread_mutex_unlock(&lineLock);
+			if (stop) {
+				return NULL;
+			}
+		}
+		lineRun(linePostUntil);
+		__atomic_store_n(&lineDone, ++done, __ATOMIC_RELEASE);
+	}
+}
+
+static void lineWakeIfSleeping(void) {
+	if (__atomic_load_n(&lineSleeping, __ATOMIC_SEQ_CST)) {
+		pthread_mutex_lock(&lineLock);
+		pthread_cond_signal(&lineWake);
+		pthread_mutex_unlock(&lineLock);
+	}
+}
+
+static void linePost(u64 until) {
+	if (lineThreaded && !lineStarted) {
+		lineStarted = pthread_create(&lineThread, NULL, lineMain, NULL) == 0;
+	}
+	if (!lineThreaded || !lineStarted) {
+		lineRun(until);
+		return;
+	}
+	linePostUntil = until;
+	__atomic_store_n(&linePosted, linePosted + 1, __ATOMIC_SEQ_CST);
+	lineWakeIfSleeping();
+}
+
+static void lineWait(void) {
+	if (lineStarted) {
+		while (__atomic_load_n(&lineDone, __ATOMIC_ACQUIRE) != linePosted) {
+			lineWakeIfSleeping();
+			lineRelax();
+		}
+	}
+}
+
+// The run under way finished, the S-CPU's accesses taken in and the bridge copied for it.
+void st018Settle(void) {
+	if (cart.st018) {
+		lineWait();
+		bridgeApply();
+		viewTake();
+	}
+}
+
+void st018Stop(void) {
+	if (!lineStarted) {
+		return;
+	}
+	lineWait();
+	pthread_mutex_lock(&lineLock);
+	lineStopping = true;
+	pthread_cond_signal(&lineWake);
+	pthread_mutex_unlock(&lineLock);
+	pthread_join(lineThread, NULL);
+	lineStopping = false;
+	lineStarted = false;
+}
+
+// The S-CPU's clock is at a line's start.
+void st018Line(void) {
+	if (!systemFast) {
+		if (S.th.clock < cpu.th.clock) {
+			st018Run();
+		}
+		return;
+	}
+	st018Settle();
+	// The frame ends at this line's start: its run is posted as the next frame begins.
+	if (sys.frameEvent) {
+		return;
+	}
+	linePost(cpu.th.clock + cpu.th.scalar * cpu.counter.hperiod);
+}
+
+// The thread needs a core of its own besides the sound's and the picture's.
+void st018FrameStart(void) {
+	if (!systemFast) {
+		return;
+	}
+	lineThreaded = systemSoundThread && fastPpuCores() >= 4;
+	st018Settle();
+	linePost(cpu.th.clock + cpu.th.scalar * (cpu.counter.hperiod - cpu.counter.hcounter));
 }
 
 // The ARM held in reset: the processor at its reset state, its thread back at the start, the bridge
@@ -1456,6 +1702,23 @@ static void armReset(void) {
 
 u8 st018Read(u32 address, u8 data) {
 	(void) data;
+	if (systemFast) {
+		u8 value = 0x00;
+		address &= 0xff06;
+		if (address == 0x3800 && view.armtocpuReady) {
+			view.armtocpuReady = false;
+			value = view.armtocpuData;
+			pendingAdd(ACK_DATA, 0, view.armtocpuWrites);
+		}
+		if (address == 0x3802) {
+			view.signal = false;
+			pendingAdd(ACK_SIGNAL, 0, view.signalWrites);
+		}
+		if (address == 0x3804) {
+			value = view.armtocpuReady | view.signal << 2 | view.cputoarmReady << 3 | view.ready << 7;
+		}
+		return value;
+	}
 	syncFromCpu();
 	u8 value = 0x00;
 	address &= 0xff06;
@@ -1473,6 +1736,23 @@ u8 st018Read(u32 address, u8 data) {
 }
 
 void st018Write(u32 address, u8 data) {
+	if (systemFast) {
+		address &= 0xff06;
+		if (address == 0x3802) {
+			view.cputoarmReady = true;
+			pendingAdd(PORT_WRITE, data, 0);
+		}
+		if (address == 0x3804) {
+			data &= 1;
+			// A reset clears the bridge as armReset does.
+			if (!view.reset && data) {
+				view.armtocpuReady = view.cputoarmReady = view.signal = view.ready = false;
+			}
+			view.reset = data;
+			pendingAdd(RESET_LINE, data, 0);
+		}
+		return;
+	}
 	syncFromCpu();
 	address &= 0xff06;
 	if (address == 0x3802) {

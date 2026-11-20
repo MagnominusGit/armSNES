@@ -1094,8 +1094,8 @@ void cartSync(void) {
 	if (cart.icd && icd.th.clock < cpu.th.clock) {
 		icdRun();
 	}
-	if (cart.st018 && st018.th.clock < cpu.th.clock) {
-		st018Run();
+	if (cart.st018) {
+		st018Line();
 	}
 	if (bsRunning() && bsmemory.th.clock < cpu.th.clock) {
 		bsRun();

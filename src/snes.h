@@ -1377,6 +1377,12 @@ void st018Load(const u8* firmware);
 void st018Power(void);
 void st018Run(void);
 void st018Loaded(void);
+// Fast mode: the ARM a line at a time (st018.c), as a line and a frame start, and the run under way
+// finished.
+void st018Line(void);
+void st018FrameStart(void);
+void st018Settle(void);
+void st018Stop(void);
 u8 st018Read(u32 address, u8 data);
 void st018Write(u32 address, u8 data);
 

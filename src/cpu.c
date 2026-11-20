@@ -767,6 +767,8 @@ static __attribute__((noinline)) u8 readSlow(u32 address) {
 		} else if (cart.sa1 && wait.sa1Count < 2 && sa1WatchCPU(address) != ~0u) {
 			// The SA-1's I-RAM and BW-RAM change only as the SA-1 writes them, which a skip stops at.
 			wait.sa1Read[wait.sa1Count++] = sa1WatchCPU(address);
+		} else if (cart.st018 && (address & 0x40ff06) == 0x3804) {
+			// The ST018's status, as the line started (st018Line), changes as the next one starts.
 		} else if (!cart.gsu || (address & 0x40fffe) != 0x3030) {
 			wait.unsafe = true;
 		}

@@ -89,6 +89,9 @@ extern bool systemClearPowerOn;
 extern bool systemBalanced;
 // Fast mode: Balanced, with whole lines drawn by snes_faust's renderer (fastppu.cpp).
 extern bool systemFast;
+// Fast mode: a line's sprites past the 32 and tiles past the 34 the S-PPU takes are drawn anyway. What
+// the game reads (the range and time over flags) is the same.
+extern bool ppuNoSpriteLimit;
 // Fast mode's sound, and its lines, on threads of their own: the same output, on other cores.
 extern bool systemSoundThread;
 extern bool systemPictureThread;

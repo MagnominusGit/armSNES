@@ -13,6 +13,8 @@ extern "C" {
 
 // Fast mode's line renderer (fastppu.cpp, from Mednafen's snes_faust): one whole line from the
 // registers as the S-PPU's ports would have them written, VRAM and CGRAM, and the line's sprite tiles.
+enum { FAST_PPU_SPRITES = 128 };
+
 struct FastPpuSprite {
 	int16_t x;
 	uint8_t priority;  // 0-3
@@ -48,7 +50,8 @@ struct FastPpuLine {
 	bool hiresFirstBlack;   // the first column's sub screen pixel is black
 
 	uint32_t spriteCount;
-	struct FastPpuSprite sprites[34];
+	// 34 as the S-PPU fetches them, more when its limits are lifted (ppuNoSpriteLimit).
+	struct FastPpuSprite sprites[FAST_PPU_SPRITES];
 };
 
 void fastPpuLine(const struct FastPpuLine* line);

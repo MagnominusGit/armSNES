@@ -595,6 +595,10 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"The two halves of each hi-res pixel averaged, as a TV blended them: some games draw see-through "
 		"effects that way. Merge also makes the picture 256 pixels wide, for small screens.",
 		NULL, "video", { { "Off", NULL }, { "On", NULL }, { "Merge", NULL }, { NULL, NULL } }, "Off" },
+	{ "armsnes_sprite_limit", "Sprite Limit", NULL,
+		"The console shows 32 sprites and 34 sprite tiles on a line, which games turn into flicker or gaps. "
+		"No limit shows them all; games still see the console's limit. Fast mode only.",
+		NULL, "video", { { "32 per line", NULL }, { "No limit", NULL }, { NULL, NULL } }, "32 per line" },
 	{ "armsnes_turbo_buttons", "Turbo Buttons", NULL,
 		"Buttons that press and release over and over while held.",
 		NULL, "input", { { "Off", NULL }, { "A", NULL }, { "B", NULL }, { "X", NULL }, { "Y", NULL }, { "A and B", NULL },
@@ -629,6 +633,7 @@ static bool showOptions(void) {
 		bool show;
 	} shown[] = {
 		{ "armsnes_threads", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
+		{ "armsnes_sprite_limit", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_superfx_clock", !loaded || cart.gsu },
 		{ "armsnes_sa1_clock", !loaded || cart.sa1 },
 		{ "armsnes_crosshair", !loaded || inputGuns },
@@ -969,6 +974,7 @@ static void readOptions(void) {
 	crop = optionValue(environment, "armsnes_crop_horizontal");
 	cropSides = crop ? (u32) atoi(crop) % 17 : 0;
 	sgbBorderHidden = optionIs(environment, "armsnes_sgb_border", "Hidden");
+	ppuNoSpriteLimit = optionIs(environment, "armsnes_sprite_limit", "No limit");
 	static const struct OptionChoice blends[] = { { "On", BLEND_ON }, { "Merge", BLEND_MERGE } };
 	hiresBlend = optionChoice(environment, "armsnes_hires_blend", blends, 2, BLEND_OFF);
 	bool boost = optionIs(environment, "armsnes_deep_black_boost", "On");

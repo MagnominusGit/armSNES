@@ -520,6 +520,13 @@ static void objAddressReset(void) {
 // first, so only those are cleared as the half is used again (all of them after a state is loaded).
 static u8 objItemsUsed[2], objTilesUsed[2];
 
+#if !defined(ARMSNES_DOT)
+// Fast mode without the sprite limits: the line's sprite tiles, when it has more (fetchMoreSprites).
+static struct FastPpuSprite moreSprites[FAST_PPU_SPRITES];
+static u32 moreSpriteCount;
+static bool moreSpritesReady;
+#endif
+
 static void objScanline(void) {
 	ppu.obj.latchFirstSprite = ppu.obj.io.firstSprite;
 
@@ -1182,6 +1189,9 @@ static void frameOut(void) {
 
 void ppuLoaded(void) {
 	memset(canvasKept, 0, sizeof(canvasKept));
+#if !defined(ARMSNES_DOT)
+	moreSpritesReady = false;
+#endif
 	objItemsUsed[0] = objItemsUsed[1] = 32;
 	objTilesUsed[0] = objTilesUsed[1] = 34;
 	fastPpuFence();
@@ -3566,6 +3576,76 @@ static void composeLine(const struct WindowEffect effects[4], const u8* objPalet
 	}
 }
 
+bool ppuNoSpriteLimit;
+
+
+// Fast mode without the sprite limits: the next line's sprite tiles when this line's found more than
+// the S-PPU takes, fetched as ppu_fetch.inc fetches them, the last (the lowest priority) dropped past
+// FAST_PPU_SPRITES.
+static void fetchMoreSprites(void) {
+	moreSpritesReady = false;
+	if (!ppuNoSpriteLimit || !systemFast || (ppu.obj.itemCount <= 32 && ppu.obj.tileCount <= 34) || ppu.io.displayDisable ||
+	    VCOUNTER >= ppu.state.vdisp - 1u) {
+		return;
+	}
+	u8 items[128];
+	u32 itemCount = 0;
+	for (u32 n = 0; n < 128; ++n) {
+		u8 index = (ppu.obj.latchFirstSprite + n) & 127;
+		if (objOnScanline(&ppu.oam[index])) {
+			items[itemCount++] = index;
+		}
+	}
+	u32 count = 0;
+	while (itemCount--) {
+		const struct OamObject* sprite = &ppu.oam[items[itemCount]];
+		u32 tileWidth = objectWidth(sprite) >> 3;
+		u32 x = sprite->x;
+		u32 y = (ppu.obj.y - sprite->y) & 255;
+		if (ppu.obj.io.interlace) {
+			y <<= 1;
+		}
+		if (sprite->vflip) {
+			if (objectWidth(sprite) == objectHeight(sprite)) {
+				y = objectHeight(sprite) - 1 - y;
+			} else if (y < objectWidth(sprite)) {
+				y = objectWidth(sprite) - 1 - y;
+			} else {
+				y = objectWidth(sprite) + (objectWidth(sprite) - 1) - (y - objectWidth(sprite));
+			}
+		}
+		if (ppu.obj.io.interlace) {
+			y = !sprite->vflip ? y + ppu.counter.field : y - ppu.counter.field;
+		}
+		x &= 511;
+		y &= 255;
+		u32 tiledataAddress = ppu.obj.io.tiledataAddress;
+		if (sprite->nameselect) {
+			tiledataAddress += (1 + ppu.obj.io.nameselect) << 12;
+		}
+		u32 chrx = sprite->character & 15;
+		u32 chry = (((sprite->character >> 4) + (y >> 3)) & 15) << 4;
+		for (u32 tx = 0; tx < tileWidth; ++tx) {
+			u32 sx = (x + (tx << 3)) & 511;
+			if (x != 256 && sx >= 256 && sx + 7 < 512) {
+				continue;
+			}
+			u32 mx = !sprite->hflip ? tx : tileWidth - 1 - tx;
+			u32 pos = tiledataAddress + ((chry + ((chrx + mx) & 15)) << 4);
+			u32 address = (pos & 0xfff0) + (y & 7);
+			// The list keeps its last FAST_PPU_SPRITES: the higher priority sprites come last.
+			if (count == FAST_PPU_SPRITES) {
+				memmove(moreSprites, moreSprites + 1, (FAST_PPU_SPRITES - 1) * sizeof(*moreSprites));
+				count--;
+			}
+			moreSprites[count++] = (struct FastPpuSprite) { signedBits(sx, 9), sprite->priority, 128 + (sprite->palette << 4),
+				sprite->hflip, *vramAt(address) | (u32) *vramAt(address + 8) << 16 };
+		}
+	}
+	moreSpriteCount = count;
+	moreSpritesReady = true;
+}
+
 // Fast mode: a whole line by snes_faust's renderer, from the registers as they are now.
 static void fastWholeLine(void) {
 	if (systemPictureThread && fastStale) {
@@ -3634,7 +3714,11 @@ static void fastWholeLine(void) {
 	line->fixedColor = fixedColor();
 	line->screenMode = ppu.io.interlace | ppu.obj.io.interlace << 1 | ppu.io.overscan << 2 | ppu.io.pseudoHires << 3 | ppu.io.extbg << 6;
 	line->spriteCount = 0;
-	for (u32 n = 0; n < 34; ++n) {
+	if (moreSpritesReady) {
+		memcpy(line->sprites, moreSprites, moreSpriteCount * sizeof(*moreSprites));
+		line->spriteCount = moreSpriteCount;
+	}
+	for (u32 n = 0; n < 34 && !moreSpritesReady; ++n) {
 		const __typeof__(ppu.obj.tile[0][0])* tile = &ppu.obj.tile[!ppu.obj.active][n];
 		if (!tile->valid) {
 			break;
@@ -3907,6 +3991,9 @@ static void fastLine(void) {
 #pragma pop_macro("STEP")
 	ppu.obj.io.rangeOver |= ppu.obj.itemCount > 32;
 	ppu.obj.io.timeOver |= ppu.obj.tileCount > 34;
+#if !defined(ARMSNES_DOT)
+	fetchMoreSprites();
+#endif
 	ppu.counter.hcounter = BALANCED_DRAW;
 }
 

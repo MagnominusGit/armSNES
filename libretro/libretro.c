@@ -669,6 +669,35 @@ static bool showOptions(void) {
 	return true;
 }
 
+// Loads of two files: a Sufami Turbo's two cartridges, a cartridge with a memory pack in its slot,
+// and a Super Game Boy cartridge with a Game Boy game. Each file's save memory is kept beside it.
+enum { SUBSYSTEM_SUFAMI = 0x101, SUBSYSTEM_PACK, SUBSYSTEM_GAME_BOY };
+enum { MEMORY_SUFAMI_A = 0x101, MEMORY_SUFAMI_B, MEMORY_CARTRIDGE, MEMORY_GAME_BOY };
+
+static const struct retro_subsystem_memory_info sufamiAMemory[] = { { "srm", MEMORY_SUFAMI_A } };
+static const struct retro_subsystem_memory_info sufamiBMemory[] = { { "srm", MEMORY_SUFAMI_B } };
+static const struct retro_subsystem_memory_info cartridgeMemory[] = { { "srm", MEMORY_CARTRIDGE } };
+static const struct retro_subsystem_memory_info gameBoyMemory[] = { { "srm", MEMORY_GAME_BOY } };
+
+static const struct retro_subsystem_rom_info sufamiRoms[] = {
+	{ "Slot A", "st", false, false, true, sufamiAMemory, 1 },
+	{ "Slot B", "st", false, false, false, sufamiBMemory, 1 },
+};
+static const struct retro_subsystem_rom_info packRoms[] = {
+	{ "Cartridge", "sfc|smc", false, false, true, cartridgeMemory, 1 },
+	{ "Memory Pack", "bs", false, false, true, NULL, 0 },
+};
+static const struct retro_subsystem_rom_info gameBoyRoms[] = {
+	{ "Super Game Boy", "sfc|smc", false, false, true, NULL, 0 },
+	{ "Game Boy", "gb|gbc", false, false, true, gameBoyMemory, 1 },
+};
+static const struct retro_subsystem_info subsystems[] = {
+	{ "Sufami Turbo", "sufami", sufamiRoms, 2, SUBSYSTEM_SUFAMI },
+	{ "Cartridge with Memory Pack", "pack", packRoms, 2, SUBSYSTEM_PACK },
+	{ "Super Game Boy", "sgb", gameBoyRoms, 2, SUBSYSTEM_GAME_BOY },
+	{ NULL, NULL, NULL, 0, 0 },
+};
+
 enum { TURBO_FEWEST = 2, TURBO_MOST = 60 };
 
 void retro_set_environment(retro_environment_t callback) {
@@ -720,6 +749,7 @@ void retro_set_environment(retro_environment_t callback) {
 		{ NULL, 0 },
 	};
 	callback(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void*) ports);
+	callback(RETRO_ENVIRONMENT_SET_SUBSYSTEM_INFO, (void*) subsystems);
 	optionsGive(callback, &options);
 	static struct retro_core_options_update_display_callback update = { showOptions };
 	callback(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK, &update);
@@ -1079,6 +1109,60 @@ static void setMemoryMaps(void) {
 	environment(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
 }
 
+// What every load ends with, once the cartridge and what is in its slots are in.
+static bool loadFinish(const char* gamePath) {
+	// The MSU-1's files sit beside the game: game.msu, game-1.pcm and on.
+	if (gamePath) {
+		char path[4096];
+		snprintf(path, sizeof(path), "%s", gamePath);
+		char* dot = strrchr(path, '.');
+		if (dot) {
+			*dot = 0;
+		}
+		cartLoadMsu1(path);
+	}
+
+	static const struct retro_input_descriptor descriptors[] = {
+#define PAD(port) \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "D-Pad Left" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "D-Pad Up" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "D-Pad Down" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "D-Pad Right" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B, "B" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "A" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X, "X" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Y" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "L" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "R" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Select" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Start" }
+		PAD(0),
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, "Fast-Forward" },
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Fast-Forward" },
+		PAD(1),
+		PAD(2),
+		PAD(3),
+		PAD(4),
+#undef PAD
+		{ 0, 0, 0, 0, NULL },
+	};
+	environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void*) descriptors);
+
+	readOptions();
+	systemLoad(regionPal());
+	systemPower(false);
+	setMemoryMaps();
+	if (rtcPresent()) {
+		rtcSave(rtcMemory, (s64) time(NULL));
+		memcpy(rtcStart, rtcMemory, sizeof(rtcStart));
+	}
+	rtcApplied = false;
+	shown = NULL;
+	loaded = true;
+	showOptions();
+	return true;
+}
+
 bool retro_load_game(const struct retro_game_info* info) {
 	netplaySeen = false;
 	if (!info || !info->data) {
@@ -1148,63 +1232,86 @@ bool retro_load_game(const struct retro_game_info* info) {
 		free(boot);
 		free(gb);
 	}
-	// The MSU-1's files sit beside the game: game.msu, game-1.pcm and on.
-	if (info->path) {
-		char path[4096];
-		snprintf(path, sizeof(path), "%s", info->path);
-		char* dot = strrchr(path, '.');
-		if (dot) {
-			*dot = 0;
-		}
-		cartLoadMsu1(path);
-	}
+	return loadFinish(info->path);
+}
 
-	static const struct retro_input_descriptor descriptors[] = {
-#define PAD(port) \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "D-Pad Left" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "D-Pad Up" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "D-Pad Down" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "D-Pad Right" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B, "B" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "A" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X, "X" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Y" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "L" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "R" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Select" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Start" }
-		PAD(0),
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, "Fast-Forward" },
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Fast-Forward" },
-		PAD(1),
-		PAD(2),
-		PAD(3),
-		PAD(4),
-#undef PAD
-		{ 0, 0, 0, 0, NULL },
-	};
-	environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void*) descriptors);
-
-	readOptions();
-	systemLoad(regionPal());
-	systemPower(false);
-	setMemoryMaps();
-	if (rtcPresent()) {
-		rtcSave(rtcMemory, (s64) time(NULL));
-		memcpy(rtcStart, rtcMemory, sizeof(rtcStart));
+// A whole file the frontend gave, copied.
+static u8* copyOf(const struct retro_game_info* info, size_t* size) {
+	*size = info->size;
+	u8* data = malloc(info->size ? info->size : 1);
+	if (data) {
+		memcpy(data, info->data, info->size);
 	}
-	rtcApplied = false;
-	shown = NULL;
-	loaded = true;
-	showOptions();
-	return true;
+	return data;
 }
 
 bool retro_load_game_special(unsigned type, const struct retro_game_info* info, size_t count) {
-	(void) type;
-	(void) info;
-	(void) count;
-	return false;
+	netplaySeen = false;
+	if (!info || !count || !info[0].data) {
+		return false;
+	}
+	enum retro_pixel_format format = RETRO_PIXEL_FORMAT_RGB565;
+	if (!environment(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format)) {
+		return false;
+	}
+	free(game);
+	game = NULL;
+	size_t size = 0;
+	bool second = count > 1 && info[1].data && info[1].size;
+	switch (type) {
+	case SUBSYSTEM_SUFAMI:
+		game = systemFile("STBIOS.bin", &size);
+		if (!game) {
+			loadError("This game needs STBIOS.bin in the system folder");
+			return false;
+		}
+		if (!cartLoad(game, size) || !cartInsertSufami(0, info[0].data, info[0].size) ||
+		    (second && !cartInsertSufami(1, info[1].data, info[1].size))) {
+			loadError("These Sufami Turbo cartridges couldn't be loaded");
+			free(game);
+			game = NULL;
+			return false;
+		}
+		break;
+	case SUBSYSTEM_PACK:
+		game = copyOf(&info[0], &size);
+		if (!game || !cartLoad(game, size) || !cart.bsSlot) {
+			loadError("This cartridge has no memory pack slot");
+			free(game);
+			game = NULL;
+			return false;
+		}
+		if (second && !cartInsertPack(info[1].data, info[1].size)) {
+			loadError("This memory pack couldn't be loaded");
+			free(game);
+			game = NULL;
+			return false;
+		}
+		break;
+	case SUBSYSTEM_GAME_BOY: {
+		game = copyOf(&info[0], &size);
+		if (!game || !cartLoad(game, size) || !cart.icd) {
+			loadError("This isn't a Super Game Boy cartridge");
+			free(game);
+			game = NULL;
+			return false;
+		}
+		size_t bootSize = 0;
+		u8* boot = systemFile("sgb1.boot.rom", &bootSize);
+		bool inserted = boot && bootSize == 256 && second && cartInsertGameBoy(info[1].data, info[1].size, boot, bootSize);
+		free(boot);
+		if (!inserted) {
+			loadError(second ? "A Game Boy game needs sgb1.boot.rom in the system folder" : "Choose a Game Boy game too");
+			free(game);
+			game = NULL;
+			return false;
+		}
+		break;
+	}
+	default:
+		return false;
+	}
+	return loadFinish(info[0].path);
 }
 
 void retro_unload_game(void) {
@@ -1230,6 +1337,14 @@ void* retro_get_memory_data(unsigned id) {
 		return cpu.wram;
 	case RETRO_MEMORY_RTC:
 		return rtcPresent() ? rtcMemory : NULL;
+	case MEMORY_SUFAMI_A:
+	case MEMORY_SUFAMI_B: {
+		u32 size = 0;
+		return cart.sufami ? sufamiRam(id - MEMORY_SUFAMI_A, &size) : NULL;
+	}
+	case MEMORY_CARTRIDGE:
+	case MEMORY_GAME_BOY:
+		return cart.saveRam;
 	}
 	return NULL;
 }
@@ -1242,6 +1357,14 @@ size_t retro_get_memory_size(unsigned id) {
 		return sizeof(cpu.wram);
 	case RETRO_MEMORY_RTC:
 		return rtcPresent() ? sizeof(rtcMemory) : 0;
+	case MEMORY_SUFAMI_A:
+	case MEMORY_SUFAMI_B: {
+		u32 size = 0;
+		return cart.sufami && sufamiRam(id - MEMORY_SUFAMI_A, &size) ? size : 0;
+	}
+	case MEMORY_CARTRIDGE:
+	case MEMORY_GAME_BOY:
+		return cart.saveRamSize;
 	}
 	return 0;
 }

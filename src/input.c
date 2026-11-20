@@ -5,12 +5,13 @@
  * Ported from ares (ISC); see LICENSES/ISC-ares.txt. */
 #include "snes.h"
 
-// The two controller ports. Each takes a standard pad, a rumble pad, a mouse, a Super Multitap with
+// The two controller ports. Each takes a standard pad, a mouse, a Super Multitap with
 // four pads, an NTT Data Keypad or a Twin Tap; the second also a Super Scope or one or two
 // Justifiers, whose light is taken from where the beam is, as ares takes it.
 
 struct Input input;
 u8 inputDevice[2] = { DEVICE_PAD, DEVICE_PAD };
+bool inputRumbleOn;
 bool inputGuns;
 
 static bool isGun(int device) {
@@ -156,8 +157,7 @@ static u8 twinTapData(int port) {
 	return 1;
 }
 
-// --- The rumble pad: a homebrew pad that takes its motors' strengths through the port's pin, sent
-// after the byte 0x72 ---
+// --- Rumble: homebrew sends a pad its motors' strengths through the port's pin, after the byte 0x72 ---
 
 static u8 rumblePadData(int port) {
 	input.rumble[port] = (u16) (input.rumble[port] << 1 | ioBit(port));
@@ -412,8 +412,7 @@ static u8 multitapData(int port) {
 // The pad a port's own pad is for the frontend: 0, and 1 on the second port.
 u8 controllerData(int port) {
 	switch (inputDevice[port]) {
-	case DEVICE_PAD: return padData(&input.pad[port], port);
-	case DEVICE_RUMBLE_PAD: return rumblePadData(port);
+	case DEVICE_PAD: return inputRumbleOn ? rumblePadData(port) : padData(&input.pad[port], port);
 	case DEVICE_KEYPAD: return keypadData(port);
 	case DEVICE_TWIN_TAP: return twinTapData(port);
 	case DEVICE_MOUSE: return mouseData(&input.mouse[port]);
@@ -429,7 +428,6 @@ u8 controllerData(int port) {
 void controllerLatch(int port, bool data) {
 	switch (inputDevice[port]) {
 	case DEVICE_PAD:
-	case DEVICE_RUMBLE_PAD:
 	case DEVICE_TWIN_TAP:
 		padLatch(&input.pad[port], port, data);
 		break;

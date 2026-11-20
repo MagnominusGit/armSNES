@@ -467,7 +467,6 @@ static struct retro_rumble_interface rumble;
 
 enum {
 	DEVICE_LR_MULTITAP = RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 0),
-	DEVICE_LR_RUMBLE_PAD = RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1),
 	DEVICE_LR_KEYPAD = RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 2),
 	DEVICE_LR_TWIN_TAP = RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 3),
 	DEVICE_LR_SUPER_SCOPE = RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_LIGHTGUN, 0),
@@ -547,7 +546,8 @@ static void checkNetplay(void) {
 	netplaySeen |= environment(RETRO_ENVIRONMENT_GET_SAVESTATE_CONTEXT, &context) && context == RETRO_SAVESTATE_CONTEXT_ROLLBACK_NETPLAY;
 }
 
-// L2 or R2 held on the first pad fast-forwards at the frontend's top speed, outside netplay.
+// R2 held on the first pad fast-forwards at the frontend's top speed, outside netplay, and L2 too
+// unless it aims.
 static bool fastForwardHeld;
 
 static void setFastForward(bool on) {
@@ -663,10 +663,20 @@ struct Area {
 };
 static struct Area shownArea(void);
 
-// Each gun's crosshair, in 256ths of a pixel, and a touch's place, which the first gun aims at for a
-// moment after, while the game looks for the light.
+// Each gun's crosshair, in 256ths of a pixel, where the stick last pointed it, and a touch's place,
+// which the first gun aims at for a moment after, while the game looks for the light.
 static int crossX[2] = { 128 << 8, 128 << 8 }, crossY[2] = { 112 << 8, 112 << 8 };
+static int stickX[2] = { -1, -1 }, stickY[2];
 static int touchX, touchY, touchFrames;
+
+// Fine aim: the crosshair's speed in 256ths, from all of it down to a quarter as L2 is pulled.
+static int fineAim(unsigned player) {
+	int pull = inputState(player, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_BUTTON, RETRO_DEVICE_ID_JOYPAD_L2);
+	if (!pull && padHeld(player, RETRO_DEVICE_ID_JOYPAD_L2)) {
+		pull = 0x7fff;
+	}
+	return 256 - pull * 192 / 0x7fff;
+}
 
 // Where a gun aims and what it presses. The first gun takes the first two players' pads, mice and
 // light guns; the second Justifier the third's.
@@ -689,7 +699,8 @@ static void aimGun(int gun) {
 		crossX[gun] = left + (x + 0x8000) * area.width / 0x10000 * 256;
 		crossY[gun] = top + (y + 0x8000) * area.height / 0x10000 * 256;
 	} else {
-		int speed = aimSpeed;
+		int fine = fineAim(players[0]), speed = aimSpeed * fine / 256;
+		int pointX = -1, pointY = 0;
 		for (int n = 0; n < 2; ++n) {
 			unsigned player = players[n];
 			if (n && player == players[0]) {
@@ -722,24 +733,35 @@ static void aimGun(int gun) {
 				// The stick points the crosshair, from the first pad whose stick is off the middle.
 				x = x + mx < -0x7fff ? -0x7fff : x + mx > 0x7fff ? 0x7fff : x + mx;
 				y = y + my < -0x7fff ? -0x7fff : y + my > 0x7fff ? 0x7fff : y + my;
-				if (n && !x && !y) {
-					continue;
+				if (!n || x || y) {
+					pointX = left + (x + 0x8000) * area.width / 0x10000 * 256;
+					pointY = top + (y + 0x8000) * area.height / 0x10000 * 256;
 				}
-				crossX[gun] = left + (x + 0x8000) * area.width / 0x10000 * 256;
-				crossY[gun] = top + (y + 0x8000) * area.height / 0x10000 * 256;
 			} else {
 				// Up to 12 pixels a frame at 100%, and the motion's change since the last frame.
 				crossX[gun] += panStep(x, speed);
 				crossY[gun] += panStep(y, speed);
 				if (!gun && !n) {
-					crossX[gun] += (int) ((s64) (mx - motionLastX) * (right - left) / 0xffff);
-					crossY[gun] += (int) ((s64) (my - motionLastY) * (bottom - top) / 0xffff);
+					crossX[gun] += (int) ((s64) (mx - motionLastX) * (right - left) / 0xffff * fine / 256);
+					crossY[gun] += (int) ((s64) (my - motionLastY) * (bottom - top) / 0xffff * fine / 256);
 				}
 			}
 			if (!gun && !n) {
 				motionLastX = mx;
 				motionLastY = my;
 			}
+		}
+		// With fine aim, the stick's moves count for less from where the crosshair is.
+		if (pointX >= 0) {
+			if (fine < 256 && stickX[gun] >= 0) {
+				crossX[gun] += (pointX - stickX[gun]) * fine / 256;
+				crossY[gun] += (pointY - stickY[gun]) * fine / 256;
+			} else {
+				crossX[gun] = pointX;
+				crossY[gun] = pointY;
+			}
+			stickX[gun] = pointX;
+			stickY[gun] = pointY;
 		}
 		if (gunAim != AIM_MOUSE && padHeld(players[0], RETRO_DEVICE_ID_JOYPAD_R3)) {
 			crossX[gun] = (left + right) / 2;
@@ -787,16 +809,17 @@ static void moveMouse(int port) {
 	int sx = rightStick(player, RETRO_DEVICE_ID_ANALOG_X), sy = rightStick(player, RETRO_DEVICE_ID_ANALOG_Y);
 	sx = stickInvert & 1 ? -sx : sx;
 	sy = stickInvert & 2 ? -sy : sy;
-	mouseSub[port][0] += panStep(sx, aimSpeed);
-	mouseSub[port][1] += panStep(sy, aimSpeed);
+	int speed = aimSpeed * fineAim(player) / 256;
+	mouseSub[port][0] += panStep(sx, speed);
+	mouseSub[port][1] += panStep(sy, speed);
 	if (port == 0 || inputDevice[0] != DEVICE_MOUSE) {
 		struct Area area = shownArea();
 		bool pressed = inputState(0, RETRO_DEVICE_POINTER, 0, RETRO_DEVICE_ID_POINTER_PRESSED);
 		int tx = inputState(0, RETRO_DEVICE_POINTER, 0, RETRO_DEVICE_ID_POINTER_X);
 		int ty = inputState(0, RETRO_DEVICE_POINTER, 0, RETRO_DEVICE_ID_POINTER_Y);
 		if (pressed && touchHeld) {
-			int dx = (tx - touchLastX) * area.width / 0x100 * aimSpeed / 100;
-			int dy = (ty - touchLastY) * area.height / 0x100 * aimSpeed / 100;
+			int dx = (tx - touchLastX) * area.width / 0x100 * speed / 100;
+			int dy = (ty - touchLastY) * area.height / 0x100 * speed / 100;
 			mouseSub[port][0] += dx;
 			mouseSub[port][1] += dy;
 			touchMoved += abs(dx) + abs(dy);
@@ -824,10 +847,15 @@ static void moveMouse(int port) {
 	mouseRight[port] = right;
 }
 
+// A gun or a mouse is plugged in: then L2 aims finer, and only R2 fast-forwards.
+static bool aiming(void) {
+	return inputGuns || inputDevice[0] == DEVICE_MOUSE || inputDevice[1] == DEVICE_MOUSE;
+}
+
 static void readPads(void) {
 	inputPollFrontend();
 	numberPlayers();
-	bool fastForward = !netplaySeen && (padHeld(0, RETRO_DEVICE_ID_JOYPAD_L2) || padHeld(0, RETRO_DEVICE_ID_JOYPAD_R2));
+	bool fastForward = !netplaySeen && (padHeld(0, RETRO_DEVICE_ID_JOYPAD_R2) || (!aiming() && padHeld(0, RETRO_DEVICE_ID_JOYPAD_L2)));
 	if (fastForward != fastForwardHeld) {
 		setFastForward(fastForward);
 	}
@@ -998,6 +1026,9 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		NULL, "input", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_left_stick_dpad", "Left Stick as D-Pad", NULL, "The left stick presses the D-pad too.",
 		NULL, "input", { { "On", NULL }, { "Off", NULL }, { NULL, NULL } }, "On" },
+	{ "armsnes_rumble", "Rumble", NULL,
+		"The pads' rumble, for homebrew that sends it: no Super Nintendo pad had any.",
+		NULL, "input", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_gun_aim", "Light Gun Aim", "Aim",
 		"Right stick: the stick moves the crosshair, or points it where the stick points; R fires, L is the "
 		"Super Scope's Cursor button or the Justifier's shot off the screen, Select the Super Scope's Turbo "
@@ -1010,7 +1041,8 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"A cross where the Super Scope or Justifier points.",
 		NULL, "aim", { { "On", NULL }, { "Off", NULL }, { NULL, NULL } }, "On" },
 	{ "armsnes_aim_sensitivity", "Aim Sensitivity", "Sensitivity",
-		"How fast the stick, the mouse and touch drags move the crosshair or the SNES Mouse.",
+		"How fast the stick, the mouse and touch drags move the crosshair or the SNES Mouse. Holding L2 aims "
+		"finer the further it's pulled.",
 		NULL, "aim", { { "25%", NULL }, { "50%", NULL }, { "75%", NULL }, { "100%", NULL }, { "150%", NULL },
 		{ "200%", NULL }, { "300%", NULL }, { NULL, NULL } }, "100%" },
 	{ "armsnes_stick_invert", "Aim Stick Invert", "Stick Invert",
@@ -1044,7 +1076,7 @@ static struct retro_core_option_v2_category categories[] = {
 	{ "system", "System", "The core's mode, threads and frame skip, the console's region, its memory at power-on and its chips' speeds." },
 	{ "video", "Video", "The picture's shape, edges and colors." },
 	{ "audio", "Audio", "The sound chip's interpolation and each voice's volume, and the cartridge's own sound." },
-	{ "input", "Input", "Turbo and the D-pad." },
+	{ "input", "Input", "Turbo, the D-pad and rumble." },
 	{ "aim", "Light Guns and Mouse",
 		"How the Super Scope and Justifiers aim, and the SNES Mouse's speed. The mouse moves with the mouse, "
 		"the right stick (R and L for its buttons) or a drag on the touchscreen, where a tap clicks. Shown "
@@ -1147,7 +1179,6 @@ void retro_set_environment(retro_environment_t callback) {
 		{ "SNES Controller", RETRO_DEVICE_JOYPAD },
 		{ "SNES Mouse", RETRO_DEVICE_MOUSE },
 		{ "Super Multitap", DEVICE_LR_MULTITAP },
-		{ "Rumble Pad", DEVICE_LR_RUMBLE_PAD },
 		{ "NTT Data Keypad", DEVICE_LR_KEYPAD },
 		{ "Twin Tap", DEVICE_LR_TWIN_TAP },
 		{ "None", RETRO_DEVICE_NONE },
@@ -1162,8 +1193,8 @@ void retro_set_environment(retro_environment_t callback) {
 	};
 	// The first port takes all but the guns.
 	static const struct retro_controller_info ports[] = {
-		{ second, 7 },
-		{ second, 10 },
+		{ second, 6 },
+		{ second, 9 },
 		{ more, 2 },
 		{ more, 1 },
 		{ more, 1 },
@@ -1303,6 +1334,31 @@ void retro_get_system_av_info(struct retro_system_av_info* info) {
 	info->timing.sample_rate = sys.apuFrequency / 768.0;
 }
 
+// The pads' buttons, and L2 as fast-forward or, with a gun or a mouse plugged in, fine aim.
+static void giveDescriptors(void) {
+#define PAD(port) \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "D-Pad Left" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "D-Pad Up" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "D-Pad Down" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "D-Pad Right" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B, "B" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "A" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X, "X" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Y" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "L" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "R" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Select" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Start" }
+#define LIST(l2) \
+	{ PAD(0), { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, l2 }, \
+	  { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Fast-Forward" }, \
+	  PAD(1), PAD(2), PAD(3), PAD(4), PAD(5), PAD(6), PAD(7), { 0, 0, 0, 0, NULL } }
+	static const struct retro_input_descriptor plain[] = LIST("Fast-Forward"), aimed[] = LIST("Fine Aim");
+#undef LIST
+#undef PAD
+	environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void*) (aiming() ? aimed : plain));
+}
+
 void retro_set_controller_port_device(unsigned port, unsigned device) {
 	if (port > 1) {
 		return;
@@ -1311,13 +1367,15 @@ void retro_set_controller_port_device(unsigned port, unsigned device) {
 	case RETRO_DEVICE_NONE: inputSetDevice(port, DEVICE_NONE); break;
 	case RETRO_DEVICE_MOUSE: inputSetDevice(port, DEVICE_MOUSE); break;
 	case DEVICE_LR_MULTITAP: inputSetDevice(port, DEVICE_MULTITAP); break;
-	case DEVICE_LR_RUMBLE_PAD: inputSetDevice(port, DEVICE_RUMBLE_PAD); break;
 	case DEVICE_LR_KEYPAD: inputSetDevice(port, DEVICE_KEYPAD); break;
 	case DEVICE_LR_TWIN_TAP: inputSetDevice(port, DEVICE_TWIN_TAP); break;
 	case DEVICE_LR_SUPER_SCOPE: inputSetDevice(port, DEVICE_SUPER_SCOPE); break;
 	case DEVICE_LR_JUSTIFIER: inputSetDevice(port, DEVICE_JUSTIFIER); break;
 	case DEVICE_LR_JUSTIFIERS: inputSetDevice(port, DEVICE_JUSTIFIERS); break;
 	default: inputSetDevice(port, DEVICE_PAD); break;
+	}
+	if (loaded) {
+		giveDescriptors();
 	}
 	showOptions();
 }
@@ -1596,6 +1654,12 @@ static void readOptions(void) {
 	dspListenUpdate();
 	allowOpposing = optionIs(environment, "armsnes_opposing", "On");
 	leftStickDpad = !optionIs(environment, "armsnes_left_stick_dpad", "Off");
+	bool rumbleOn = optionIs(environment, "armsnes_rumble", "On");
+	if (inputRumbleOn && !rumbleOn) {
+		inputRumble(0, 0, 0);
+		inputRumble(1, 0, 0);
+	}
+	inputRumbleOn = rumbleOn;
 	static const struct OptionChoice aims[] = {
 		{ "Right stick (absolute)", AIM_STICK }, { "Light gun", AIM_LIGHT_GUN }, { "Mouse", AIM_MOUSE } };
 	gunAim = optionChoice(environment, "armsnes_gun_aim", aims, 3, AIM_STICK_PAN);
@@ -1650,34 +1714,7 @@ static bool loadFinish(const char* gamePath) {
 		cartLoadMsu1(path);
 	}
 
-	static const struct retro_input_descriptor descriptors[] = {
-#define PAD(port) \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "D-Pad Left" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "D-Pad Up" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "D-Pad Down" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "D-Pad Right" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B, "B" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "A" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X, "X" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Y" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "L" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "R" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Select" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Start" }
-		PAD(0),
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, "Fast-Forward" },
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Fast-Forward" },
-		PAD(1),
-		PAD(2),
-		PAD(3),
-		PAD(4),
-		PAD(5),
-		PAD(6),
-		PAD(7),
-#undef PAD
-		{ 0, 0, 0, 0, NULL },
-	};
-	environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void*) descriptors);
+	giveDescriptors();
 	if (!environment(RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE, &rumble)) {
 		rumble.set_rumble_state = NULL;
 	}
@@ -1856,10 +1893,9 @@ void retro_unload_game(void) {
 		setFastForward(false);
 	}
 	useSensor(SENSOR_OFF);
-	for (int port = 0; port < 2; ++port) {
-		if (inputDevice[port] == DEVICE_RUMBLE_PAD) {
-			inputRumble(port, 0, 0);
-		}
+	if (inputRumbleOn) {
+		inputRumble(0, 0, 0);
+		inputRumble(1, 0, 0);
 	}
 	stopThreads();
 	packKeep();

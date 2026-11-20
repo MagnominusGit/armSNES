@@ -589,7 +589,7 @@ struct Input {
 	// A Super Multitap's other three pads in the first port.
 	struct Pad firstTap[3];
 	bool firstTapLatched;
-	// Each port's NTT Data Keypad keys, and what a rumble pad has been sent.
+	// Each port's NTT Data Keypad keys, and what a pad has been sent for its rumble.
 	u16 keys[2];
 	u16 rumble[2];
 };
@@ -597,7 +597,7 @@ extern struct Input input;
 
 enum {
 	DEVICE_NONE, DEVICE_PAD, DEVICE_MOUSE, DEVICE_MULTITAP, DEVICE_SUPER_SCOPE, DEVICE_JUSTIFIER, DEVICE_JUSTIFIERS,
-	DEVICE_RUMBLE_PAD, DEVICE_KEYPAD, DEVICE_TWIN_TAP,
+	DEVICE_KEYPAD, DEVICE_TWIN_TAP,
 };
 // The NTT Data Keypad's keys past the pad's, one bit each from 0 to 9; Back and Next are Select's and
 // Start's.
@@ -606,6 +606,8 @@ enum { KEY_STAR = 10, KEY_POUND, KEY_POINT, KEY_CLEAR, KEY_END = 15 };
 // A gun's buttons; the Justifier's Start is its pause.
 enum { GUN_TRIGGER, GUN_CURSOR, GUN_TURBO, GUN_PAUSE };
 extern u8 inputDevice[2];
+// The pads take the homebrew rumble protocol.
+extern bool inputRumbleOn;
 // A gun is in the second port.
 extern bool inputGuns;
 
@@ -621,7 +623,7 @@ void inputBeam(u32 vcounter, u32 hcounter);
 u16 inputPoll(int pad);
 // The keys held on a port's NTT Data Keypad, by the numbers above.
 u16 inputPollKeys(int port);
-// A rumble pad's motors, 0 to 15 each.
+// A pad's rumble motors, 0 to 15 each.
 void inputRumble(int port, u8 strong, u8 weak);
 // How far a port's mouse moved since it was last asked, and its buttons.
 void inputPollMouse(int port, int* x, int* y, bool* left, bool* right);

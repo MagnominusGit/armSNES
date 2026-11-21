@@ -1,0 +1,69 @@
+# For each release: the standalone app's AppImages and APK, built by Armulators' workflow, and the
+# libretro core for x86-64 and 64-bit ARM Linux.
+name: release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  app:
+    uses: MagnominusGit/Armulators/.github/workflows/app.yml@main
+    with:
+      release: ${{ github.event.release.tag_name }}
+    secrets:
+      keystore: ${{ secrets.APK_KEYSTORE }}
+
+  # Built on Debian 11, as the AppImages are, so the cores run on glibc 2.31 and later.
+  cores:
+    runs-on: ubuntu-24.04
+    container: debian:bullseye
+    steps:
+      - run: |
+          printf 'deb http://archive.debian.org/debian bullseye main\ndeb http://archive.debian.org/debian-security bullseye-security main\n' > /etc/apt/sources.list
+          dpkg --add-architecture arm64
+          apt-get -o Acquire::Check-Valid-Until=false update
+          apt-get install -y --no-install-recommends build-essential cmake git ca-certificates zip \
+            zlib1g-dev crossbuild-essential-arm64 zlib1g-dev:arm64
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - env:
+          TAG: ${{ github.event.release.tag_name }}
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$PWD"
+          version=${TAG#v}
+          version=${version:-$(git rev-parse --short HEAD)}
+          mkdir files
+          for arch in x86_64 aarch64; do
+            toolchain=
+            [ $arch = aarch64 ] && toolchain=-DCMAKE_TOOLCHAIN_FILE=$PWD/armulators/package/appimage/aarch64.cmake
+            cmake -S . -B build-$arch $toolchain -DCMAKE_BUILD_TYPE=Release
+            cmake --build build-$arch -j"$(nproc)" --target armsnes_libretro
+            for core in armsnes; do
+              strip -s build-$arch/${core}_libretro.so 2>/dev/null || aarch64-linux-gnu-strip -s build-$arch/${core}_libretro.so
+              zip -j files/${core}_libretro-$version-$arch.zip build-$arch/${core}_libretro.so libretro/${core}_libretro.info
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cores
+          path: files/*.zip
+
+  release-cores:
+    if: github.event.release.tag_name != ''
+    needs: cores
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: cores
+          path: files
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" files/* --clobber --repo "${{ github.repository }}"

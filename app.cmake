@@ -7,7 +7,7 @@ set(APP_ACCENT Purple)
 set(APP_JAVA_PACKAGE org.armsnes.app)
 set(APP_JAVA_CLASS Armsnes)
 # Its version, and how it's built: the CMake option that turns it on, and its target.
-set(APP_VERSION 0.1a)
+set(APP_VERSION 1.0)
 set(APP_BUILD_OPTION ARMSNES_APP)
 set(APP_BUILD_TARGET armsnes-app)
 # For the desktop: what it is, and the files it opens.

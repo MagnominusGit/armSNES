@@ -1,7 +1,7 @@
 # armSNES
 
 A Super Nintendo and Super Famicom libretro core, with its own standalone app, for ARM and x86
-handhelds. It is a port of [ares](https://github.com/ares-emulator/ares) to C, and still an alpha.
+handhelds. It is a port of [ares](https://github.com/ares-emulator/ares) to C.
 
 It has three modes, set with the Mode option. Exact gives the same picture and sound as ares's most
 accurate renderer, frame for frame and sample for sample. Balanced keeps nearly all of that at much

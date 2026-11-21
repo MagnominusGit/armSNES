@@ -84,7 +84,7 @@ with Layer Selection or Channel Selection on.
 | | Hi-Res Blending | Off, On, Merge |
 | | NTSC/PAL Filter | Off, Composite, S-Video |
 | | Scanlines (with the filter) | Off, Light, Medium, Dark |
-| | HD Mode 7 (Fast and Balanced, without the filter) | Off, 2x, 3x, 4x |
+| | HD Mode 7 (Fast and Balanced, without the filter) | Off, 2x to 8x |
 | | Widescreen (Fast and Balanced) | Off, 16:10, 16:9, 2:1, 21:9 |
 | | Widescreen Layers | Mode 7 only, All |
 | | Widescreen Sprites | Hidden, Shown |
@@ -115,7 +115,7 @@ with Layer Selection or Channel Selection on.
 Widescreen adds columns on each side, drawn from the game's own layers past the console's 256: by
 default only on Mode 7 lines, the others keeping black sides, or on every line for games patched for
 widescreen. A background one screen wide that isn't scrolled, usually the status bar, stays in the
-middle. HD Mode 7 draws Mode 7 lines at two to four times the resolution; Balanced draws them with
+middle. HD Mode 7 draws Mode 7 lines at two to eight times the resolution; Balanced draws them with
 Fast's renderer, from each line's registers as it starts.
 
 The NTSC/PAL Filter is armNES's: the picture as a TV decoded the console's composite or S-Video

@@ -214,7 +214,7 @@ static int hiresBlend;
 // HD mode 7 and widescreen (Fast and Balanced modes): a frame with mode 7 lines is given hdScale times larger each
 // way, those lines drawn finer (fastPpuSetHdSink) and the others' pixels made larger; a widescreen
 // frame is given with its columns more each side. Two pictures, as with outputs.
-enum { WIDE_COLUMNS = 256 + 2 * FAST_PPU_WIDE_MOST, HD_WIDTH = WIDE_COLUMNS * 4, HD_HEIGHT = 239 * 4 };
+enum { WIDE_COLUMNS = 256 + 2 * FAST_PPU_WIDE_MOST, HD_WIDTH = WIDE_COLUMNS * 8, HD_HEIGHT = 239 * 8 };
 static u16 hdOutputs[2][HD_WIDTH * HD_HEIGHT];
 static u32 hdRowStamp[CANVAS_HEIGHT];
 static u8 hdRowScale[CANVAS_HEIGHT];
@@ -1157,10 +1157,11 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"or a smooth filter in the frontend.",
 		NULL, "video", { { "Off", NULL }, { "Light", NULL }, { "Medium", NULL }, { "Dark", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_hd_mode7", "HD Mode 7", NULL,
-		"Mode 7's rotated and scaled layer drawn 2 to 4 times finer each way, the rest of the picture as it "
+		"Mode 7's rotated and scaled layer drawn 2 to 8 times finer each way, the rest of the picture as it "
 		"is. Each step takes much more time. Fast and Balanced modes (Balanced draws mode 7 lines with Fast "
 		"mode's renderer, from each line's registers as it starts).",
-		NULL, "video", { { "Off", NULL }, { "2x", NULL }, { "3x", NULL }, { "4x", NULL }, { NULL, NULL } }, "Off" },
+		NULL, "video", { { "Off", NULL }, { "2x", NULL }, { "3x", NULL }, { "4x", NULL }, { "5x", NULL }, { "6x", NULL }, { "7x", NULL },
+		  { "8x", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_widescreen", "Widescreen", NULL,
 		"Columns added each side to fill a wider screen, of the ratio picked with the Aspect Ratio option's "
 		"pixel shape. The console draws 256: past them, a layer shows what the game left in video memory, "
@@ -1872,13 +1873,13 @@ static void readOptions(void) {
 		snprintf(layerKey, sizeof(layerKey), "armsnes_layer_%s", layerKeys[n]);
 		ppuHidden |= optionIs(environment, layerKey, "Hidden") << n;
 	}
-	static const struct OptionChoice hdScales[] = { { "2x", 2 }, { "3x", 3 }, { "4x", 4 } };
+	static const struct OptionChoice hdScales[] = { { "2x", 2 }, { "3x", 3 }, { "4x", 4 }, { "5x", 5 }, { "6x", 6 }, { "7x", 7 }, { "8x", 8 } };
 	unsigned largest = maxWidth() * maxHeight();
 	static const struct OptionChoice filters[] = { { "Composite", COMPOSITE }, { "S-Video", COMPOSITE_SVIDEO } };
 	filter = optionChoice(environment, "armsnes_filter", filters, 2, COMPOSITE_OFF);
 	static const struct OptionChoice darkness[] = { { "Light", 192 }, { "Medium", 128 }, { "Dark", 64 } };
 	scanlines = (u32) optionChoice(environment, "armsnes_scanlines", darkness, 3, 256);
-	hdScale = ppuHdScale = filter ? 0 : (u8) optionChoice(environment, "armsnes_hd_mode7", hdScales, 3, 0);
+	hdScale = ppuHdScale = filter ? 0 : (u8) optionChoice(environment, "armsnes_hd_mode7", hdScales, 7, 0);
 	// Widescreen: the columns each side that make the picture that wide, by the pixels' shape, rounded to
 	// 16.
 	static const struct OptionChoice ratios[] = { { "16:10", 1600 }, { "16:9", 1778 }, { "2:1", 2000 }, { "21:9", 2333 } };

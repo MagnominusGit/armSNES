@@ -51,7 +51,7 @@ struct FastPpuLine {
 	uint8_t screenMode;     // $2133
 	bool hiresFirstBlack;   // the first column's sub screen pixel is black
 
-	uint8_t hdScale;        // HD mode 7: 2 to 4 for a mode 7 line drawn that much finer, else 0
+	uint8_t hdScale;        // HD mode 7: 2 to 8 for a mode 7 line drawn that much finer, else 0
 	uint8_t wide;           // widescreen: columns added each side, a multiple of 16, or 0
 	bool wideLayers;        // the added columns drawn, else black
 	bool wideSprites;       // sprites drawn in them, else only in the console's 256

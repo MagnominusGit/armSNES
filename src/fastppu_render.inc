@@ -1459,7 +1459,7 @@ static void DrawWide(const FastPpuLine* l, uint32* row)
 
 // armSNES: HD mode 7 and widescreen, the line as fastPpuSetHdSink gives it: with HD, drawn again for
 // each point of a grid of scale by scale inside its pixels, scale rows of its columns * scale.
-static uint32 Block[4 * 4 * (256 + 2 * FAST_PPU_WIDE_MOST)];
+static uint32 Block[8 * 8 * (256 + 2 * FAST_PPU_WIDE_MOST)];
 
 const uint32* LineBlock(const FastPpuLine* l)
 {

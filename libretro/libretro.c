@@ -1583,12 +1583,18 @@ static void giveGeometry(const struct Shown* part) {
 	}
 }
 
+// The largest picture the frontend was told of while a game is loaded: it never shrinks, as a frontend
+// remaking its buffers for a smaller one may still copy the last, larger picture into them.
+static unsigned toldWidth, toldHeight;
+
 void retro_get_system_av_info(struct retro_system_av_info* info) {
 	memset(info, 0, sizeof(*info));
 	info->geometry.base_width = OUTPUT_WIDTH / 2;
 	info->geometry.base_height = sys.pal ? 239 : 224;
-	info->geometry.max_width = maxWidth();
-	info->geometry.max_height = maxHeight();
+	toldWidth = maxWidth() > toldWidth ? maxWidth() : toldWidth;
+	toldHeight = maxHeight() > toldHeight ? maxHeight() : toldHeight;
+	info->geometry.max_width = toldWidth;
+	info->geometry.max_height = toldHeight;
 	info->geometry.aspect_ratio = aspectOf(256, sys.pal ? 239 : 224);
 	given = info->geometry;
 	// A frame is 262 lines of 1364 clocks, less 4 clocks every other frame; PAL's is 312 lines.
@@ -1920,7 +1926,6 @@ static void readOptions(void) {
 		ppuHidden |= optionIs(environment, layerKey, "Hidden") << n;
 	}
 	static const struct OptionChoice hdScales[] = { { "2x", 2 }, { "3x", 3 }, { "4x", 4 }, { "5x", 5 }, { "6x", 6 }, { "7x", 7 }, { "8x", 8 } };
-	unsigned largest = maxWidth() * maxHeight();
 	static const struct OptionChoice filters[] = { { "Composite", COMPOSITE }, { "S-Video", COMPOSITE_SVIDEO } };
 	filter = optionChoice(environment, "armsnes_filter", filters, 2, COMPOSITE_OFF);
 	static const struct OptionChoice darkness[] = { { "Light", 192 }, { "Medium", 128 }, { "Dark", 64 } };
@@ -1945,7 +1950,7 @@ static void readOptions(void) {
 	ppuWide = (u8) ((columns - 256) / 2);
 	hdResize();
 	// A larger picture than the frontend was told of needs a new AV info.
-	if (loaded && maxWidth() * maxHeight() > largest) {
+	if (loaded && (maxWidth() > toldWidth || maxHeight() > toldHeight)) {
 		struct retro_system_av_info av;
 		retro_get_system_av_info(&av);
 		environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av);
@@ -2233,6 +2238,7 @@ void retro_unload_game(void) {
 	free(hdRetired);
 	hdPictures = hdRetired = NULL;
 	hdPitch = hdRows = 0;
+	toldWidth = toldHeight = 0;
 }
 
 unsigned retro_get_region(void) {

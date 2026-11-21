@@ -1185,6 +1185,41 @@ static INLINE void GetBGPrioWCMBits(uint32* bgprio, unsigned count)
  }
 }
 
+// The mode 7 layers drawn and mixed with the sprites.
+static INLINE void DrawMode7AndMix(void)
+{
+ if(MDFN_UNLIKELY(ScreenMode & 0x40))	// "EXTBG"
+ {
+  uint32 bgprio[2] = { 0x0040, 0x00800020 };
+
+  GetBGPrioWCMBits(bgprio, sizeof(bgprio) / sizeof(bgprio[0]));
+
+  if(CGWSEL & 1)
+   DrawMODE7<true, true>(scanline, bgprio[0], bgprio[1]);
+  else
+   DrawMODE7<true, false>(scanline, bgprio[0], bgprio[1]);
+  DoXMosaic(0, &linebuf.bg[0][8]);
+  DoWindow(0, &linebuf.bg[0][8]);
+  DoXMosaic(1, &linebuf.bg[1][8]);
+  DoWindow(1, &linebuf.bg[1][8]);
+  MixLayers<true, true, false, false>();
+ }
+ else
+ {
+  uint32 bgprio[1] = { 0x0040 };
+
+  GetBGPrioWCMBits(bgprio, sizeof(bgprio) / sizeof(bgprio[0]));
+
+  if(CGWSEL & 1)
+   DrawMODE7<false, true>(scanline, bgprio[0]);
+  else
+   DrawMODE7<false, false>(scanline, bgprio[0]);
+  DoXMosaic(0, &linebuf.bg[0][8]);
+  DoWindow(0, &linebuf.bg[0][8]);
+  MixLayers<true, false, false, false>();
+ }
+}
+
 static INLINE void DrawBGAndMixToMS(void)
 {
  if((BGMode & 0x7) == 1)
@@ -1266,38 +1301,7 @@ static INLINE void DrawBGAndMixToMS(void)
   MixLayers<true, true, false, false, true>();
  }
  else if((BGMode & 0x7) == 7)
- {
-  if(MDFN_UNLIKELY(ScreenMode & 0x40))	// "EXTBG"
-  {
-   uint32 bgprio[2] = { 0x0040, 0x00800020 };
-
-   GetBGPrioWCMBits(bgprio, sizeof(bgprio) / sizeof(bgprio[0]));
-
-   if(CGWSEL & 1)
-    DrawMODE7<true, true>(scanline, bgprio[0], bgprio[1]);
-   else
-    DrawMODE7<true, false>(scanline, bgprio[0], bgprio[1]);
-   DoXMosaic(0, &linebuf.bg[0][8]);
-   DoWindow(0, &linebuf.bg[0][8]);
-   DoXMosaic(1, &linebuf.bg[1][8]);
-   DoWindow(1, &linebuf.bg[1][8]);
-   MixLayers<true, true, false, false>();
-  }
-  else
-  {
-   uint32 bgprio[1] = { 0x0040 };
-
-   GetBGPrioWCMBits(bgprio, sizeof(bgprio) / sizeof(bgprio[0]));
-
-   if(CGWSEL & 1)
-    DrawMODE7<false, true>(scanline, bgprio[0]);
-   else
-    DrawMODE7<false, false>(scanline, bgprio[0]);
-   DoXMosaic(0, &linebuf.bg[0][8]);
-   DoWindow(0, &linebuf.bg[0][8]);
-   MixLayers<true, false, false, false>();
-  }
- }
+  DrawMode7AndMix();
 }
 
 // armSNES: the line's sprite tiles, as fetched by the S-PPU, laid out as DrawSprites lays out its own.
@@ -1425,12 +1429,27 @@ const uint32* Line(const FastPpuLine* l, bool direct)
  return out;
 }
 
+// armSNES: HD mode 7, the line Line last drew again with only its mode 7 layers sampled anew: the sprites,
+// windows and registers are as it left them.
+static const uint32* Mode7Again(const FastPpuLine* l)
+{
+ DrawMode7AndMix();
+ DoWindow<true>(5, linebuf.main);
+
+ if(ScreenMode & 0x08)
+  MixMainSub<true, false>(Direct);
+ else
+  MixMainSub<false, false>(Direct);
+
+ if(l->hiresFirstBlack && -XShift >= 0 && -XShift < 256)
+  Direct[2 * -XShift] = l->brightness;
+ return Direct;
+}
+
 // armSNES: widescreen, one row of a line with wide columns more each side, as hires pairs: drawn in
 // two passes from wide columns left of the console's first, the second overlapping the first by 16, so
 // mosaic blocks and offset-per-tile columns start where they do on the console. The columns between
 // match the line drawn on its own.
-static uint32 WideRow[2 * (256 + 2 * FAST_PPU_WIDE_MOST)];
-
 static void DrawWide(const FastPpuLine* l, uint32* row)
 {
  const int wide = l->wide;
@@ -1472,19 +1491,46 @@ const uint32* LineBlock(const FastPpuLine* l)
   return Block;
  }
 
- for(unsigned j = 0; j < n; j++)
+ // As DrawWide draws them: each pass drawn once by Line, where the first point is sampled, then only
+ // its mode 7 layers for the others. A pass is the shift, the first column taken and where it goes.
+ const int wide = l->wide;
+ struct { int shift; unsigned from, to, count; } passes[2] = { { 0, 0, (unsigned)wide, 256 }, { 0, 0, 0, 0 } };
+ unsigned count = 1;
+
+ if(wide && l->wideLayers)
  {
-  for(unsigned i = 0; i < n; i++)
+  SpritesWide = l->wideSprites;
+  passes[0] = { -wide, 0, 0, 256 };
+  passes[1] = { 256 - wide - 16, 16, 256, 2 * (unsigned)wide };
+  count = 2;
+ }
+ else if(wide)
+ {
+  for(unsigned j = 0; j < n; j++)
   {
-   M7SubX = i;
-   M7SubY = j;
-   M7SubN = n;
-   DrawWide(l, WideRow);
-   uint32* to = Block + j * columns * n + i;
-   for(unsigned x = 0; x < columns; x++)
-    to[x * n] = WideRow[2 * x];
+   memset(Block + j * columns * n, 0, wide * n * sizeof(uint32));
+   memset(Block + j * columns * n + (256 + wide) * n, 0, wide * n * sizeof(uint32));
   }
  }
+
+ M7SubN = n;
+ for(unsigned p = 0; p < count; p++)
+ {
+  XShift = passes[p].shift;
+  for(unsigned j = 0; j < n; j++)
+  {
+   for(unsigned i = 0; i < n; i++)
+   {
+    M7SubX = i;
+    M7SubY = j;
+    const uint32* row = (i | j) ? Mode7Again(l) : Line(l, true);
+    uint32* to = Block + j * columns * n + passes[p].to * n + i;
+    for(unsigned x = 0; x < passes[p].count; x++)
+     to[x * n] = row[2 * (passes[p].from + x)];
+   }
+  }
+ }
+ XShift = 0;
  M7SubN = 0;
  return Block;
 }

@@ -228,6 +228,23 @@ static inline u16 hdColor(u32 pixel) {
 	return (pixel & 0x78000) == 0x78000 && !tableAlways ? rgb565Bright(pixel) : rgb565(pixel);
 }
 
+// A row of an HD line. At full brightness only bits move, in a loop the compiler makes SIMD.
+static void hdRow(const u32* from, u16* to, u32 count) {
+	u32 dim = tableAlways;
+	for (u32 n = 0; n < count; ++n) {
+		dim |= ~from[n] & 0x78000;
+	}
+	if (!dim) {
+		for (u32 n = 0; n < count; ++n) {
+			to[n] = rgb565Bright(from[n]);
+		}
+		return;
+	}
+	for (u32 n = 0; n < count; ++n) {
+		to[n] = rgb565(from[n]);
+	}
+}
+
 static void hdLineDrawn(u32* at, const u32* block, unsigned scale, unsigned columns) {
 	u32 row = (u32) (at - ppuCanvas) / CANVAS_WIDTH;
 	if ((scale > 1 && scale != hdScale) || columns != wideColumns || row - cropY >= cropHeight ||
@@ -247,10 +264,7 @@ static void hdLineDrawn(u32* at, const u32* block, unsigned scale, unsigned colu
 	} else {
 		u16* to = &hdOutputs[stamp & 1][(row - cropY) * scale * HD_WIDTH];
 		for (u32 j = 0; j < scale; ++j) {
-			const u32* from = block + j * columns * scale;
-			for (u32 n = 0; n < columns * scale; ++n) {
-				to[j * HD_WIDTH + n] = hdColor(from[n]);
-			}
+			hdRow(block + j * columns * scale, &to[j * HD_WIDTH], columns * scale);
 		}
 	}
 	hdRowScale[row] = (u8) scale;

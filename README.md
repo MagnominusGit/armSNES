@@ -180,11 +180,11 @@ these can be changed.
 | F12 | Screenshot |
 
 Controllers work too, one per player, up to four, with ROCKNIX's hotkeys held with the Hotkey (Home,
-or Select on a controller without one): Start twice quits, A pauses, R and L save and load a state,
-R2 turns fast-forward on or off, L2 rewinds, X opens the menu, Y shows the frame rate and B takes a
-screenshot. The app has no mouse device or keyboard keys for the core: the SNES Mouse and the guns
-move with the right stick or a touch, and the NTT Data Keypad needs RetroArch. The subsystems are
-RetroArch's too.
+or Select on a controller without one): Start twice quits (the second held a second), A pauses, R
+and L save and load a state, R2 turns fast-forward on or off, L2 rewinds, X opens the menu, Y shows
+the frame rate and B takes a screenshot. The app has no mouse device or keyboard keys for the core:
+the SNES Mouse and the guns move with the right stick or a touch, and the NTT Data Keypad needs
+RetroArch. The subsystems are RetroArch's too.
 
 ### Menu
 

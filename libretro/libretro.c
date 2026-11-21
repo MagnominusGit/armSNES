@@ -1176,6 +1176,10 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"mode's renderer, from each line's registers as it starts).",
 		NULL, "video", { { "Off", NULL }, { "2x", NULL }, { "3x", NULL }, { "4x", NULL }, { "5x", NULL }, { "6x", NULL }, { "7x", NULL },
 		  { "8x", NULL }, { NULL, NULL } }, "Off" },
+	{ "armsnes_hd_mode7_perspective", "HD Mode 7 Perspective Correction", NULL,
+		"Smooths the slopes and horizon of a tilted mode 7 plane, as in racing games, by carrying each line's "
+		"change on through its HD rows. Off if a game looks wrong with it.",
+		NULL, "video", { { "On", NULL }, { "Off", NULL }, { NULL, NULL } }, "On" },
 	{ "armsnes_widescreen", "Widescreen", NULL,
 		"Columns added each side to fill a wider screen, of the ratio picked with the Aspect Ratio option's "
 		"pixel shape. The console draws 256: past them, a layer shows what the game left in video memory, "
@@ -1320,6 +1324,8 @@ static bool showOptions(void) {
 		{ "armsnes_threads", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_frame_skip", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_hd_mode7", !optionIs(environment, "armsnes_mode", "Exact") && optionIs(environment, "armsnes_filter", "Off") },
+		{ "armsnes_hd_mode7_perspective", !optionIs(environment, "armsnes_mode", "Exact") && optionIs(environment, "armsnes_filter", "Off") &&
+		                                      !optionIs(environment, "armsnes_hd_mode7", "Off") },
 		{ "armsnes_scanlines", !optionIs(environment, "armsnes_filter", "Off") },
 		{ "armsnes_sprite_limit", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_widescreen", !optionIs(environment, "armsnes_mode", "Exact") },
@@ -1893,6 +1899,7 @@ static void readOptions(void) {
 	filter = optionChoice(environment, "armsnes_filter", filters, 2, COMPOSITE_OFF);
 	static const struct OptionChoice darkness[] = { { "Light", 192 }, { "Medium", 128 }, { "Dark", 64 } };
 	scanlines = (u32) optionChoice(environment, "armsnes_scanlines", darkness, 3, 256);
+	ppuHdPerspective = !optionIs(environment, "armsnes_hd_mode7_perspective", "Off");
 	hdScale = ppuHdScale = filter ? 0 : (u8) optionChoice(environment, "armsnes_hd_mode7", hdScales, 7, 0);
 	// Widescreen: the columns each side that make the picture that wide, by the pixels' shape, rounded to
 	// 16.

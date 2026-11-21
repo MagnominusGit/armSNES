@@ -5,6 +5,7 @@
  * Ported from ares (ISC); see LICENSES/ISC-ares.txt. */
 #include "snes.h"
 #include "fastppu.h"
+#include <stdlib.h>
 
 // The S-PPU, drawn dot by dot: every two master clocks it does what the hardware does in that slot
 // (evaluates a sprite, fetches a tile, puts out a pixel) and then stops if its clock has passed the
@@ -14,6 +15,7 @@ struct Ppu ppu;
 u32 ppuCanvas[CANVAS_WIDTH * CANVAS_HEIGHT];
 bool ppuSkipPicture;
 u8 ppuHdScale;
+bool ppuHdPerspective;
 u8 ppuWide;
 bool ppuWideAll, ppuWideSprites;
 bool ppuWideSides[CANVAS_HEIGHT];
@@ -3809,6 +3811,29 @@ static void fetchWideSprites(void) {
 	wideSpriteCount = count;
 }
 
+// HD mode 7's perspective correction: the matrix's change from the line above, when the line above changed
+// it by about as much (else a split, or where mode 7 begins: no change).
+static void hdPerspective(struct FastPpuLine* line) {
+	static u64 frame;
+	static u32 y;
+	static s16 last[4], step[4];
+	static bool stepped;
+	bool follows = ppuHdPerspective && line->hdScale && frame == sys.frames && y + 1 == line->y;
+	bool smooth = follows && stepped;
+	for (u32 n = 0; n < 4; ++n) {
+		s16 now = (s16) (line->m7Matrix[n] - last[n]);
+		smooth &= abs(now - step[n]) <= 64 + abs(step[n]) / 4;
+		step[n] = follows ? now : 0;
+		last[n] = line->m7Matrix[n];
+	}
+	for (u32 n = 0; n < 4; ++n) {
+		line->m7Step[n] = smooth ? step[n] : 0;
+	}
+	stepped = follows;
+	frame = sys.frames;
+	y = line->y;
+}
+
 // Fast mode: a whole line by snes_faust's renderer, from the registers as they are now. With sides, only
 // widescreen's sides or HD mode 7's finer line are wanted from it: the S-PPU draws the line.
 static void fastWholeLine(bool sides) {
@@ -3912,6 +3937,7 @@ static void fastWholeLine(bool sides) {
 	// The first column's sub screen pixel of a line twice as wide is black.
 	line->hiresFirstBlack = !line->blank && (ppu.io.bgMode == 5 || ppu.io.pseudoHires);
 	line->hdScale = ppuHdScale > 1 && ppu.io.bgMode == 7 && !line->blank && !ppu.io.interlace ? ppuHdScale : 0;
+	hdPerspective(line);
 	line->wide = ppu.io.interlace ? 0 : ppuWide;
 	line->wideLayers = ppuWideAll || ppu.io.bgMode == 7;
 	line->wideSprites = ppuWideSprites;

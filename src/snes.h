@@ -97,6 +97,9 @@ extern bool ppuNoSpriteLimit;
 extern bool ppuSkipPicture;
 // HD mode 7 (Fast and Balanced modes): mode 7 lines drawn 2 to 8 times finer each way (fastPpuSetHdSink), 0 for none.
 extern u8 ppuHdScale;
+// HD mode 7's perspective correction: where the matrix changes smoothly from line to line, as for a tilted
+// plane, the change goes on through each line's HD rows.
+extern bool ppuHdPerspective;
 // Fast mode's widescreen: columns added each side (a multiple of 16), 0 for none; drawn on every line or
 // only mode 7's, and with the sprites there or not.
 extern u8 ppuWide;

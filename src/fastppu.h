@@ -56,6 +56,7 @@ struct FastPpuLine {
 	bool wideLayers;        // the added columns drawn, else black
 	bool wideSprites;       // sprites drawn in them, else only in the console's 256
 	bool blockOnly;         // only the HD sink's block: the S-PPU draws the line (Balanced)
+	int16_t m7Step[4];      // HD mode 7's perspective correction: the matrix's change a line, else 0
 
 	uint32_t spriteCount;
 	// 34 as the S-PPU fetches them, more when its limits are lifted (ppuNoSpriteLimit).

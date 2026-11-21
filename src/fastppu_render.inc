@@ -40,6 +40,7 @@ uint16 BGHOFS[4];
 uint16 BGVOFS[4];
 uint8 M7SEL;
 int16 M7Matrix[4];
+int16 M7Step[4];
 int16 M7Center[2];
 int16 M7HOFS;
 int16 M7VOFS;
@@ -541,11 +542,16 @@ static MDFN_HOT MDFN_FASTCALL void DrawMODE7(unsigned line_y, uint16 prio_or, ui
  int16 hoca = funny(M7HOFS - M7Center[0]);
  int16 voca = funny(M7VOFS - M7Center[1]);
 
- x = M7Mul(M7Matrix[0], hoca) + M7Mul(M7Matrix[1], line_y) + M7Mul(M7Matrix[1], voca) + (M7Center[0] << 8);
- y = M7Mul(M7Matrix[2], hoca) + M7Mul(M7Matrix[3], line_y) + M7Mul(M7Matrix[3], voca) + (M7Center[1] << 8);
+ // armSNES: HD mode 7's perspective correction, the matrix as it changes to the row sampled.
+ int16 m[4];
+ for(unsigned k = 0; k < 4; k++)
+  m[k] = M7SubN > 1 ? (int16)(M7Matrix[k] + M7Step[k] * M7SubY / M7SubN) : M7Matrix[k];
 
- xinc = M7Matrix[0];
- yinc = M7Matrix[2];
+ x = M7Mul(m[0], hoca) + M7Mul(m[1], line_y) + M7Mul(m[1], voca) + (M7Center[0] << 8);
+ y = M7Mul(m[2], hoca) + M7Mul(m[3], line_y) + M7Mul(m[3], voca) + (M7Center[1] << 8);
+
+ xinc = m[0];
+ yinc = m[2];
 
  if(h_flip)
  {
@@ -562,8 +568,8 @@ static MDFN_HOT MDFN_FASTCALL void DrawMODE7(unsigned line_y, uint16 prio_or, ui
  if(M7SubN > 1)
  {
   const int dy = v_flip ? -M7SubY : M7SubY;
-  x += (M7Matrix[1] * dy + (int)xinc * M7SubX) / M7SubN;
-  y += (M7Matrix[3] * dy + (int)yinc * M7SubX) / M7SubN;
+  x += (m[1] * dy + (int)xinc * M7SubX) / M7SubN;
+  y += (m[3] * dy + (int)yinc * M7SubX) / M7SubN;
  }
 
  for(unsigned i = 0; i < 256; i++)
@@ -1398,6 +1404,7 @@ const uint32* Line(const FastPpuLine* l, bool direct)
  memcpy(BGVOFS, l->bgvofs, sizeof(BGVOFS));
  M7SEL = l->m7sel;
  memcpy(M7Matrix, l->m7Matrix, sizeof(M7Matrix));
+ memcpy(M7Step, l->m7Step, sizeof(M7Step));
  memcpy(M7Center, l->m7Center, sizeof(M7Center));
  M7HOFS = l->m7hofs;
  M7VOFS = l->m7vofs;

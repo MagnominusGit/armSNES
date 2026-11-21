@@ -39,7 +39,7 @@ hardware tests disagree, the hardware tests win.
 | 1. Core | CPU, bus, DMA, sound CPU, DSP and the dot renderer in C. Saved states. A minimal libretro core. | Test games match ares exactly; states are the same on ARM and x86; run-ahead leaves no trace. |
 | 2. Renderer | The span renderer, with NEON and AVX2. | No pixel differs from the dot renderer across the library. |
 | 3. Chips and slots | The coprocessors, then Satellaview, Sufami Turbo, Super Game Boy and the other controllers. | Each chip's games match ares. |
-| 4. Product | Options, netplay, achievements, cheats, MSU-1, the standalone app and its packages. | First release, Exact only. |
+| 4. Product | Options, netplay, achievements, cheats, MSU-1, the standalone app and its packages. | First release. |
 | 5. Fast mode | As above, chosen by profile. | The library looks and sounds the same as Exact, at the speed of the fastest established core or better. |
 | 6. Speed and packaging | Profile-driven work on Exact. | Full speed wherever phase 0 says it can be had. |
 
@@ -163,3 +163,7 @@ the sprites and color math, to leave them out of the picture for screenshots and
 together as usual and then again without them for the picture, so the game runs the same with them
 hidden. Channel Selection shows a switch for each voice, the Game Boy and the MSU-1, which keeps the
 volume set above for when it's back on.
+
+The standalone app is Armulators' (the `armulators` submodule), as armGBA, armNES and armN64 have it,
+with armSNES's names, systems and achievement hook. Without a controller menu of its own, it plugs
+controllers in through the Port 1 and Port 2 Device options, which a frontend's own choice overrides.

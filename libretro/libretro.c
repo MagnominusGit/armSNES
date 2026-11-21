@@ -534,6 +534,23 @@ enum {
 	DEVICE_LR_JUSTIFIERS = RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_LIGHTGUN, 2),
 };
 
+// What each port takes, by the names the frontend's menu and the Port Device options give them; the
+// first port takes the first six.
+static const struct retro_controller_description portDevices[] = {
+	{ "SNES Controller", RETRO_DEVICE_JOYPAD },
+	{ "SNES Mouse", RETRO_DEVICE_MOUSE },
+	{ "Super Multitap", DEVICE_LR_MULTITAP },
+	{ "NTT Data Keypad", DEVICE_LR_KEYPAD },
+	{ "Twin Tap", DEVICE_LR_TWIN_TAP },
+	{ "None", RETRO_DEVICE_NONE },
+	{ "Super Scope", DEVICE_LR_SUPER_SCOPE },
+	{ "Justifier", DEVICE_LR_JUSTIFIER },
+	{ "Two Justifiers", DEVICE_LR_JUSTIFIERS },
+};
+// Those of the Port 1 and 2 Device options, while the frontend chooses none itself.
+static bool portsChosen;
+static int portOptionDevice[2] = { -1, -1 };
+
 static void numberPlayers(void) {
 	static const u8 firstTap[4] = { 0, 5, 6, 7 };
 	u8 player = 0;
@@ -1016,6 +1033,13 @@ static void drawCrosshairs(void) {
 #define CHANNEL_OPTION(key, name) \
 	{ "armsnes_channel_" key, name, NULL, NULL, NULL, "audio", { { "On", NULL }, { "Off", NULL }, { NULL, NULL } }, "On" }
 
+// What's plugged into a port, for frontends without a controller menu of their own
+#define PORT_OPTION(n, a, b, c, d, e, f, g, h, i) \
+	{ "armsnes_port" n, "Port " n " Device", NULL, \
+	  "What's plugged into the port. Shown where the frontend has no controller menu of its own.", NULL, "input", \
+	  { { a, NULL }, { b, NULL }, { c, NULL }, { d, NULL }, { e, NULL }, { f, NULL }, { g, NULL }, { h, NULL }, { i, NULL }, \
+	    { NULL, NULL } }, "SNES Controller" }
+
 static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armsnes_mode", "Mode", NULL,
 		"Exact runs as ares does, clock for clock. Balanced gives the same results with coarser timing, "
@@ -1133,6 +1157,9 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		NULL, "input", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_left_stick_dpad", "Left Stick as D-Pad", NULL, "The left stick presses the D-pad too.",
 		NULL, "input", { { "On", NULL }, { "Off", NULL }, { NULL, NULL } }, "On" },
+	PORT_OPTION("1", "SNES Controller", "SNES Mouse", "Super Multitap", "NTT Data Keypad", "Twin Tap", "None", NULL, NULL, NULL),
+	PORT_OPTION("2", "SNES Controller", "SNES Mouse", "Super Multitap", "NTT Data Keypad", "Twin Tap", "None", "Super Scope",
+		"Justifier", "Two Justifiers"),
 	{ "armsnes_rumble", "Rumble", NULL,
 		"The pads' rumble, for homebrew that sends it: no Super Nintendo pad had any.",
 		NULL, "input", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
@@ -1228,6 +1255,8 @@ static bool showOptions(void) {
 		{ "armsnes_volume_gameboy", !loaded || cart.icd },
 		{ "armsnes_volume_msu1", !loaded || cart.msu1 },
 		{ "armsnes_sgb_border", !loaded || cart.icd },
+		{ "armsnes_port1", !portsChosen },
+		{ "armsnes_port2", !portsChosen },
 		{ "armsnes_layer_bg1", layers },
 		{ "armsnes_layer_bg2", layers },
 		{ "armsnes_layer_bg3", layers },
@@ -1305,17 +1334,6 @@ void retro_set_environment(retro_environment_t callback) {
 	}
 
 
-	static const struct retro_controller_description second[] = {
-		{ "SNES Controller", RETRO_DEVICE_JOYPAD },
-		{ "SNES Mouse", RETRO_DEVICE_MOUSE },
-		{ "Super Multitap", DEVICE_LR_MULTITAP },
-		{ "NTT Data Keypad", DEVICE_LR_KEYPAD },
-		{ "Twin Tap", DEVICE_LR_TWIN_TAP },
-		{ "None", RETRO_DEVICE_NONE },
-		{ "Super Scope", DEVICE_LR_SUPER_SCOPE },
-		{ "Justifier", DEVICE_LR_JUSTIFIER },
-		{ "Two Justifiers", DEVICE_LR_JUSTIFIERS },
-	};
 	// A Super Multitap's other pads, or the second Justifier.
 	static const struct retro_controller_description more[] = {
 		{ "SNES Controller", RETRO_DEVICE_JOYPAD },
@@ -1323,8 +1341,8 @@ void retro_set_environment(retro_environment_t callback) {
 	};
 	// The first port takes all but the guns.
 	static const struct retro_controller_info ports[] = {
-		{ second, 6 },
-		{ second, 9 },
+		{ portDevices, 6 },
+		{ portDevices, 9 },
 		{ more, 2 },
 		{ more, 1 },
 		{ more, 1 },
@@ -1491,10 +1509,8 @@ static void giveDescriptors(void) {
 	environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void*) (aiming() ? aimed : plain));
 }
 
-void retro_set_controller_port_device(unsigned port, unsigned device) {
-	if (port > 1) {
-		return;
-	}
+
+static void setPortDevice(unsigned port, unsigned device) {
 	switch (device) {
 	case RETRO_DEVICE_NONE: inputSetDevice(port, DEVICE_NONE); break;
 	case RETRO_DEVICE_MOUSE: inputSetDevice(port, DEVICE_MOUSE); break;
@@ -1510,6 +1526,26 @@ void retro_set_controller_port_device(unsigned port, unsigned device) {
 		giveDescriptors();
 	}
 	showOptions();
+}
+
+void retro_set_controller_port_device(unsigned port, unsigned device) {
+	if (port > 1) {
+		return;
+	}
+	portsChosen = true;
+	setPortDevice(port, device);
+}
+
+static void readPortOptions(void) {
+	for (unsigned port = 0; port < 2 && !portsChosen; ++port) {
+		const char* name = optionValue(environment, port ? "armsnes_port2" : "armsnes_port1");
+		for (int n = 0; name && n < (port ? 9 : 6); ++n) {
+			if (!strcmp(name, portDevices[n].desc) && portOptionDevice[port] != (int) portDevices[n].id) {
+				portOptionDevice[port] = (int) portDevices[n].id;
+				setPortDevice(port, portDevices[n].id);
+			}
+		}
+	}
 }
 
 void retro_reset(void) {
@@ -1813,6 +1849,7 @@ static void readOptions(void) {
 	dspListenUpdate();
 	allowOpposing = optionIs(environment, "armsnes_opposing", "On");
 	leftStickDpad = !optionIs(environment, "armsnes_left_stick_dpad", "Off");
+	readPortOptions();
 	bool rumbleOn = optionIs(environment, "armsnes_rumble", "On");
 	if (inputRumbleOn && !rumbleOn) {
 		inputRumble(0, 0, 0);

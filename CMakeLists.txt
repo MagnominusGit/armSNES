@@ -80,6 +80,16 @@ if(NOT APPLE AND NOT WIN32)
 	target_link_options(armsnes_libretro PRIVATE -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/shared/libretro/link.T -Wl,--no-undefined)
 endif()
 
+# armsnes, the standalone app: Armulators' (armulators/app, the only part that needs the submodule) with
+# the core linked in, named by app.cmake
+option(ARMSNES_APP "Build armsnes, the standalone SDL2 app" OFF)
+if(ARMSNES_APP)
+	add_subdirectory(armulators)
+	armulators_app(armsnes-app DESCRIPTOR ${CMAKE_CURRENT_SOURCE_DIR}/app.cmake
+		SOURCES libretro/libretro.c app/hooks.c INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/src
+		LIBS armsnes armulators-libretro)
+endif()
+
 add_executable(coretest tests/coretest.c)
 target_include_directories(coretest PRIVATE shared/libretro)
 target_link_libraries(coretest ${CMAKE_DL_LIBS})

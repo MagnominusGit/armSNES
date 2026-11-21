@@ -41,7 +41,7 @@ static struct {
 } fastReaders[2];
 static u32 fastCount;
 static struct MixedPage* mixedPages;
-static u32 mixedCount;
+static u32 mixedCount, mixedSpace;
 static BusReader readers[256];
 
 // Pages with a cheat code read through the last handler, which goes to the page's own and then the
@@ -56,9 +56,9 @@ static u32 hookedCount;
 static BusWriter writers[256];
 static u32 handlers;
 
-// While a machine is put together, every address has its own entry, as in ares.
-static u8* lookup;
-static u32* target;
+// While a machine is put together, a page some map covers only part of, or whose addresses don't run
+// on, is mixed; those that end up running on again are made whole by busFinish.
+static bool building;
 
 u32 busMirrorOver(u32 address, u32 size) {
 	if (size == 0) {
@@ -100,13 +100,11 @@ static void writeOpen(u32 address, u8 data) {
 }
 
 void busReset(void) {
-	free(lookup);
-	free(target);
 	free(mixedPages);
 	mixedPages = NULL;
-	mixedCount = 0;
-	lookup = calloc(1 << 24, sizeof(*lookup));
-	target = calloc(1 << 24, sizeof(*target));
+	mixedCount = mixedSpace = 0;
+	memset(pages, 0, sizeof(pages));
+	building = true;
 	memset(readers, 0, sizeof(readers));
 	memset(writers, 0, sizeof(writers));
 	readers[0] = readOpen;
@@ -197,8 +195,30 @@ static bool rangeAt(const char** text, char end, u32* lo, u32* hi) {
 	return true;
 }
 
+static void setAddress(u32 address, u8 id, u32 offset) {
+	struct Page* page = &pages[address >> 8];
+	u32 n = address & 0xff;
+	if (!page->mixed) {
+		if (page->id == id && page->base + n == offset) {
+			return;
+		}
+		if (mixedCount == mixedSpace) {
+			mixedSpace = mixedSpace ? mixedSpace * 2 : 64;
+			mixedPages = realloc(mixedPages, mixedSpace * sizeof(*mixedPages));
+		}
+		struct MixedPage* mixed = &mixedPages[mixedCount];
+		for (u32 k = 0; k < 256; ++k) {
+			mixed->id[k] = page->id;
+			mixed->target[k] = page->base + k;
+		}
+		*page = (struct Page) { .id = 0, .mixed = true, .base = mixedCount++ };
+	}
+	mixedPages[page->base].id[n] = id;
+	mixedPages[page->base].target[n] = offset;
+}
+
 void busMap(BusReader reader, BusWriter writer, const char* address, u32 size, u32 base, u32 mask) {
-	if (handlers >= CHEAT_HANDLER || !lookup) {
+	if (handlers >= CHEAT_HANDLER || !building) {
 		return;
 	}
 	u32 id = handlers++;
@@ -218,14 +238,31 @@ void busMap(BusReader reader, BusWriter writer, const char* address, u32 size, u
 		u32 addrLo, addrHi;
 		while (rangeAt(&addrText, 0, &addrLo, &addrHi)) {
 			for (u32 bank = bankLo; bank <= bankHi; ++bank) {
-				for (u32 addr = addrLo; addr <= addrHi; ++addr) {
-					u32 offset = busReduce(bank << 16 | addr, mask);
-					if (size) {
-						base = busMirror(base, size);
-						offset = base + busMirror(offset, size - base);
+				for (u32 addr = addrLo; addr <= addrHi;) {
+					// A whole page at a time, so a page whose addresses run on is never made mixed.
+					u32 count = !(addr & 0xff) && addrHi - addr >= 0xff ? 256 : 1;
+					u32 offsets[256];
+					bool runsOn = true;
+					for (u32 k = 0; k < count; ++k) {
+						u32 offset = busReduce(bank << 16 | (addr + k), mask);
+						if (size) {
+							base = busMirror(base, size);
+							offset = base + busMirror(offset, size - base);
+						}
+						offsets[k] = offset;
+						runsOn = runsOn && offset == offsets[0] + k;
 					}
-					lookup[bank << 16 | addr] = id;
-					target[bank << 16 | addr] = offset;
+					if (count == 256 && runsOn) {
+						pages[bank << 8 | addr >> 8] = (struct Page) { .id = (u8) id, .mixed = false, .base = offsets[0] };
+					} else {
+						for (u32 k = 0; k < count; ++k) {
+							setAddress(bank << 16 | (addr + k), (u8) id, offsets[k]);
+						}
+					}
+					if (addrHi - addr < count) {
+						break;
+					}
+					addr += count;
 				}
 			}
 		}
@@ -233,34 +270,36 @@ void busMap(BusReader reader, BusWriter writer, const char* address, u32 size, u
 }
 
 void busFinish(void) {
+	building = false;
 	u32 mixed = 0;
-	for (int pass = 0; pass < 2; ++pass) {
-		for (u32 page = 0; page < 0x10000; ++page) {
-			const u8* ids = &lookup[page << 8];
-			const u32* targets = &target[page << 8];
-			bool uniform = true;
-			for (u32 n = 1; n < 256 && uniform; ++n) {
-				uniform = ids[n] == ids[0] && targets[n] == targets[0] + n;
-			}
-			if (uniform) {
-				pages[page] = (struct Page) { .id = ids[0], .mixed = false, .base = targets[0] };
-			} else if (pass == 0) {
-				++mixed;
-			} else {
-				pages[page] = (struct Page) { .id = 0, .mixed = true, .base = mixedCount };
-				memcpy(mixedPages[mixedCount].id, ids, 256);
-				memcpy(mixedPages[mixedCount].target, targets, 256 * sizeof(u32));
-				++mixedCount;
-			}
+	for (u32 page = 0; page < 0x10000; ++page) {
+		if (!pages[page].mixed) {
+			continue;
 		}
-		if (pass == 0) {
-			mixedPages = calloc(mixed ? mixed : 1, sizeof(*mixedPages));
+		const u8* ids = mixedPages[pages[page].base].id;
+		const u32* targets = mixedPages[pages[page].base].target;
+		bool uniform = true;
+		for (u32 n = 1; n < 256 && uniform; ++n) {
+			uniform = ids[n] == ids[0] && targets[n] == targets[0] + n;
+		}
+		if (uniform) {
+			pages[page] = (struct Page) { .id = ids[0], .mixed = false, .base = targets[0] };
+		} else {
+			++mixed;
 		}
 	}
-	free(lookup);
-	free(target);
-	lookup = NULL;
-	target = NULL;
+	// Only the pages still mixed are kept, in the pages' order.
+	struct MixedPage* kept = calloc(mixed ? mixed : 1, sizeof(*mixedPages));
+	u32 keptCount = 0;
+	for (u32 page = 0; page < 0x10000; ++page) {
+		if (pages[page].mixed) {
+			kept[keptCount] = mixedPages[pages[page].base];
+			pages[page].base = keptCount++;
+		}
+	}
+	free(mixedPages);
+	mixedPages = kept;
+	mixedCount = mixedSpace = keptCount;
 	for (u32 page = 0; page < 0x10000; ++page) {
 		busDirectPages[page] = directFor(&pages[page]);
 		busFastPages[page] = fastFor(page, &pages[page]);

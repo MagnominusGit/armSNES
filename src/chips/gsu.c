@@ -1052,7 +1052,15 @@ u64 gsuRunTo(u64 clock) {
 		if (FLAG(SFR_G) && gsu.th.clock < clock) {
 			lineRun(clock);
 		}
-		return lineStop != ~0ull && lineStop > cpu.th.clock && lineStop <= clock ? lineStop : ~0ull;
+		if (lineStop == ~0ull || lineStop > clock) {
+			return ~0ull;
+		}
+		if (lineStop > cpu.th.clock) {
+			return lineStop;
+		}
+		// A stop the S-CPU's clock passed while it didn't look (an HDMA, say): the wait ends now, once.
+		lineStop = ~0ull;
+		return cpu.th.clock;
 	}
 	if (!FLAG(SFR_G)) {
 		return ~0ull;

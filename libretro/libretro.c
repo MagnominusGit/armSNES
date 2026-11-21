@@ -213,9 +213,13 @@ static int hiresBlend;
 
 // HD mode 7 and widescreen (Fast and Balanced modes): a frame with mode 7 lines is given hdScale times larger each
 // way, those lines drawn finer (fastPpuSetHdSink) and the others' pixels made larger; a widescreen
-// frame is given with its columns more each side. Two pictures, as with outputs.
-enum { WIDE_COLUMNS = 256 + 2 * FAST_PPU_WIDE_MOST, HD_WIDTH = WIDE_COLUMNS * 8, HD_HEIGHT = 239 * 8 };
-static u16 hdOutputs[2][HD_WIDTH * HD_HEIGHT];
+// frame is given with its columns more each side. Two pictures, as with outputs, as large as the
+// options need (hdResize).
+enum { WIDE_COLUMNS = 256 + 2 * FAST_PPU_WIDE_MOST };
+static u16* hdPictures;
+static u32 hdPitch, hdRows;
+// The pictures before a resize, kept until a new picture is given: the last one may be in them.
+static u16* hdRetired;
 static u32 hdRowStamp[CANVAS_HEIGHT];
 static u8 hdRowScale[CANVAS_HEIGHT];
 static u8 hdScale;
@@ -247,7 +251,7 @@ static void hdRow(const u32* from, u16* to, u32 count) {
 
 static void hdLineDrawn(u32* at, const u32* block, unsigned scale, unsigned columns) {
 	u32 row = (u32) (at - ppuCanvas) / CANVAS_WIDTH;
-	if ((scale > 1 && scale != hdScale) || columns != wideColumns || row - cropY >= cropHeight ||
+	if ((scale > 1 && (scale != hdScale || !hdPictures)) || columns != wideColumns || row - cropY >= cropHeight ||
 	    at != &ppuCanvas[row * CANVAS_WIDTH + cropX]) {
 		return;
 	}
@@ -262,9 +266,9 @@ static void hdLineDrawn(u32* at, const u32* block, unsigned scale, unsigned colu
 		}
 		wideRowHires[row - cropY] = hires;
 	} else {
-		u16* to = &hdOutputs[stamp & 1][(row - cropY) * scale * HD_WIDTH];
+		u16* to = &hdPictures[(stamp & 1) * hdPitch * hdRows + (row - cropY) * scale * hdPitch];
 		for (u32 j = 0; j < scale; ++j) {
-			hdRow(block + j * columns * scale, &to[j * HD_WIDTH], columns * scale);
+			hdRow(block + j * columns * scale, &to[j * hdPitch], columns * scale);
 		}
 	}
 	hdRowScale[row] = (u8) scale;
@@ -277,6 +281,24 @@ static const u16* framePicture;
 static u32 framePitch = OUTPUT_WIDTH, frameScaleY = 1;
 // The console columns across the picture given, and how many of them are widescreen's each side.
 static u32 frameColumns = 256, frameExtension;
+
+// The HD pictures for the HD mode 7 scale and widescreen columns: none with neither.
+static void hdResize(void) {
+	u32 n = hdScale > 1 ? hdScale : 1;
+	u32 pitch = n > 1 || wideColumns > 256 ? wideColumns * (n > 2 ? n : 2) : 0, rows = pitch ? 239 * n : 0;
+	if (pitch == hdPitch && rows == hdRows) {
+		return;
+	}
+	// Pictures made since the last resize haven't been given yet.
+	if (hdRetired) {
+		free(hdPictures);
+	} else {
+		hdRetired = hdPictures;
+	}
+	hdPictures = pitch ? calloc((size_t) 2 * pitch * rows, sizeof(u16)) : NULL;
+	hdPitch = hdPictures ? pitch : 0;
+	hdRows = hdPictures ? rows : 0;
+}
 
 // The HD or widescreen picture of the frame when it has lines drawn so: the others made larger from
 // the output, and set in the middle of a widescreen picture.
@@ -293,16 +315,16 @@ static bool hdFrame(u32 y, u32 h) {
 	}
 	u32 n = scaled ? hdScale : 1, columns = wideColumns, extension = (columns - 256) / 2;
 	// A widescreen frame is wide whatever it has drawn, so its shape stays.
-	if (columns == 256 && (!lines || n < 2)) {
+	if ((columns == 256 && (!lines || n < 2)) || !hdPictures) {
 		return false;
 	}
 	// Hires is kept at the console's scale, unless merged.
 	u32 across = n > 1 ? n : hires && hiresBlend != BLEND_MERGE ? 2 : 1;
 	u32 width = columns * across;
-	u16* hd = hdOutputs[stamp & 1];
+	u16* hd = &hdPictures[(stamp & 1) * hdPitch * hdRows];
 	const u16* wide = wideRows[stamp & 1];
 	for (u32 row = 0; row < h; ++row) {
-		u16* to = &hd[row * n * HD_WIDTH];
+		u16* to = &hd[row * n * hdPitch];
 		if (hdRowStamp[y + row] == stamp && hdRowScale[y + row] > 1) {
 			continue;
 		}
@@ -330,11 +352,11 @@ static bool hdFrame(u32 y, u32 h) {
 			}
 		}
 		for (u32 j = 1; j < n; ++j) {
-			memcpy(&to[j * HD_WIDTH], to, width * sizeof(u16));
+			memcpy(&to[j * hdPitch], to, width * sizeof(u16));
 		}
 	}
 	framePicture = hd;
-	framePitch = HD_WIDTH;
+	framePitch = hdPitch;
 	frameScaleY = n;
 	frameColumns = columns;
 	frameExtension = extension;
@@ -1759,6 +1781,10 @@ void retro_run(void) {
 	giveGeometry(&part);
 	u32 pitch = shown ? shownPitch : OUTPUT_WIDTH;
 	videoRefresh(picture ? picture + part.y * pitch + part.x : NULL, part.width, part.height, pitch * sizeof(u16));
+	if (outputReady && hdRetired) {
+		free(hdRetired);
+		hdRetired = NULL;
+	}
 	if (soundCount && (av & RETRO_AV_ENABLE_AUDIO)) {
 		audioBatch(sound, soundCount);
 	}
@@ -1917,6 +1943,7 @@ static void readOptions(void) {
 	ppuWideSprites = optionIs(environment, "armsnes_widescreen_sprites", "Shown");
 	wideColumns = columns;
 	ppuWide = (u8) ((columns - 256) / 2);
+	hdResize();
 	// A larger picture than the frontend was told of needs a new AV info.
 	if (loaded && maxWidth() * maxHeight() > largest) {
 		struct retro_system_av_info av;
@@ -2202,6 +2229,10 @@ void retro_unload_game(void) {
 	cheatReset();
 	free(game);
 	game = NULL;
+	free(hdPictures);
+	free(hdRetired);
+	hdPictures = hdRetired = NULL;
+	hdPitch = hdRows = 0;
 }
 
 unsigned retro_get_region(void) {

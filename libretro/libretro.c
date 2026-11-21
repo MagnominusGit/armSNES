@@ -670,7 +670,7 @@ static void setFastForward(bool on) {
 }
 
 static u16 turboButtons;
-static u32 turboPeriod = 4;
+static u32 turboPeriod = 4, turboPeriodLR = 4;
 static bool allowOpposing;
 static bool leftStickDpad = true;
 
@@ -970,6 +970,19 @@ static bool aiming(void) {
 	return inputGuns || inputDevice[0] == DEVICE_MOUSE || inputDevice[1] == DEVICE_MOUSE;
 }
 
+// L3 and R3 are L and R with turbo, and the right stick A, B, X and Y with turbo, each pushed toward
+// where it sits on the pad, unless the stick aims a gun or the mouse.
+static u16 turboHeld(unsigned player) {
+	if (aiming()) {
+		return 0;
+	}
+	int x = rightStick(player, RETRO_DEVICE_ID_ANALOG_X), y = rightStick(player, RETRO_DEVICE_ID_ANALOG_Y);
+	return (u16) (padHeld(player, RETRO_DEVICE_ID_JOYPAD_L3) << RETRO_DEVICE_ID_JOYPAD_L |
+	              padHeld(player, RETRO_DEVICE_ID_JOYPAD_R3) << RETRO_DEVICE_ID_JOYPAD_R |
+	              (y < -0x4000) << RETRO_DEVICE_ID_JOYPAD_X | (x > 0x4000) << RETRO_DEVICE_ID_JOYPAD_A |
+	              (y > 0x4000) << RETRO_DEVICE_ID_JOYPAD_B | (x < -0x4000) << RETRO_DEVICE_ID_JOYPAD_Y);
+}
+
 static void readPads(void) {
 	inputPollFrontend();
 	numberPlayers();
@@ -994,9 +1007,16 @@ static void readPads(void) {
 		}
 		// Turbo buttons are held for the first half of each period, counted in the console's frames so
 		// run-ahead and netplay see the same presses.
-		if (turboButtons && sys.frames % turboPeriod >= (turboPeriod + 1) / 2) {
+		const u16 lr = 1 << RETRO_DEVICE_ID_JOYPAD_L | 1 << RETRO_DEVICE_ID_JOYPAD_R;
+		u16 turbo = turboHeld(player);
+		if (sys.frames % turboPeriod >= (turboPeriod + 1) / 2) {
 			buttons &= ~turboButtons;
+			turbo &= lr;
 		}
+		if (sys.frames % turboPeriodLR >= (turboPeriodLR + 1) / 2) {
+			turbo &= ~lr;
+		}
+		buttons |= turbo;
 		if (!allowOpposing) {
 			const u16 upDown = 1 << RETRO_DEVICE_ID_JOYPAD_UP | 1 << RETRO_DEVICE_ID_JOYPAD_DOWN;
 			const u16 leftRight = 1 << RETRO_DEVICE_ID_JOYPAD_LEFT | 1 << RETRO_DEVICE_ID_JOYPAD_RIGHT;
@@ -1189,11 +1209,15 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	CHANNEL_OPTION("voice4", "Voice 4"), CHANNEL_OPTION("voice5", "Voice 5"), CHANNEL_OPTION("voice6", "Voice 6"),
 	CHANNEL_OPTION("voice7", "Voice 7"), CHANNEL_OPTION("voice8", "Voice 8"),
 	{ "armsnes_turbo_buttons", "Turbo Buttons", NULL,
-		"Buttons that press and release over and over while held.",
+		"Buttons that press and release over and over while held. L3, R3 and the right stick are turbo L, R "
+		"and A, B, X and Y as well.",
 		NULL, "input", { { "Off", NULL }, { "A", NULL }, { "B", NULL }, { "X", NULL }, { "Y", NULL }, { "A and B", NULL },
 		{ "X and Y", NULL }, { "A, B, X and Y", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_turbo_period", "Turbo Period", NULL,
-		"Frames per press and release of a turbo button.",
+		"Frames per press and release of a turbo A, B, X or Y.",
+		NULL, "input", { { NULL, NULL } }, "4" },
+	{ "armsnes_turbo_period_lr", "L and R Turbo Period", NULL,
+		"Frames per press and release of L3 and R3's turbo L and R.",
 		NULL, "input", { { NULL, NULL } }, "4" },
 	{ "armsnes_opposing", "Allow Opposing Directions", NULL,
 		"Left and right (or up and down) held together, which a real pad can't do. Some games glitch.",
@@ -1361,7 +1385,7 @@ enum { TURBO_FEWEST = 2, TURBO_MOST = 60 };
 void retro_set_environment(retro_environment_t callback) {
 	environment = callback;
 	for (struct retro_core_option_v2_definition* d = optionDefinitions; d->key; ++d) {
-		if (!strcmp(d->key, "armsnes_turbo_period")) {
+		if (!strcmp(d->key, "armsnes_turbo_period") || !strcmp(d->key, "armsnes_turbo_period_lr")) {
 			static char periods[TURBO_MOST - TURBO_FEWEST + 1][4];
 			static char labels[TURBO_MOST - TURBO_FEWEST + 1][12];
 			for (int i = 0; i <= TURBO_MOST - TURBO_FEWEST; ++i) {
@@ -1782,6 +1806,12 @@ static bool regionPal(void) {
 	return optionIs(environment, "armsnes_region", "PAL") || (cart.pal && !optionIs(environment, "armsnes_region", "NTSC"));
 }
 
+static u32 periodOption(const char* key) {
+	const char* value = optionValue(environment, key);
+	u32 period = value ? (u32) atoi(value) : 4;
+	return period < TURBO_FEWEST || period > TURBO_MOST ? 4 : period;
+}
+
 static void readOptions(void) {
 	struct retro_variable mode = { "armsnes_mode", NULL };
 	const char* value = environment(RETRO_ENVIRONMENT_GET_VARIABLE, &mode) && mode.value ? mode.value : "Fast";
@@ -1816,11 +1846,8 @@ static void readOptions(void) {
 		{ "A, B, X and Y", 1 << RETRO_DEVICE_ID_JOYPAD_A | 1 << RETRO_DEVICE_ID_JOYPAD_B | 1 << RETRO_DEVICE_ID_JOYPAD_X | 1 << RETRO_DEVICE_ID_JOYPAD_Y },
 	};
 	turboButtons = (u16) optionChoice(environment, "armsnes_turbo_buttons", turbo, sizeof(turbo) / sizeof(*turbo), 0);
-	const char* period = optionValue(environment, "armsnes_turbo_period");
-	turboPeriod = period ? (u32) atoi(period) : 4;
-	if (turboPeriod < TURBO_FEWEST || turboPeriod > TURBO_MOST) {
-		turboPeriod = 4;
-	}
+	turboPeriod = periodOption("armsnes_turbo_period");
+	turboPeriodLR = periodOption("armsnes_turbo_period_lr");
 	if (loaded && regionPal() != sys.pal) {
 		stopThreads();
 		systemLoad(regionPal());

@@ -213,13 +213,16 @@ static int hiresBlend;
 
 // HD mode 7 and widescreen (Fast and Balanced modes): a frame with mode 7 lines is given hdScale times larger each
 // way, those lines drawn finer (fastPpuSetHdSink) and the others' pixels made larger; a widescreen
-// frame is given with its columns more each side. Two pictures, as with outputs, as large as the
-// options need (hdResize).
+// frame is given with its columns more each side. Two pictures, as with outputs, room for up to hdMost
+// made when a game starts, so the scale and widescreen can change while it runs.
 enum { WIDE_COLUMNS = 256 + 2 * FAST_PPU_WIDE_MOST };
 static u16* hdPictures;
-static u32 hdPitch, hdRows;
-// The pictures before a resize, kept until a new picture is given: the last one may be in them.
-static u16* hdRetired;
+// Each picture's room, and its rows' length for the scale and widescreen now: packed, so the memory used
+// follows them.
+static size_t hdRoom;
+static u32 hdPitch;
+// 4, or 8 with Enable HD Scales.
+static u8 hdMost = 4;
 static u32 hdRowStamp[CANVAS_HEIGHT];
 static u8 hdRowScale[CANVAS_HEIGHT];
 static u8 hdScale;
@@ -266,7 +269,7 @@ static void hdLineDrawn(u32* at, const u32* block, unsigned scale, unsigned colu
 		}
 		wideRowHires[row - cropY] = hires;
 	} else {
-		u16* to = &hdPictures[(stamp & 1) * hdPitch * hdRows + (row - cropY) * scale * hdPitch];
+		u16* to = &hdPictures[(stamp & 1) * hdRoom + (row - cropY) * scale * hdPitch];
 		for (u32 j = 0; j < scale; ++j) {
 			hdRow(block + j * columns * scale, &to[j * hdPitch], columns * scale);
 		}
@@ -282,22 +285,10 @@ static u32 framePitch = OUTPUT_WIDTH, frameScaleY = 1;
 // The console columns across the picture given, and how many of them are widescreen's each side.
 static u32 frameColumns = 256, frameExtension;
 
-// The HD pictures for the HD mode 7 scale and widescreen columns: none with neither.
-static void hdResize(void) {
-	u32 n = hdScale > 1 ? hdScale : 1;
-	u32 pitch = n > 1 || wideColumns > 256 ? wideColumns * (n > 2 ? n : 2) : 0, rows = pitch ? 239 * n : 0;
-	if (pitch == hdPitch && rows == hdRows) {
-		return;
-	}
-	// Pictures made since the last resize haven't been given yet.
-	if (hdRetired) {
-		free(hdPictures);
-	} else {
-		hdRetired = hdPictures;
-	}
-	hdPictures = pitch ? calloc((size_t) 2 * pitch * rows, sizeof(u16)) : NULL;
-	hdPitch = hdPictures ? pitch : 0;
-	hdRows = hdPictures ? rows : 0;
+static void hdAllocate(void) {
+	free(hdPictures);
+	hdRoom = (size_t) WIDE_COLUMNS * hdMost * 239u * hdMost;
+	hdPictures = calloc(2 * hdRoom, sizeof(u16));
 }
 
 // The HD or widescreen picture of the frame when it has lines drawn so: the others made larger from
@@ -321,7 +312,7 @@ static bool hdFrame(u32 y, u32 h) {
 	// Hires is kept at the console's scale, unless merged.
 	u32 across = n > 1 ? n : hires && hiresBlend != BLEND_MERGE ? 2 : 1;
 	u32 width = columns * across;
-	u16* hd = &hdPictures[(stamp & 1) * hdPitch * hdRows];
+	u16* hd = &hdPictures[(stamp & 1) * hdRoom];
 	const u16* wide = wideRows[stamp & 1];
 	for (u32 row = 0; row < h; ++row) {
 		u16* to = &hd[row * n * hdPitch];
@@ -1194,10 +1185,15 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		NULL, "video", { { "Off", NULL }, { "Light", NULL }, { "Medium", NULL }, { "Dark", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_hd_mode7", "HD Mode 7", NULL,
 		"Mode 7's rotated and scaled layer drawn 2 to 8 times finer each way, the rest of the picture as it "
-		"is. Each step takes much more time. Fast and Balanced modes (Balanced draws mode 7 lines with Fast "
-		"mode's renderer, from each line's registers as it starts).",
+		"is. Each step takes much more time. 5x to 8x need Enable HD Scales, and are 4x without it. Fast and "
+		"Balanced modes (Balanced draws mode 7 lines with Fast mode's renderer, from each line's registers as "
+		"it starts).",
 		NULL, "video", { { "Off", NULL }, { "2x", NULL }, { "3x", NULL }, { "4x", NULL }, { "5x", NULL }, { "6x", NULL }, { "7x", NULL },
 		  { "8x", NULL }, { NULL, NULL } }, "Off" },
+	{ "armsnes_hd_scales", "Enable HD Scales", NULL,
+		"Makes room for HD Mode 7 at 5x to 8x, about four times the memory of 4x. Takes effect when a game is "
+		"next started.",
+		NULL, "video", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_hd_mode7_perspective", "HD Mode 7 Perspective Correction", NULL,
 		"Smooths the slopes and horizon of a tilted mode 7 plane, as in racing games, by carrying each line's "
 		"change on through its HD rows. Off if a game looks wrong with it.",
@@ -1346,6 +1342,7 @@ static bool showOptions(void) {
 		{ "armsnes_threads", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_frame_skip", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_hd_mode7", !optionIs(environment, "armsnes_mode", "Exact") && optionIs(environment, "armsnes_filter", "Off") },
+		{ "armsnes_hd_scales", !optionIs(environment, "armsnes_mode", "Exact") && optionIs(environment, "armsnes_filter", "Off") },
 		{ "armsnes_hd_mode7_perspective", !optionIs(environment, "armsnes_mode", "Exact") && optionIs(environment, "armsnes_filter", "Off") &&
 		                                      !optionIs(environment, "armsnes_hd_mode7", "Off") },
 		{ "armsnes_scanlines", !optionIs(environment, "armsnes_filter", "Off") },
@@ -1535,13 +1532,13 @@ static float aspectOf(u32 width, u32 lines) {
 	return (float) (width * pixel / lines);
 }
 
+// Room for every HD scale up to hdMost, widescreen and the filter, so none of them needs new AV info.
 static unsigned maxWidth(void) {
-	unsigned hd = wideColumns * (filter ? COMPOSITE_SCALE : hdScale > 2 ? hdScale : 2);
-	return hd > OUTPUT_WIDTH ? hd : OUTPUT_WIDTH;
+	return WIDE_COLUMNS * hdMost;
 }
 
 static unsigned maxHeight(void) {
-	return hdScale > 2 ? 239u * hdScale : OUTPUT_HEIGHT;
+	return 239u * hdMost;
 }
 
 // The part of the output shown: the crops, or the Game Boy's screen without the Super Game Boy's border.
@@ -1787,10 +1784,6 @@ void retro_run(void) {
 	giveGeometry(&part);
 	u32 pitch = shown ? shownPitch : OUTPUT_WIDTH;
 	videoRefresh(picture ? picture + part.y * pitch + part.x : NULL, part.width, part.height, pitch * sizeof(u16));
-	if (outputReady && hdRetired) {
-		free(hdRetired);
-		hdRetired = NULL;
-	}
 	if (soundCount && (av & RETRO_AV_ENABLE_AUDIO)) {
 		audioBatch(sound, soundCount);
 	}
@@ -1932,6 +1925,9 @@ static void readOptions(void) {
 	scanlines = (u32) optionChoice(environment, "armsnes_scanlines", darkness, 3, 256);
 	ppuHdPerspective = !optionIs(environment, "armsnes_hd_mode7_perspective", "Off");
 	hdScale = ppuHdScale = filter ? 0 : (u8) optionChoice(environment, "armsnes_hd_mode7", hdScales, 7, 0);
+	if (hdScale > hdMost) {
+		hdScale = ppuHdScale = hdMost;
+	}
 	// Widescreen: the columns each side that make the picture that wide, by the pixels' shape, rounded to
 	// 16.
 	static const struct OptionChoice ratios[] = { { "16:10", 1600 }, { "16:9", 1778 }, { "2:1", 2000 }, { "21:9", 2333 } };
@@ -1948,7 +1944,7 @@ static void readOptions(void) {
 	ppuWideSprites = optionIs(environment, "armsnes_widescreen_sprites", "Shown");
 	wideColumns = columns;
 	ppuWide = (u8) ((columns - 256) / 2);
-	hdResize();
+	hdPitch = wideColumns * (hdScale > 2 ? hdScale : 2);
 	// A larger picture than the frontend was told of needs a new AV info.
 	if (loaded && (maxWidth() > toldWidth || maxHeight() > toldHeight)) {
 		struct retro_system_av_info av;
@@ -2048,6 +2044,8 @@ static bool loadFinish(const char* gamePath) {
 		rumble.set_rumble_state = NULL;
 	}
 
+	hdMost = optionIs(environment, "armsnes_hd_scales", "On") ? 8 : 4;
+	hdAllocate();
 	readOptions();
 	systemLoad(regionPal());
 	systemPower(false);
@@ -2235,9 +2233,7 @@ void retro_unload_game(void) {
 	free(game);
 	game = NULL;
 	free(hdPictures);
-	free(hdRetired);
-	hdPictures = hdRetired = NULL;
-	hdPitch = hdRows = 0;
+	hdPictures = NULL;
 	toldWidth = toldHeight = 0;
 }
 

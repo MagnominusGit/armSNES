@@ -86,6 +86,7 @@ with Layer Selection or Channel Selection on.
 | | Scanlines (with the filter) | Off, Light, Medium, Dark |
 | | HD Mode 7 (Fast and Balanced, without the filter) | Off, 2x to 8x |
 | | HD Mode 7 Perspective Correction | On, Off |
+| | Enable HD Scales (5x to 8x, from the next game started) | Off, On |
 | | Widescreen (Fast and Balanced) | Off, 16:10, 16:9, 2:1, 21:9 |
 | | Widescreen Layers | Mode 7 only, All |
 | | Widescreen Sprites | Hidden, Shown |
@@ -117,7 +118,9 @@ Widescreen adds columns on each side, drawn from the game's own layers past the 
 default only on Mode 7 lines, the others keeping black sides, or on every line for games patched for
 widescreen. A background one screen wide that isn't scrolled, usually the status bar, stays in the
 middle. HD Mode 7 draws Mode 7 lines at two to eight times the resolution; Balanced draws them with
-Fast's renderer, from each line's registers as it starts. Perspective Correction smooths a tilted Mode
+Fast's renderer, from each line's registers as it starts. Room for up to 4x is set aside when a game
+starts, so the scale can change while it runs; Enable HD Scales sets aside room for 8x instead, from the
+next game started. Perspective Correction smooths a tilted Mode
 7 plane's slopes and horizon: where the matrix changes evenly from line to line, the change goes on
 through each line's HD rows.
 

@@ -433,7 +433,7 @@ void videoFrame(const u32* canvas) {
 			convertRow(&canvas[(y + row) * CANVAS_WIDTH + x], &output[row * OUTPUT_WIDTH], &rowWide[row]);
 		}
 	}
-	bool wide = inputGuns && crosshair && hiresBlend != BLEND_MERGE;
+	bool wide = false;
 	for (u32 row = 0; row < h; ++row) {
 		if (rowWide[row] && hiresBlend != BLEND_OFF) {
 			blendRow(&output[row * OUTPUT_WIDTH]);
@@ -1023,28 +1023,27 @@ static void readPads(void) {
 	}
 }
 
-// A cross where each gun points: white, with a dark edge to show on any picture.
+// A small cross where each gun points, its pixels inverted to show on any picture, as armNES draws it.
 static void drawCrosshairs(void) {
 	u16* picture = (u16*) framePicture;
-	u32 yScale = frameScaleY;
-	int xScale = (int) (outputWidth / frameColumns);
+	u32 xScale = outputWidth / frameColumns, yScale = frameScaleY;
+	int lines = (int) (outputHeight / yScale);
 	for (int gun = 0; gun < 2; ++gun) {
 		if (gunX[gun] < 0 || gunX[gun] > 255 || gunY[gun] < 0) {
 			continue;
 		}
-		int cx = (gunX[gun] + (int) frameExtension) * xScale;
-		int cy = gunY[gun] * yScale;
-		for (int d = -7 * 2; d <= 7 * 2; ++d) {
-			for (int w = -1; w <= 1; ++w) {
-				u16 color = w ? 0x0000 : (gun ? 0xf800 : 0xffff);
-				int x = cx + d * xScale / 2, y = cy + w * (int) yScale;
-				if (x >= 0 && x < (int) outputWidth && y >= 0 && y < (int) outputHeight && (d < -3 || d > 3)) {
-					picture[y * framePitch + x] = color;
+		int cx = gunX[gun] + (int) frameExtension, cy = gunY[gun];
+		for (int d = -4; d <= 4; ++d) {
+			int points[2][2] = { { cx + d, cy }, { cx, cy + d } };
+			for (int i = d ? 0 : 1; i < 2; ++i) {
+				int x = points[i][0], y = points[i][1];
+				if (x < 0 || x >= (int) frameColumns || y < 0 || y >= lines) {
+					continue;
 				}
-				x = cx + w * xScale;
-				y = cy + d / 2 * (int) yScale;
-				if (x >= 0 && x < (int) outputWidth && y >= 0 && y < (int) outputHeight && (d < -3 || d > 3)) {
-					picture[y * framePitch + x] = color;
+				for (u32 row = 0; row < yScale; ++row) {
+					for (u32 s = 0; s < xScale; ++s) {
+						picture[(y * yScale + row) * framePitch + x * xScale + s] ^= 0xffff;
+					}
 				}
 			}
 		}

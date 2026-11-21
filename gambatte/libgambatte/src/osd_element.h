@@ -26,7 +26,7 @@ namespace gambatte {
 class OsdElement {
 public:
 	enum Opacity { seven_eighths, three_fourths };
-	enum { pixel_transparent = 0xfffffffful };
+	enum { pixel_transparent = 0xffffffffu };
 
 	virtual ~OsdElement() {}
 	unsigned x() const { return x_; }

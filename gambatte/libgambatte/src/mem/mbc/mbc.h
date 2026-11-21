@@ -19,6 +19,7 @@
 #ifndef MBC_H
 #define MBC_H
 
+#include "gbint.h"
 #include <cstring>
 #include "../memptrs.h"
 #include "../time.h"
@@ -28,6 +29,7 @@
 #include "../camera.h"
 #include "savestate.h"
 #include "newstate.h"
+#include "scoped_ptr.h"
 
 #include <string>
 #include <vector>
@@ -46,7 +48,7 @@ class Mbc {
 public:
 	virtual ~Mbc() {}
 	virtual bool disabledRam() const = 0;
-	virtual void romWrite(unsigned p, unsigned data, unsigned long cycleCounter) = 0;
+	virtual void romWrite(unsigned p, unsigned data, gb_ulong cycleCounter) = 0;
 	virtual void saveState(SaveState::Mem &ss) const = 0;
 	virtual void loadState(SaveState::Mem const &ss) = 0;
 	virtual bool isAddressWithinAreaRombankCanBeMappedTo(unsigned address, unsigned rombank) const = 0;
@@ -72,7 +74,7 @@ class Mbc0 : public DefaultMbc {
 public:
 	explicit Mbc0(MemPtrs &memptrs);
 	virtual bool disabledRam() const;
-	virtual void romWrite(unsigned const p, unsigned const data, unsigned long const /*cc*/);
+	virtual void romWrite(unsigned const p, unsigned const data, gb_ulong const /*cc*/);
 	virtual void saveState(SaveState::Mem &ss) const;
 	virtual void loadState(SaveState::Mem const &ss);
 	virtual void SyncState(NewState *ns, bool isReader);
@@ -86,7 +88,7 @@ class Mbc1 : public Mbc {
 public:
 	explicit Mbc1(MemPtrs &memptrs, unsigned char rombankMask = 0x1Fu, unsigned char rombankShift = 0x05u);
 	virtual bool disabledRam() const;
-	virtual void romWrite(unsigned const p, unsigned const data, unsigned long const /*cc*/);
+	virtual void romWrite(unsigned const p, unsigned const data, gb_ulong const /*cc*/);
 	virtual void saveState(SaveState::Mem &ss) const;
 	virtual void loadState(SaveState::Mem const &ss);
 	virtual bool isAddressWithinAreaRombankCanBeMappedTo(unsigned addr, unsigned bank) const;
@@ -121,7 +123,7 @@ class Mbc2 : public DefaultMbc {
 public:
 	explicit Mbc2(MemPtrs &memptrs);
 	virtual bool disabledRam() const;
-	virtual void romWrite(unsigned const p, unsigned const data, unsigned long const /*cc*/);
+	virtual void romWrite(unsigned const p, unsigned const data, gb_ulong const /*cc*/);
 	virtual void saveState(SaveState::Mem &ss) const;
 	virtual void loadState(SaveState::Mem const &ss);
 	virtual void SyncState(NewState *ns, bool isReader);
@@ -136,7 +138,7 @@ class Mbc3 : public DefaultMbc {
 public:
 	Mbc3(MemPtrs &memptrs, Rtc *const rtc, unsigned char rombankMask = 0x7Fu, unsigned char rambankMask = 0x03u);
 	virtual bool disabledRam() const;
-	virtual void romWrite(unsigned const p, unsigned const data, unsigned long const cc);
+	virtual void romWrite(unsigned const p, unsigned const data, gb_ulong const cc);
 	virtual void saveState(SaveState::Mem &ss) const;
 	virtual void loadState(SaveState::Mem const &ss);
 	virtual void SyncState(NewState *ns, bool isReader);
@@ -166,7 +168,7 @@ class Mbc5 : public DefaultMbc {
 public:
 	explicit Mbc5(MemPtrs &memptrs);
 	virtual bool disabledRam() const;
-	virtual void romWrite(unsigned const p, unsigned const data, unsigned long const /*cc*/);
+	virtual void romWrite(unsigned const p, unsigned const data, gb_ulong const /*cc*/);
 	virtual void saveState(SaveState::Mem &ss) const;
 	virtual void loadState(SaveState::Mem const &ss);
 	virtual void SyncState(NewState *ns, bool isReader);
@@ -185,7 +187,7 @@ class M161 : public Mbc {
 public:
 	explicit M161(MemPtrs &memptrs);
 	virtual bool disabledRam() const;
-	virtual void romWrite(unsigned const /*p*/, unsigned const data, unsigned long const /*cc*/);
+	virtual void romWrite(unsigned const /*p*/, unsigned const data, gb_ulong const /*cc*/);
 	virtual void saveState(SaveState::Mem &ss) const;
 	virtual void loadState(SaveState::Mem const &ss);
 	virtual bool isAddressWithinAreaRombankCanBeMappedTo(unsigned addr, unsigned bank) const;
@@ -203,7 +205,7 @@ class Mmm01 : public Mbc {
 public:
 	explicit Mmm01(MemPtrs &memptrs);
 	virtual bool disabledRam() const;
-	virtual void romWrite(unsigned const p, unsigned const data, unsigned long const /*cc*/);
+	virtual void romWrite(unsigned const p, unsigned const data, gb_ulong const /*cc*/);
 	virtual void saveState(SaveState::Mem &ss) const;
 	virtual void loadState(SaveState::Mem const &ss);
 	virtual bool isAddressWithinAreaRombankCanBeMappedTo(unsigned addr, unsigned bank) const;
@@ -233,7 +235,7 @@ class HuC1 : public DefaultMbc {
 public:
 	explicit HuC1(MemPtrs &memptrs, Infrared *const ir_);
 	virtual bool disabledRam() const;
-	virtual void romWrite(unsigned const p, unsigned const data, unsigned long const /*cc*/);
+	virtual void romWrite(unsigned const p, unsigned const data, gb_ulong const /*cc*/);
 	virtual void saveState(SaveState::Mem &ss) const;
 	virtual void loadState(SaveState::Mem const &ss);
 	virtual void SyncState(NewState *ns, bool isReader);
@@ -253,7 +255,7 @@ class HuC3 : public DefaultMbc {
 public:
 	explicit HuC3(MemPtrs &memptrs, HuC3Chip *const huc3);
 	virtual bool disabledRam() const;
-	virtual void romWrite(unsigned const p, unsigned const data, unsigned long const /*cc*/);
+	virtual void romWrite(unsigned const p, unsigned const data, gb_ulong const /*cc*/);
 	virtual void saveState(SaveState::Mem &ss) const;
 	virtual void loadState(SaveState::Mem const &ss);
 	virtual void SyncState(NewState *ns, bool isReader);
@@ -273,7 +275,7 @@ class PocketCamera : public DefaultMbc {
 public:
 	explicit PocketCamera(MemPtrs &memptrs, Camera *const camera);
 	virtual bool disabledRam() const;
-	virtual void romWrite(unsigned const p, unsigned const data, unsigned long const /*cc*/);
+	virtual void romWrite(unsigned const p, unsigned const data, gb_ulong const /*cc*/);
 	virtual void saveState(SaveState::Mem &ss) const;
 	virtual void loadState(SaveState::Mem const &ss);
 	virtual void SyncState(NewState *ns, bool isReader);
@@ -293,7 +295,7 @@ class WisdomTree : public Mbc {
 public:
 	explicit WisdomTree(MemPtrs &memptrs);
 	virtual bool disabledRam() const;
-	virtual void romWrite(unsigned const p, unsigned const /*data*/, unsigned long const /*cc*/);
+	virtual void romWrite(unsigned const p, unsigned const /*data*/, gb_ulong const /*cc*/);
 	virtual void saveState(SaveState::Mem &ss) const;
 	virtual void loadState(SaveState::Mem const &ss);
 	virtual bool isAddressWithinAreaRombankCanBeMappedTo(unsigned addr, unsigned bank) const;
@@ -313,7 +315,7 @@ public:
 	// banks: the ROM's own; one more follows them in memory for a bank unpacked through the lock
 	UnlMbc5(MemPtrs &memptrs, Kind kind, unsigned banks);
 	virtual bool disabledRam() const;
-	virtual void romWrite(unsigned p, unsigned data, unsigned long cc);
+	virtual void romWrite(unsigned p, unsigned data, gb_ulong cc);
 	virtual void saveState(SaveState::Mem &ss) const;
 	virtual void loadState(SaveState::Mem const &ss);
 	virtual void SyncState(NewState *ns, bool isReader);
@@ -338,18 +340,21 @@ private:
 	// NT's later cartridges: the switchable area as two halves of 8 KiB each
 	bool split_;
 	unsigned short half_[2];
+	// Whether the halves are mapped: a split takes effect at the next bank write
+	bool splitMapped_;
 
 	void setRambank() const;
 	void setRombank();
+	void mapRombank();
 };
 
 // armGBA: a cartridge chip that answers in the RAM area itself
 class CartIo {
 public:
 	virtual ~CartIo() {}
-	virtual unsigned read(unsigned p, unsigned long cc) const = 0;
-	virtual void write(unsigned p, unsigned data, unsigned long cc) = 0;
-	virtual void resetCc(unsigned long, unsigned long) {}
+	virtual unsigned read(unsigned p, gb_ulong cc) const = 0;
+	virtual void write(unsigned p, unsigned data, gb_ulong cc) = 0;
+	virtual void resetCc(gb_ulong, gb_ulong) {}
 };
 
 // armGBA: Bandai's TAMA5 (Game de Hakken!! Tamagotchi - Osutchi to Mesutchi)
@@ -357,20 +362,20 @@ class Tama5 : public Mbc, public CartIo {
 public:
 	explicit Tama5(MemPtrs &memptrs);
 	virtual bool disabledRam() const;
-	virtual void romWrite(unsigned p, unsigned data, unsigned long cc);
+	virtual void romWrite(unsigned p, unsigned data, gb_ulong cc);
 	virtual void saveState(SaveState::Mem &ss) const;
 	virtual void loadState(SaveState::Mem const &ss);
 	virtual bool isAddressWithinAreaRombankCanBeMappedTo(unsigned addr, unsigned bank) const;
 	virtual void SyncState(NewState *ns, bool isReader);
-	virtual unsigned read(unsigned p, unsigned long cc) const;
-	virtual void write(unsigned p, unsigned data, unsigned long cc);
-	virtual void resetCc(unsigned long oldCc, unsigned long newCc);
+	virtual unsigned read(unsigned p, gb_ulong cc) const;
+	virtual void write(unsigned p, unsigned data, gb_ulong cc);
+	virtual void resetCc(gb_ulong oldCc, gb_ulong newCc);
 
 private:
 	MemPtrs &memptrs_;
 
 	unsigned char * chip() const;
-	void tick(unsigned long cc) const;
+	void tick(gb_ulong cc) const;
 	void setRombank() const;
 };
 
@@ -379,6 +384,19 @@ class RomHook {
 public:
 	virtual ~RomHook() {}
 	virtual unsigned romRead(unsigned p) = 0;
+	// What OAM DMA copies from the ROM area: what the CPU would read, without the side effects a CPU
+	// read has on the cartridge
+	virtual unsigned romDmaRead(unsigned p) { return romRead(p); }
+};
+
+// armGBA: a cartridge that answers some reads and writes of A000-BFFF itself, the rest going to
+// the RAM its mapper shows there
+class SramHook {
+public:
+	virtual ~SramHook() {}
+	// Return whether the cartridge took the access
+	virtual bool sramRead(unsigned p, unsigned &value) = 0;
+	virtual bool sramWrite(unsigned p, unsigned data) = 0;
 };
 
 // armGBA: Vast Fame's protected cartridge (see vf001.cpp)
@@ -388,7 +406,7 @@ public:
 	// cartridge's game carries too
 	Vf001(MemPtrs &memptrs, unsigned banks, bool maybeGgb81);
 	virtual bool disabledRam() const;
-	virtual void romWrite(unsigned p, unsigned data, unsigned long cc);
+	virtual void romWrite(unsigned p, unsigned data, gb_ulong cc);
 	virtual void saveState(SaveState::Mem &ss) const;
 	virtual void loadState(SaveState::Mem const &ss);
 	virtual void SyncState(NewState *ns, bool isReader);
@@ -427,13 +445,13 @@ class Mbc7 : public Mbc, public CartIo {
 public:
 	explicit Mbc7(MemPtrs &memptrs);
 	virtual bool disabledRam() const;
-	virtual void romWrite(unsigned p, unsigned data, unsigned long cc);
+	virtual void romWrite(unsigned p, unsigned data, gb_ulong cc);
 	virtual void saveState(SaveState::Mem &ss) const;
 	virtual void loadState(SaveState::Mem const &ss);
 	virtual bool isAddressWithinAreaRombankCanBeMappedTo(unsigned addr, unsigned bank) const;
 	virtual void SyncState(NewState *ns, bool isReader);
-	virtual unsigned read(unsigned p, unsigned long cc) const;
-	virtual void write(unsigned p, unsigned data, unsigned long cc);
+	virtual unsigned read(unsigned p, gb_ulong cc) const;
+	virtual void write(unsigned p, unsigned data, gb_ulong cc);
 
 private:
 	MemPtrs &memptrs_;
@@ -451,7 +469,7 @@ class Mbc6 : public DefaultMbc {
 public:
 	Mbc6(MemPtrs &memptrs, unsigned banks);
 	virtual bool disabledRam() const;
-	virtual void romWrite(unsigned p, unsigned data, unsigned long cc);
+	virtual void romWrite(unsigned p, unsigned data, gb_ulong cc);
 	virtual void saveState(SaveState::Mem &ss) const;
 	virtual void loadState(SaveState::Mem const &ss);
 	virtual void SyncState(NewState *ns, bool isReader);
@@ -473,13 +491,13 @@ class Pkjd : public Mbc, public CartIo {
 public:
 	explicit Pkjd(MemPtrs &memptrs);
 	virtual bool disabledRam() const;
-	virtual void romWrite(unsigned p, unsigned data, unsigned long cc);
+	virtual void romWrite(unsigned p, unsigned data, gb_ulong cc);
 	virtual void saveState(SaveState::Mem &ss) const;
 	virtual void loadState(SaveState::Mem const &ss);
 	virtual bool isAddressWithinAreaRombankCanBeMappedTo(unsigned addr, unsigned bank) const;
 	virtual void SyncState(NewState *ns, bool isReader);
-	virtual unsigned read(unsigned p, unsigned long cc) const;
-	virtual void write(unsigned p, unsigned data, unsigned long cc);
+	virtual unsigned read(unsigned p, gb_ulong cc) const;
+	virtual void write(unsigned p, unsigned data, gb_ulong cc);
 
 private:
 	MemPtrs &memptrs_;
@@ -491,11 +509,256 @@ private:
 	void setBanks() const;
 };
 
+// armGBA: the Mega Duck's cartridges, with their two ways to change banks
+class MegaDuck : public Mbc, public CartIo {
+public:
+	// The cartridge kinds, as GB::LoadFlag's MEGA_DUCK_MAPPER bits number them
+	enum Kind { automatic, none, md0, md1, md2, md20s, md25s };
+
+	MegaDuck(MemPtrs &memptrs, Kind kind);
+	virtual bool disabledRam() const;
+	virtual void romWrite(unsigned p, unsigned data, gb_ulong cc);
+	virtual void saveState(SaveState::Mem &ss) const;
+	virtual void loadState(SaveState::Mem const &ss);
+	virtual bool isAddressWithinAreaRombankCanBeMappedTo(unsigned addr, unsigned bank) const;
+	virtual void SyncState(NewState *ns, bool isReader);
+	virtual unsigned read(unsigned p, gb_ulong cc) const;
+	virtual void write(unsigned p, unsigned data, gb_ulong cc);
+
+private:
+	MemPtrs &memptrs_;
+	Kind kind_;
+	unsigned short rombank0_;
+	unsigned short rombank_;
+	unsigned char rambank_;
+
+	bool hasRam() const;
+	void setBanks() const;
+};
+
+// armGBA: a cheat cartridge in front of the game on top of it, which takes the place of the game's
+// mapper while that stays behind it: Datel's Action Replay (ActionReplayGb) or Galoob's Game Genie
+// (GameGenieGb)
+class CheatCartGb : public Mbc, public RomHook, public SramHook {
+public:
+	// Power on
+	virtual void reset() = 0;
+	// The cartridge's button and switch, where it has them
+	virtual void setButton(bool) {}
+	virtual void setSwitch(bool) {}
+	// What it keeps with the power off, and whether that was written since this was last asked (none
+	// by default)
+	virtual unsigned char *kept(std::size_t *size) { *size = 0; return 0; }
+	virtual bool flashChanged() { return false; }
+	// What a state keeps of it, and of its flash chip
+	virtual unsigned char *stateData() = 0;
+	virtual std::size_t stateSize() const = 0;
+	virtual unsigned char *flashData() { return 0; }
+	virtual std::size_t flashSize() const { return 0; }
+	// armGBA: a state holds the flash chip as it differs from the cartridge's own image, so that every
+	// player has their own copy of the cartridge and none is sent in netplay. This turns the chip into
+	// that and back (each call undoes the last).
+	virtual void swapFactory() {}
+	// The console's I/O and high RAM (FF00-FFFF at 0x100), for a cartridge that fills in its program's
+	// variables
+	virtual void setHram(unsigned char *) {}
+	// Codes to put in the Game Genie's empty slots as its code screen shows: nine digits (0-15, 0x10
+	// past the end) and a count of 6 or 9 (0 for none) for each of the three
+	virtual void setCodes(unsigned char const *, unsigned char const *) {}
+};
+
+// armGBA: Datel's Action Replay for the Game Boy and Game Boy Color (see actionreplay.cpp)
+class ActionReplayGb : public CheatCartGb {
+public:
+	// What a state keeps of it besides its flash chip, which it keeps too
+	struct State {
+		unsigned char regs[16];
+		unsigned char ram[0x8000];
+		unsigned char shown;
+		unsigned char boot;
+		unsigned char flashStep;
+		unsigned char flashId;
+		unsigned char flashProgram;
+		// The first cartridge: the game's first 512 bytes show for the program to look at
+		unsigned char lowPage;
+	};
+
+	// game: the game's mapper, which this takes; hasGame: whether a game is on top, else the cartridge
+	// space behind it is empty
+	ActionReplayGb(MemPtrs &memptrs, Mbc *game, RomHook *gameHook, unsigned char const *flash, std::size_t size, bool hasGame);
+	virtual bool disabledRam() const;
+	virtual void romWrite(unsigned p, unsigned data, gb_ulong cc);
+	virtual void saveState(SaveState::Mem &ss) const;
+	virtual void loadState(SaveState::Mem const &ss);
+	virtual bool isAddressWithinAreaRombankCanBeMappedTo(unsigned addr, unsigned bank) const;
+	virtual void SyncState(NewState *ns, bool isReader);
+	virtual unsigned romRead(unsigned p);
+	virtual unsigned romDmaRead(unsigned p);
+	virtual bool sramRead(unsigned p, unsigned &value);
+	virtual bool sramWrite(unsigned p, unsigned data);
+	virtual void reset();
+	virtual void setButton(bool pressed) { button_ = pressed; }
+	virtual void setSwitch(bool on) { switchOn_ = on; }
+	// What it keeps with the power off: its flash chip, or the first cartridge's RAM
+	virtual unsigned char *kept(std::size_t *size);
+	virtual bool flashChanged();
+	virtual unsigned char *stateData() { return reinterpret_cast<unsigned char *>(&s_); }
+	virtual std::size_t stateSize() const { return sizeof s_; }
+	virtual unsigned char *flashData() { return &flash_[0]; }
+	virtual void swapFactory() {
+		for (std::size_t i = 0; i < flash_.size(); ++i)
+			flash_[i] ^= factory_[i];
+	}
+	virtual std::size_t flashSize() const { return flash_.size(); }
+	bool first() const { return first_; }
+
+private:
+	MemPtrs &memptrs_;
+	scoped_ptr<Mbc> game_;
+	RomHook *gameHook_;
+	std::vector<unsigned char> flash_;
+	// The flash chip as built, before the cartridge's save went over it
+	std::vector<unsigned char> factory_;
+	bool hasGame_;
+	bool first_;
+	bool button_;
+	bool switchOn_;
+	bool flashChanged_;
+	State s_;
+
+	bool armed() const;
+	bool listening() const;
+	std::size_t flashAddress(unsigned p) const;
+	unsigned gameRead(unsigned p);
+	unsigned char &ram(unsigned p);
+	unsigned status() const;
+	void flashWrite(std::size_t at, unsigned data);
+};
+
+// armGBA: Blaze's Xploder GB (see xploder.cpp)
+class XploderGb : public CheatCartGb {
+public:
+	struct State {
+		// 0000-0007
+		unsigned char regs[8];
+		// Its RAM: 16 banks of 8 KiB
+		unsigned char ram[0x20000];
+		// Whether the Xploder shows, rather than the game
+		unsigned char shown;
+		// From power on until the program first writes a register, the header is the game's
+		unsigned char boot;
+		// The last byte the game wrote to 4000-5FFF, which 0004 reads
+		unsigned char gameBank;
+		unsigned char flashStep;
+		unsigned char flashId;
+		// Loading a page of the flash chip: 1 after the command, 2 once its first byte is written,
+		// for the page pageHigh:pageLow
+		unsigned char flashLoad;
+		unsigned char pageHigh;
+		unsigned char pageLow;
+	};
+
+	XploderGb(MemPtrs &memptrs, Mbc *game, RomHook *gameHook, unsigned char const *program, std::size_t size, bool hasGame);
+	virtual bool disabledRam() const;
+	virtual void romWrite(unsigned p, unsigned data, gb_ulong cc);
+	virtual void saveState(SaveState::Mem &ss) const;
+	virtual void loadState(SaveState::Mem const &ss);
+	virtual bool isAddressWithinAreaRombankCanBeMappedTo(unsigned addr, unsigned bank) const;
+	virtual void SyncState(NewState *ns, bool isReader);
+	virtual unsigned romRead(unsigned p);
+	virtual unsigned romDmaRead(unsigned p);
+	virtual bool sramRead(unsigned p, unsigned &value);
+	virtual bool sramWrite(unsigned p, unsigned data);
+	virtual void reset();
+	virtual void setButton(bool pressed) { button_ = pressed; }
+	// What it keeps with the power off: its flash chip
+	virtual unsigned char *kept(std::size_t *size) { *size = flash_.size(); return &flash_[0]; }
+	virtual bool flashChanged();
+	virtual unsigned char *stateData() { return reinterpret_cast<unsigned char *>(&s_); }
+	virtual std::size_t stateSize() const { return sizeof s_; }
+	virtual unsigned char *flashData() { return &flash_[0]; }
+	virtual void swapFactory() {
+		for (std::size_t i = 0; i < flash_.size(); ++i)
+			flash_[i] ^= factory_[i];
+	}
+	virtual std::size_t flashSize() const { return flash_.size(); }
+
+	// Whether a cartridge program is the Xploder's
+	static bool is(unsigned char const *program, std::size_t size);
+
+private:
+	MemPtrs &memptrs_;
+	scoped_ptr<Mbc> game_;
+	RomHook *gameHook_;
+	std::vector<unsigned char> flash_;
+	// The flash chip as built, before the cartridge's save went over it
+	std::vector<unsigned char> factory_;
+	bool hasGame_;
+	bool button_;
+	bool flashChanged_;
+	State s_;
+
+	unsigned gameRead(unsigned p);
+	std::size_t flashAddress(unsigned p) const;
+	unsigned flashRead(std::size_t at);
+	void flashWrite(std::size_t at, unsigned data);
+};
+class GameGenieGb : public CheatCartGb {
+public:
+	struct State {
+		// 4000: what shows, 4001: the codes on, 4003-4011: the three codes, 4012 and 4013
+		unsigned char regs[0x14];
+		// From power on until the program first writes a register, the header is the game's
+		unsigned char boot;
+		// armGBA: the codes chosen in the core options (setCodes), in the state so that every device in
+		// netplay fills the code screen with the host's: nine digits a slot, and each slot's length
+		unsigned char fill[27];
+		unsigned char fillCount[3];
+	};
+
+	// program: the Game Genie's own ROM; game: the game's mapper, which this takes; hasGame: whether a
+	// game is on top
+	GameGenieGb(MemPtrs &memptrs, Mbc *game, RomHook *gameHook, unsigned char const *program, std::size_t size, bool hasGame);
+	virtual bool disabledRam() const;
+	virtual void romWrite(unsigned p, unsigned data, gb_ulong cc);
+	virtual void saveState(SaveState::Mem &ss) const;
+	virtual void loadState(SaveState::Mem const &ss);
+	virtual bool isAddressWithinAreaRombankCanBeMappedTo(unsigned addr, unsigned bank) const;
+	virtual void SyncState(NewState *ns, bool isReader);
+	virtual unsigned romRead(unsigned p);
+	virtual unsigned romDmaRead(unsigned p);
+	virtual bool sramRead(unsigned, unsigned &) { return false; }
+	virtual bool sramWrite(unsigned, unsigned) { return false; }
+	virtual void reset();
+	virtual unsigned char *stateData() { return reinterpret_cast<unsigned char *>(&s_); }
+	virtual std::size_t stateSize() const { return sizeof s_; }
+	virtual void setHram(unsigned char *ioamhram) { hram_ = ioamhram; }
+	virtual void setCodes(unsigned char const *digits, unsigned char const *counts);
+
+	// Whether a cartridge program is the Game Genie's
+	static bool is(unsigned char const *program, std::size_t size);
+
+private:
+	MemPtrs &memptrs_;
+	scoped_ptr<Mbc> game_;
+	RomHook *gameHook_;
+	std::vector<unsigned char> program_;
+	bool hasGame_;
+	unsigned char *hram_;
+	State s_;
+
+	void fillCodes();
+
+	bool running() const;
+	unsigned gameRead(unsigned p);
+	unsigned patched(unsigned p, unsigned value) const;
+};
+
 class Sachen : public Mbc {
 public:
 	explicit Sachen(MemPtrs &memptrs);
 	virtual bool disabledRam() const;
-	virtual void romWrite(unsigned const p, unsigned const data, unsigned long const /*cc*/);
+	virtual void romWrite(unsigned const p, unsigned const data, gb_ulong const /*cc*/);
 	virtual void saveState(SaveState::Mem &ss) const;
 	virtual void loadState(SaveState::Mem const &ss);
 	virtual bool isAddressWithinAreaRombankCanBeMappedTo(unsigned addr, unsigned bank) const;

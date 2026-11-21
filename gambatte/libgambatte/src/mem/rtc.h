@@ -19,6 +19,7 @@
 #ifndef RTC_H
 #define RTC_H
 
+#include "gbint.h"
 #include "time.h"
 #include "newstate.h"
 
@@ -40,13 +41,13 @@ public:
 	Rtc(Time &time);
 	unsigned char const * activeLatch() const { return activeLatch_; }
 
-	void latch(unsigned long const cc) { doLatch(cc); }
+	void latch(gb_ulong const cc) { doLatch(cc); }
 
 	void saveState(SaveState &state) const;
 	void loadState(SaveState const &state);
 
-	void getRtcRegs(unsigned long *dest, unsigned long const cc);
-	void setRtcRegs(unsigned long *src);
+	void getRtcRegs(gb_ulong *dest, gb_ulong const cc);
+	void setRtcRegs(gb_ulong *src);
 
 	void set(bool enabled, unsigned bank) {
 		bank &= 0xF;
@@ -57,20 +58,20 @@ public:
 		doSwapActive();
 	}
 
-	void write(unsigned data, unsigned long const cc) {
+	void write(unsigned data, gb_ulong const cc) {
 		(this->*activeSet_)(data, cc);
 	}
 
-	virtual void updateClock(unsigned long const cc);
+	virtual void updateClock(gb_ulong const cc);
 	virtual void setTime(unsigned long long const dividers);
-	virtual void setBaseTime(unsigned long long baseTime, unsigned long const cc);
+	virtual void setBaseTime(unsigned long long baseTime, gb_ulong const cc);
 
 	template<bool isReader>void SyncState(NewState *ns);
 
 private:
 	Time &time_;
 	unsigned char *activeLatch_;
-	void (Rtc::*activeSet_)(unsigned, unsigned long);
+	void (Rtc::*activeSet_)(unsigned, gb_ulong);
 	unsigned char index_;
 	bool enabled_;
 	unsigned char dataDh_;
@@ -78,20 +79,20 @@ private:
 	signed char dataH_;
 	signed char dataM_;
 	signed char dataS_;
-	unsigned long dataC_;
+	gb_ulong dataC_;
 	unsigned char latchDh_;
 	unsigned char latchDl_;
 	unsigned char latchH_;
 	unsigned char latchM_;
 	unsigned char latchS_;
 
-	void doLatch(unsigned long cycleCounter);
+	void doLatch(gb_ulong cycleCounter);
 	void doSwapActive();
-	void setDh(unsigned newDh, unsigned long cycleCounter);
-	void setDl(unsigned newLowdays, unsigned long cycleCounter);
-	void setH(unsigned newHours, unsigned long cycleCounter);
-	void setM(unsigned newMinutes, unsigned long cycleCounter);
-	void setS(unsigned newSeconds, unsigned long cycleCounter);
+	void setDh(unsigned newDh, gb_ulong cycleCounter);
+	void setDl(unsigned newLowdays, gb_ulong cycleCounter);
+	void setH(unsigned newHours, gb_ulong cycleCounter);
+	void setM(unsigned newMinutes, gb_ulong cycleCounter);
+	void setS(unsigned newSeconds, gb_ulong cycleCounter);
 };
 
 }

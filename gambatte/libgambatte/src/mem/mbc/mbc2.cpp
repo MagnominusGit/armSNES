@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "mbc.h"
 
 namespace gambatte {
@@ -31,7 +32,7 @@ bool Mbc2::disabledRam() const {
 	return !enableRam_;
 }
 
-void Mbc2::romWrite(unsigned const p, unsigned const data, unsigned long const /*cc*/) {
+void Mbc2::romWrite(unsigned const p, unsigned const data, gb_ulong const /*cc*/) {
 	switch (p & 0x4100) {
 	case 0x0000:
 		enableRam_ = (data & 0xF) == 0xA;

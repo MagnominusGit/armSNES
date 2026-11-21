@@ -19,6 +19,7 @@
 #ifndef CPU_H
 #define CPU_H
 
+#include "gbint.h"
 #include "memory.h"
 #include "newstate.h"
 
@@ -27,7 +28,7 @@ namespace gambatte {
 class CPU {
 public:
 	CPU();
-	long runFor(unsigned long cycles);
+	gb_long runFor(gb_ulong cycles);
 	void setStatePtrs(SaveState &state);
 	void saveState(SaveState &state);
 	void loadState(SaveState const &state);
@@ -39,6 +40,10 @@ public:
 	void saveSavedata() { mem_.saveSavedata(cycleCounter_); }
 
 	bool getMemoryArea(int which, unsigned char **data, int *length) { return mem_.getMemoryArea(which, data, length); }
+	bool swapMegaDuckCartridge(unsigned char const *data, std::size_t size, unsigned kind) { return mem_.swapMegaDuckCartridge(data, size, kind); }
+	bool attachCheatCart(unsigned char const *program, std::size_t size, bool hasGame) { return mem_.attachCheatCart(program, size, hasGame); }
+	CheatCartGb *cheatCart() const { return mem_.cheatCart(); }
+	void resetCartChip() { mem_.resetCartChip(); }
 
 	void setVideoBuffer(uint_least32_t *videoBuf, std::ptrdiff_t pitch) {
 		mem_.setVideoBuffer(videoBuf, pitch);
@@ -126,30 +131,30 @@ public:
 	PakInfo const pakInfo() const { return mem_.pakInfo(); }
 	void setSoundBuffer(uint_least32_t *buf) { mem_.setSoundBuffer(buf); }
 	std::size_t fillSoundBuffer() { return mem_.fillSoundBuffer(cycleCounter_); }
-	void stall(unsigned long cycles) { mem_.stall(cycleCounter_, cycles); }
+	void stall(gb_ulong cycles) { mem_.stall(cycleCounter_, cycles); }
 	bool isCgb() const { return mem_.isCgb(); }
 	bool inBootRom() const { return mem_.inBootRom(); }
 	bool isCgbDmg() const { return mem_.isCgbDmg(); }
 	bool isSgb() const { return mem_.isSgb(); }
 
-	void setDmgPaletteColor(int palNum, int colorNum, unsigned long rgb32) {
+	void setDmgPaletteColor(int palNum, int colorNum, gb_ulong rgb32) {
 		mem_.setDmgPaletteColor(palNum, colorNum, rgb32);
 	}
 
 	void setCgbPalette(unsigned *lut) { mem_.setCgbPalette(lut); }
 	void setTimeMode(bool useCycles) { mem_.setTimeMode(useCycles, cycleCounter_); }
-	void setRtcDivisorOffset(long const rtcDivisorOffset) { mem_.setRtcDivisorOffset(rtcDivisorOffset); }
+	void setRtcDivisorOffset(gb_long const rtcDivisorOffset) { mem_.setRtcDivisorOffset(rtcDivisorOffset); }
 	void setRtcSpeed(unsigned percent) { mem_.setRtcSpeed(percent, cycleCounter_); }
 	bool deviceTime() const { return mem_.deviceTime(); }
 	void setDeviceTime(bool device) { mem_.setDeviceTime(device, cycleCounter_); }
 	bool hasMbc3Rtc() const { return mem_.hasMbc3Rtc(); }
-	void getRtcRegs(unsigned long *dest) { mem_.getRtcRegs(dest, cycleCounter_); }
-	void setRtcRegs(unsigned long *src) { mem_.setRtcRegs(src, cycleCounter_); }
+	void getRtcRegs(gb_ulong *dest) { mem_.getRtcRegs(dest, cycleCounter_); }
+	void setRtcRegs(gb_ulong *src) { mem_.setRtcRegs(src, cycleCounter_); }
 	bool isHuC3() const { return mem_.isHuC3(); }
 	void getHuC3Regs(unsigned char *dest) { mem_.getHuC3Regs(dest, cycleCounter_); }
 	void setHuC3Regs(unsigned char *src) { mem_.setHuC3Regs(src, cycleCounter_); }
 	
-	void setCartBusPullUpTime(unsigned long const cartBusPullUpTime) { mem_.setCartBusPullUpTime(cartBusPullUpTime); }
+	void setCartBusPullUpTime(gb_ulong const cartBusPullUpTime) { mem_.setCartBusPullUpTime(cartBusPullUpTime); }
 
 	void setGameGenie(std::string const &codes) { mem_.setGameGenie(codes); }
 	void setGameShark(std::string const &codes) { mem_.setGameShark(codes); }
@@ -181,8 +186,8 @@ public:
 	unsigned long long timeNow() const { return mem_.timeNow(); }
 	void setTime(unsigned long long dividers) { mem_.setTime(dividers); }
 
-	unsigned long getCycleCounter() { return cycleCounter_; }
-	unsigned long getDivLastUpdate() { return mem_.getDivLastUpdate(); }
+	gb_ulong getCycleCounter() { return cycleCounter_; }
+	gb_ulong getDivLastUpdate() { return mem_.getDivLastUpdate(); }
 	unsigned char getRawIOAMHRAM(int offset) { return mem_.getRawIOAMHRAM(offset); }
 
 	void setSpeedupFlags(unsigned flags) { mem_.setSpeedupFlags(flags); }
@@ -191,7 +196,7 @@ public:
 
 private:
 	Memory mem_;
-	unsigned long cycleCounter_;
+	gb_ulong cycleCounter_;
 	unsigned short pc;
 	unsigned short sp;
 	unsigned hf1, hf2, zf, cf;
@@ -203,7 +208,7 @@ private:
 	int numInterruptAddresses;
 	int hitInterruptAddress;
 
-	template <bool callbacksActive> void process(unsigned long cycles);
+	template <bool callbacksActive> void process(gb_ulong cycles);
 
 	void (*traceCallback_)(void *);
 };

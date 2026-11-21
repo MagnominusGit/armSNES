@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "statesaver.h"
 #include "savestate.h"
 #include "array.h"
@@ -55,13 +56,13 @@ inline bool operator<(Saver const &l, Saver const &r) {
 	return std::strcmp(l.label, r.label) < 0;
 }
 
-void put24(std::ostringstream &file, unsigned long data) {
+void put24(std::ostringstream &file, gb_ulong data) {
 	file.put(data >> 16 & 0xFF);
 	file.put(data >>  8 & 0xFF);
 	file.put(data       & 0xFF);
 }
 
-void put32(std::ostringstream &file, unsigned long data) {
+void put32(std::ostringstream &file, gb_ulong data) {
 	file.put(data >> 24 & 0xFF);
 	file.put(data >> 16 & 0xFF);
 	file.put(data >>  8 & 0xFF);
@@ -81,7 +82,7 @@ void write(std::ostringstream &file, unsigned short data) {
 	file.put(data      & 0xFF);
 }
 
-void write(std::ostringstream &file, unsigned long data) {
+void write(std::ostringstream &file, gb_ulong data) {
 	static char const inf[] = { 0x00, 0x00, 0x04 };
 	file.write(inf, sizeof inf);
 	put32(file, data);
@@ -102,20 +103,20 @@ void write(std::ostringstream &file, unsigned short const *data, std::size_t siz
 	write(file, (unsigned char const *)data, size * sizeof data[0]);
 }
 
-unsigned long get24(std::istringstream &file) {
-	unsigned long tmp = file.get() & 0xFF;
+gb_ulong get24(std::istringstream &file) {
+	gb_ulong tmp = file.get() & 0xFF;
 	tmp =   tmp << 8 | (file.get() & 0xFF);
 	return  tmp << 8 | (file.get() & 0xFF);
 }
 
-unsigned long read(std::istringstream &file) {
-	unsigned long size = get24(file);
+gb_ulong read(std::istringstream &file) {
+	gb_ulong size = get24(file);
 	if (size > 4) {
 		file.ignore(size - 4);
 		size = 4;
 	}
 
-	unsigned long out = 0;
+	gb_ulong out = 0;
 	switch (size) {
 	case 4: out = (out | (file.get() & 0xFF)) << 8; // fall through.
 	case 3: out = (out | (file.get() & 0xFF)) << 8; // fall through.
@@ -134,7 +135,7 @@ inline void read(std::istringstream &file, unsigned short &data) {
 	data = read(file) & 0xFFFF;
 }
 
-inline void read(std::istringstream &file, unsigned long &data) {
+inline void read(std::istringstream &file, gb_ulong &data) {
 	data = read(file);
 }
 
@@ -242,6 +243,8 @@ SaverList::SaverList()
 	{ static char const label[] = { h,a,l,t,       NUL }; ADD(mem.halted); }
 	{ static char const label[] = { v,r,a,m,       NUL }; ADDPTR(mem.vram); }
 	{ static char const label[] = { s,r,a,m,       NUL }; ADDPTR(mem.sram); }
+	{ static char const label[] = { a,r,e,p,l,a,y, NUL }; ADDPTR(mem.cartChip); }
+	{ static char const label[] = { a,r,f,l,a,s,h, NUL }; ADDPTR(mem.cartFlash); }
 	{ static char const label[] = { w,r,a,m,       NUL }; ADDPTR(mem.wram); }
 	{ static char const label[] = { h,r,a,m,       NUL }; ADDPTR(mem.ioamhram); }
 	{ static char const label[] = { l,d,i,v,u,p,   NUL }; ADD(mem.divLastUpdate); }
@@ -315,6 +318,7 @@ SaverList::SaverList()
 	{ static char const label[] = { e,d,M,NO0,t,i,m, NUL }; ADD(ppu.enableDisplayM0Time); }
 	{ static char const label[] = { m,NO0,t,i,m,e, NUL }; ADD(ppu.lastM0Time); }
 	{ static char const label[] = { n,m,NO0,i,r,q, NUL }; ADD(ppu.nextM0Irq); }
+	{ static char const label[] = { m,NO0,s,c,h,e,d, NUL }; ADD(ppu.m0IrqScheduled); }
 	{ static char const label[] = { b,g,t,w,       NUL }; ADD(ppu.tileword); }
 	{ static char const label[] = { b,g,n,t,w,     NUL }; ADD(ppu.ntileword); }
 	{ static char const label[] = { w,i,n,y,p,o,s, NUL }; ADD(ppu.winYPos); }
@@ -338,12 +342,19 @@ SaverList::SaverList()
 	{ static char const label[] = { i,s,c,g,b,     NUL }; ADD(ppu.notCgbDmg); }
 	{ static char const label[] = { s,p,u,c,n,t,r, NUL }; ADD(spu.cycleCounter); }
 	{ static char const label[] = { s,p,u,c,n,t,l, NUL }; ADD(spu.lastUpdate); }
+	{ static char const label[] = { s,p,u,r,s,u,m, NUL }; ADD(spu.rsum); }
+	{ static char const label[] = { c,h,NO1,o,u,t, NUL }; ADD(spu.prevOut1); }
+	{ static char const label[] = { c,h,NO2,o,u,t, NUL }; ADD(spu.prevOut2); }
+	{ static char const label[] = { c,h,NO3,o,u,t, NUL }; ADD(spu.prevOut3); }
+	{ static char const label[] = { c,h,NO4,o,u,t, NUL }; ADD(spu.prevOut4); }
 	{ static char const label[] = { s,w,p,c,n,t,r, NUL }; ADD(spu.ch1.sweep.counter); }
 	{ static char const label[] = { s,w,p,s,h,d,w, NUL }; ADD(spu.ch1.sweep.shadow); }
 	{ static char const label[] = { s,w,p,n,e,g,   NUL }; ADD(spu.ch1.sweep.neg); }
 	{ static char const label[] = { d,u,t,NO1,c,t,r, NUL }; ADD(spu.ch1.duty.nextPosUpdate); }
 	{ static char const label[] = { d,u,t,NO1,p,o,s, NUL }; ADD(spu.ch1.duty.pos); }
 	{ static char const label[] = { d,u,t,NO1,h,i,   NUL }; ADD(spu.ch1.duty.high); }
+	{ static char const label[] = { d,u,t,NO1,f,h,i, NUL }; ADD(spu.ch1.duty.freqHigh); }
+	{ static char const label[] = { d,u,t,NO1,e,v,t, NUL }; ADD(spu.ch1.duty.events); }
 	{ static char const label[] = { e,n,v,NO1,c,t,r, NUL }; ADD(spu.ch1.env.counter); }
 	{ static char const label[] = { e,n,v,NO1,v,o,l, NUL }; ADD(spu.ch1.env.volume); }
 	{ static char const label[] = { e,n,v,NO1,c,l,k, NUL }; ADD(spu.ch1.env.clock); }
@@ -356,6 +367,8 @@ SaverList::SaverList()
 	{ static char const label[] = { d,u,t,NO2,c,t,r, NUL }; ADD(spu.ch2.duty.nextPosUpdate); }
 	{ static char const label[] = { d,u,t,NO2,p,o,s, NUL }; ADD(spu.ch2.duty.pos); }
 	{ static char const label[] = { d,u,t,NO2,h,i,   NUL }; ADD(spu.ch2.duty.high); }
+	{ static char const label[] = { d,u,t,NO2,f,h,i, NUL }; ADD(spu.ch2.duty.freqHigh); }
+	{ static char const label[] = { d,u,t,NO2,e,v,t, NUL }; ADD(spu.ch2.duty.events); }
 	{ static char const label[] = { e,n,v,NO2,c,t,r, NUL }; ADD(spu.ch2.env.counter); }
 	{ static char const label[] = { e,n,v,NO2,v,o,l, NUL }; ADD(spu.ch2.env.volume); }
 	{ static char const label[] = { e,n,v,NO2,c,l,k, NUL }; ADD(spu.ch2.env.clock); }
@@ -376,6 +389,7 @@ SaverList::SaverList()
 	{ static char const label[] = { c,NO3,m,a,s,t,r, NUL }; ADD(spu.ch3.master); }
 	{ static char const label[] = { l,f,s,r,c,t,r, NUL }; ADD(spu.ch4.lfsr.counter); }
 	{ static char const label[] = { l,f,s,r,r,e,g, NUL }; ADD(spu.ch4.lfsr.reg); }
+	{ static char const label[] = { l,f,s,r,o,n, NUL }; ADD(spu.ch4.lfsr.counting); }
 	{ static char const label[] = { e,n,v,NO4,c,t,r, NUL }; ADD(spu.ch4.env.counter); }
 	{ static char const label[] = { e,n,v,NO4,v,o,l, NUL }; ADD(spu.ch4.env.volume); }
 	{ static char const label[] = { e,n,v,NO4,c,l,k, NUL }; ADD(spu.ch4.env.clock); }
@@ -438,7 +452,7 @@ SaverList::SaverList()
 
 namespace {
 
-struct RgbSum { unsigned long rb, g; };
+struct RgbSum { gb_ulong rb, g; };
 
 void addPairs(RgbSum *const sum, uint_least32_t const *const p) {
 	sum[0].rb += (p[0] & 0xFF00FF) + (p[3] & 0xFF00FF);

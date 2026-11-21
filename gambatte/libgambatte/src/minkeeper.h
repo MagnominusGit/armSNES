@@ -19,6 +19,7 @@
 #ifndef MINKEEPER_H
 #define MINKEEPER_H
 
+#include "gbint.h"
 #include <algorithm>
 #include "newstate.h"
 
@@ -43,22 +44,22 @@ template<template<int> class T> struct Sum<T, 0> { enum { r = 0 }; };
 template<int ids>
 class MinKeeper {
 public:
-	explicit MinKeeper(unsigned long initValue);
+	explicit MinKeeper(gb_ulong initValue);
 	int min() const { return a_[0]; }
-	unsigned long minValue() const { return minValue_; }
+	gb_ulong minValue() const { return minValue_; }
 
 	template<int id>
-	void setValue(unsigned long cnt) {
+	void setValue(gb_ulong cnt) {
 		values_[id] = cnt;
 		updateValue<id / 2>(*this);
 	}
 
-	void setValue(int id, unsigned long cnt) {
+	void setValue(int id, gb_ulong cnt) {
 		values_[id] = cnt;
 		updateValueLut.call(id >> 1, *this);
 	}
 
-	unsigned long value(int id) const { return values_[id]; }
+	gb_ulong value(int id) const { return values_[id]; }
 
 	// not sure if i understood everything in minkeeper correctly, so something might be missing here?
 	template<bool isReader>
@@ -114,8 +115,8 @@ private:
 	};
 
 	static UpdateValueLut updateValueLut;
-	unsigned long values_[ids];
-	unsigned long minValue_;
+	gb_ulong values_[ids];
+	gb_ulong minValue_;
 	int a_[Sum<height>::r];
 
 	template<int id> static void updateValue(MinKeeper<ids> &m);
@@ -125,7 +126,7 @@ private:
 template<int ids> typename MinKeeper<ids>::UpdateValueLut MinKeeper<ids>::updateValueLut;
 
 template<int ids>
-MinKeeper<ids>::MinKeeper(unsigned long const initValue) {
+MinKeeper<ids>::MinKeeper(gb_ulong const initValue) {
 	std::fill(values_, values_ + ids, initValue);
 
 	// todo: simplify/less template bloat.

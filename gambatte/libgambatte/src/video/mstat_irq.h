@@ -1,6 +1,7 @@
 #ifndef MSTAT_IRQ_H
 #define MSTAT_IRQ_H
 
+#include "gbint.h"
 #include "lcddef.h"
 #include "../savestate.h"
 #include "../newstate.h"
@@ -14,14 +15,14 @@ public:
 	MStatIrqEvent() : lycReg_(0), statReg_(0) {}
 	void lcdReset(unsigned lycReg) { lycReg_ = lycReg; }
 
-	void lycRegChange(unsigned lycReg, unsigned long nextM0IrqTime,
-			unsigned long nextM2IrqTime, unsigned long cc, bool ds, bool cgb) {
+	void lycRegChange(unsigned lycReg, gb_ulong nextM0IrqTime,
+			gb_ulong nextM2IrqTime, gb_ulong cc, bool ds, bool cgb) {
 		if (cc + 5 * cgb + 1 - ds < std::min(nextM0IrqTime, nextM2IrqTime))
 			lycReg_ = lycReg;
 	}
 
-	void statRegChange(unsigned statReg, unsigned long nextM0IrqTime, unsigned long nextM1IrqTime,
-			unsigned long nextM2IrqTime, unsigned long cc, bool cgb) {
+	void statRegChange(unsigned statReg, gb_ulong nextM0IrqTime, gb_ulong nextM1IrqTime,
+			gb_ulong nextM2IrqTime, gb_ulong cc, bool cgb) {
 		if (cc + 2 * cgb < std::min(std::min(nextM0IrqTime, nextM1IrqTime), nextM2IrqTime))
 			statReg_ = statReg;
 	}

@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "lyc_irq.h"
 #include "counterdef.h"
 #include "lcddef.h"
@@ -28,12 +29,12 @@ using namespace gambatte;
 
 namespace {
 
-unsigned long schedule(unsigned statReg,
-		unsigned lycReg, LyCounter const &lyCounter, unsigned long cc) {
+gb_ulong schedule(unsigned statReg,
+		unsigned lycReg, LyCounter const &lyCounter, gb_ulong cc) {
 	return (statReg & lcdstat_lycirqen) && lycReg < lcd_lines_per_frame
 	? lyCounter.nextFrameCycle(lycReg
-		? 1l * lycReg * lcd_cycles_per_line - 2
-		: (lcd_lines_per_frame - 1l) * lcd_cycles_per_line + 6, cc)
+		? 1 * lycReg * lcd_cycles_per_line - 2
+		: (lcd_lines_per_frame - 1) * lcd_cycles_per_line + 6, cc)
 	: 1 * disabled_time;
 }
 
@@ -56,8 +57,8 @@ LycIrq::LycIrq()
 }
 
 void LycIrq::regChange(unsigned const statReg,
-		unsigned const lycReg, LyCounter const &lyCounter, unsigned long const cc) {
-	unsigned long const timeSrc = schedule(statReg, lycReg, lyCounter, cc);
+		unsigned const lycReg, LyCounter const &lyCounter, gb_ulong const cc) {
+	gb_ulong const timeSrc = schedule(statReg, lycReg, lyCounter, cc);
 	statRegSrc_ = statReg;
 	lycRegSrc_ = lycReg;
 	time_ = std::min(time_, timeSrc);
@@ -101,7 +102,7 @@ void LycIrq::saveState(SaveState &state) const {
 	state.ppu.lyc = lycReg_;
 }
 
-void LycIrq::reschedule(LyCounter const &lyCounter, unsigned long cc) {
+void LycIrq::reschedule(LyCounter const &lyCounter, gb_ulong cc) {
 	time_ = std::min(schedule(statReg_   , lycReg_   , lyCounter, cc),
 	                 schedule(statRegSrc_, lycRegSrc_, lyCounter, cc));
 }

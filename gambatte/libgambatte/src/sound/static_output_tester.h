@@ -19,6 +19,7 @@
 #ifndef STATIC_OUTPUT_TESTER_H
 #define STATIC_OUTPUT_TESTER_H
 
+#include "gbint.h"
 #include "envelope_unit.h"
 
 namespace gambatte {
@@ -27,7 +28,7 @@ template<class Channel, class Unit>
 class StaticOutputTester : public EnvelopeUnit::VolOnOffEvent {
 public:
 	StaticOutputTester(Channel const &ch, Unit &unit) : ch_(ch), unit_(unit) {}
-	void operator()(unsigned long cc);
+	void operator()(gb_ulong cc);
 
 private:
 	Channel const &ch_;
@@ -35,7 +36,7 @@ private:
 };
 
 template<class Channel, class Unit>
-void StaticOutputTester<Channel, Unit>::operator()(unsigned long cc) {
+void StaticOutputTester<Channel, Unit>::operator()(gb_ulong cc) {
 	if (ch_.soMask_ && ch_.master_ && ch_.envelopeUnit_.getVolume())
 		unit_.reviveCounter(cc);
 	else

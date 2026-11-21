@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "cpu.h"
 #include "memory.h"
 #include "savestate.h"
@@ -45,13 +46,13 @@ CPU::CPU()
 {
 }
 
-long CPU::runFor(unsigned long const cycles) {
+gb_long CPU::runFor(gb_ulong const cycles) {
 	if (traceCallback_ || mem_.slowCallbacksActive())
 		process<true>(cycles);
 	else
 		process<false>(cycles);
 
-	long const csb = mem_.cyclesSinceBlit(cycleCounter_);
+	gb_long const csb = mem_.cyclesSinceBlit(cycleCounter_);
 
 	if (cycleCounter_ & 0x80000000)
 		cycleCounter_ = mem_.resetCounters(cycleCounter_);
@@ -504,10 +505,10 @@ void CPU::loadState(SaveState const &state) {
 
 namespace {
 
-unsigned long freeze(Memory &mem, unsigned long cc) {
+gb_ulong freeze(Memory &mem, gb_ulong cc) {
 	mem.freeze(cc);
 	if (cc < mem.nextEventTime()) {
-		unsigned long cycles = mem.nextEventTime() - cc;
+		gb_ulong cycles = mem.nextEventTime() - cc;
 		cc += cycles + (-cycles & 3);
 	}
 
@@ -517,19 +518,19 @@ unsigned long freeze(Memory &mem, unsigned long cc) {
 }
 
 template <bool callbacksActive>
-void CPU::process(unsigned long const cycles) {
+void CPU::process(gb_ulong const cycles) {
 	mem_.setEndtime(cycleCounter_, cycles);
 	mem_.updateInput();
 
 	hitInterruptAddress = -1;
 
-	unsigned long cycleCounter = cycleCounter_;
+	gb_ulong cycleCounter = cycleCounter_;
 
 	while (mem_.isActive()) {
 
 		if (mem_.halted()) {
 			if (cc() < mem_.nextEventTime()) {
-				unsigned long cycles = mem_.nextEventTime() - cc();
+				gb_ulong cycles = mem_.nextEventTime() - cc();
 				cc() += cycles + (-cycles & 3);
 			}
 		} else while (cc() < mem_.nextEventTime()) {
@@ -568,7 +569,7 @@ void CPU::process(unsigned long const cycles) {
 				result[9] = h;
 				result[10] = l;
 				result[11] = prefetched_;
-				result[13] = mem_.ff_read<false>(0x44, cc());
+				result[13] = mem_.dmgFfRead(0x44, cc());
 			}
 
 			if (!prefetched_) {
@@ -659,7 +660,7 @@ void CPU::process(unsigned long const cycles) {
 				PC_READ_OPERAND(opcode_, operandHigh);
 				cc() = mem_.stop(cc() - 4, prefetched_);
 				if (cc() < mem_.nextEventTime()) {
-					unsigned long cycles = mem_.nextEventTime() - cc();
+					gb_ulong cycles = mem_.nextEventTime() - cc();
 					cc() += cycles + (-cycles & 3);
 				}
 
@@ -1073,7 +1074,7 @@ void CPU::process(unsigned long const cycles) {
 					prefetched_ = mem_.halt(cc());
 					cc() += mem_.cpuCycles(1 + !mem_.isCgb());
 					if (cc() < mem_.nextEventTime()) {
-						unsigned long cycles = mem_.nextEventTime() - cc();
+						gb_ulong cycles = mem_.nextEventTime() - cc();
 						cc() += cycles + (-cycles & 3);
 					}
 				}

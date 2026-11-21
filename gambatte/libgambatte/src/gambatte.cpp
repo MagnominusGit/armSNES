@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "gambatte.h"
 #include "cpu.h"
 #include "initstate.h"
@@ -73,16 +74,27 @@ struct GB::Priv {
 		cpu.saveState(state);
 		setInitState(state, loadflags & CGB_MODE, loadflags & SGB_MODE, loadflags & GBA_FLAG, samplesToStall << 1, cpu.romTitle());
 
+		// armGBA: the Mega Duck has no boot ROM; it powers on into the cartridge at 0000
+		if (loadflags & MEGA_DUCK)
+			state.mem.biosMode = false;
+		if (loadflags & MEGA_DUCK_LAPTOP)
+			state.cpu.sp = 0xFFFF;
+
 		if (loadflags & NO_BIOS)
 			setPostBiosState(state, loadflags & CGB_MODE, loadflags & GBA_FLAG, loadflags & MGB_FLAG, cpu.romTitle()[15] & 0x80, cpu.romTitle());
 
 		if (initialLoad)
 			setInitStateCart(state, loadflags & CGB_MODE, loadflags & GBA_FLAG);
 
+		if (initialLoad && (loadflags & MEGA_DUCK))
+			setMegaDuckVram(state);
+
 		if (loadflags & NO_BIOS && !(loadflags & CGB_MODE) && cpu.sachenLogo())
 			setSachenLogo(state, cpu.sachenLogo());
 
 		cpu.loadState(state);
+		// armGBA: the Action Replay powers on with the console
+		cpu.resetCartChip();
 
 		if (samplesToStall > 0)
 			cpu.stall(samplesToStall << 1);
@@ -108,7 +120,7 @@ std::ptrdiff_t GB::runFor(gambatte::uint_least32_t *const videoBuf, std::ptrdiff
 	p_->cpu.setVideoBuffer(videoBuf, pitch);
 	p_->cpu.setSoundBuffer(soundBuf);
 
-	long const cyclesSinceBlit = p_->cpu.runFor(samples * 2);
+	gb_long const cyclesSinceBlit = p_->cpu.runFor(samples * 2);
 	samples = p_->cpu.fillSoundBuffer();
 	return cyclesSinceBlit >= 0
 	     ? static_cast<std::ptrdiff_t>(samples) - (cyclesSinceBlit >> 1)
@@ -187,11 +199,11 @@ void GB::setRemoteCallback(unsigned char (*callback)()) {
 	p_->cpu.setRemoteCallback(callback);
 }
 
-void GB::setCartBusPullUpTime(unsigned long const cartBusPullUpTime) {
+void GB::setCartBusPullUpTime(gb_ulong const cartBusPullUpTime) {
 	p_->cpu.setCartBusPullUpTime(cartBusPullUpTime);
 }
 
-void GB::setRtcDivisorOffset(long const rtcDivisorOffset) {
+void GB::setRtcDivisorOffset(gb_long const rtcDivisorOffset) {
 	p_->cpu.setRtcDivisorOffset(rtcDivisorOffset);
 }
 
@@ -211,11 +223,11 @@ bool GB::hasMbc3Rtc() const {
 	return p_->cpu.loaded() && p_->cpu.hasMbc3Rtc();
 }
 
-void GB::getRtcRegs(unsigned long dest[11]) {
+void GB::getRtcRegs(gb_ulong dest[11]) {
 	p_->cpu.getRtcRegs(dest);
 }
 
-void GB::setRtcRegs(unsigned long src[11]) {
+void GB::setRtcRegs(gb_ulong src[11]) {
 	p_->cpu.setRtcRegs(src);
 }
 
@@ -385,6 +397,37 @@ void GB::saveSavedata(char *dest) {
 		p_->cpu.saveSavedata(dest);
 }
 
+bool GB::swapMegaDuckCartridge(char const *romdata, std::size_t size, unsigned kind) {
+	return p_->cpu.swapMegaDuckCartridge(reinterpret_cast<unsigned char const *>(romdata), size, kind);
+}
+
+bool GB::attachCheatCart(char const *program, std::size_t size, bool hasGame) {
+	return p_->cpu.attachCheatCart(reinterpret_cast<unsigned char const *>(program), size, hasGame);
+}
+
+void GB::setActionReplayControls(bool button, bool switchOn) {
+	if (CheatCartGb *const chip = p_->cpu.cheatCart()) {
+		chip->setButton(button);
+		chip->setSwitch(switchOn);
+	}
+}
+
+unsigned char * GB::actionReplayFlash(std::size_t *size) {
+	CheatCartGb *const chip = p_->cpu.cheatCart();
+	*size = 0;
+	return chip ? chip->kept(size) : 0;
+}
+
+void GB::setGameGenieCodes(unsigned char const *digits, unsigned char const *counts) {
+	if (CheatCartGb *const chip = p_->cpu.cheatCart())
+		chip->setCodes(digits, counts);
+}
+
+bool GB::actionReplayFlashChanged() {
+	CheatCartGb *const chip = p_->cpu.cheatCart();
+	return chip && chip->flashChanged();
+}
+
 bool GB::getMemoryArea(int which, unsigned char **data, int *length) {
 	if (p_->cpu.loaded())
 		return p_->cpu.getMemoryArea(which, data, length);
@@ -392,7 +435,7 @@ bool GB::getMemoryArea(int which, unsigned char **data, int *length) {
 		return false;
 }
 
-void GB::setDmgPaletteColor(int palNum, int colorNum, unsigned long rgb32) {
+void GB::setDmgPaletteColor(int palNum, int colorNum, gb_ulong rgb32) {
 	p_->cpu.setDmgPaletteColor(palNum, colorNum, rgb32);
 }
 
@@ -404,6 +447,11 @@ void GB::setTimeMode(bool useCycles) {
 	p_->cpu.setTimeMode(useCycles);
 }
 
+void GB::swapCheatFactory() {
+	if (CheatCartGb *const cart = p_->cpu.cheatCart())
+		cart->swapFactory();
+}
+
 bool GB::loadState(std::string const &filepath) {
 	if (p_->cpu.loaded()) {
 		if (p_->implicitSave())
@@ -412,7 +460,10 @@ bool GB::loadState(std::string const &filepath) {
 		SaveState state = SaveState();
 		p_->cpu.setStatePtrs(state);
 
-		if (StateSaver::loadState(state, filepath, true, p_->criticalLoadflags())) {
+		swapCheatFactory();
+		bool const loaded = StateSaver::loadState(state, filepath, true, p_->criticalLoadflags());
+		swapCheatFactory();
+		if (loaded) {
 			p_->cpu.loadState(state);
 			return true;
 		}
@@ -435,7 +486,7 @@ void GB::saveExactState(char *stateBuf) {
 bool GB::loadExactState(char const *stateBuf, std::size_t size) {
 	NewStateExternalBuffer loader(const_cast<char *>(stateBuf), size);
 	SyncState<true>(&loader);
-	return !loader.Overflow() && loader.GetLength() == static_cast<long>(size);
+	return !loader.Overflow() && loader.GetLength() == static_cast<gb_long>(size);
 }
 
 bool GB::saveState(gambatte::uint_least32_t const *videoBuf, std::ptrdiff_t pitch) {
@@ -463,7 +514,10 @@ bool GB::saveState(gambatte::uint_least32_t const *videoBuf, std::ptrdiff_t pitc
 		SaveState state = SaveState();
 		p_->cpu.setStatePtrs(state);
 		p_->cpu.saveState(state);
-		return StateSaver::saveState(state, videoBuf, pitch, filepath, p_->savedLoadflags());
+		swapCheatFactory();
+		bool const saved = StateSaver::saveState(state, videoBuf, pitch, filepath, p_->savedLoadflags());
+		swapCheatFactory();
+		return saved;
 	}
 
 	return false;
@@ -476,7 +530,11 @@ std::size_t GB::saveState(gambatte::uint_least32_t const *videoBuf, std::ptrdiff
 		SaveState state = SaveState();
 		p_->cpu.setStatePtrs(state);
 		p_->cpu.saveState(state);
-		return StateSaver::saveState(state, videoBuf, pitch, stateBuf, p_->savedLoadflags());
+		// A cheat cartridge's chip as it differs from its image (see CheatCartGb::swapFactory)
+		swapCheatFactory();
+		std::size_t const saved = StateSaver::saveState(state, videoBuf, pitch, stateBuf, p_->savedLoadflags());
+		swapCheatFactory();
+		return saved;
 	}
 
 	return 0;
@@ -486,7 +544,11 @@ bool GB::loadState(char const *stateBuf, std::size_t size) {
 	if (p_->cpu.loaded()) {
 		SaveState state = SaveState();
 		p_->cpu.setStatePtrs(state);
-		if (StateSaver::loadState(state, stateBuf, size, true, p_->criticalLoadflags())) {
+		// The chip is read as it differs from its image, and turned back whether or not the state loads
+		swapCheatFactory();
+		bool const loaded = StateSaver::loadState(state, stateBuf, size, true, p_->criticalLoadflags());
+		swapCheatFactory();
+		if (loaded) {
 			p_->cpu.loadState(state);
 			return true;
 		}

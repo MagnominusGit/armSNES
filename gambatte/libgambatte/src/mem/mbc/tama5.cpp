@@ -11,6 +11,7 @@
 //   GNU General Public License version 2 for more details.
 //
 
+#include "gbint.h"
 #include "mbc.h"
 
 namespace gambatte {
@@ -79,25 +80,25 @@ bool Tama5::disabledRam() const {
 	return false;
 }
 
-void Tama5::romWrite(unsigned, unsigned, unsigned long) {
+void Tama5::romWrite(unsigned, unsigned, gb_ulong) {
 }
 
-void Tama5::resetCc(unsigned long const oldCc, unsigned long const newCc) {
+void Tama5::resetCc(gb_ulong const oldCc, gb_ulong const newCc) {
 	unsigned char *const s = chip();
-	unsigned long last = s[last_cc] | s[last_cc + 1] << 8 | s[last_cc + 2] << 16 | 1ul * s[last_cc + 3] << 24;
+	gb_ulong last = s[last_cc] | s[last_cc + 1] << 8 | s[last_cc + 2] << 16 | 1u * s[last_cc + 3] << 24;
 	last = last > oldCc - newCc ? last - (oldCc - newCc) : 0;
 	for (unsigned i = 0; i < 4; ++i)
 		s[last_cc + i] = last >> i * 8;
 }
 
 // Brings the clock up to now: 2^22 cycles to the second.
-void Tama5::tick(unsigned long const cc) const {
+void Tama5::tick(gb_ulong const cc) const {
 	unsigned char *const s = chip();
-	unsigned long last = s[last_cc] | s[last_cc + 1] << 8 | s[last_cc + 2] << 16 | 1ul * s[last_cc + 3] << 24;
+	gb_ulong last = s[last_cc] | s[last_cc + 1] << 8 | s[last_cc + 2] << 16 | 1u * s[last_cc + 3] << 24;
 	if (last > cc)
 		last = cc;
 	unsigned char *const t = s + timer_page;
-	for (; cc - last >= 1ul << 22; last += 1ul << 22) {
+	for (; cc - last >= 1u << 22; last += 1u << 22) {
 		if (s[stopped] || !step(t + second_1, 0, 60) || !step(t + minute_1, 0, 60))
 			continue;
 		unsigned hour = t[hour_1];
@@ -128,7 +129,7 @@ void Tama5::tick(unsigned long const cc) const {
 		s[last_cc + i] = last >> i * 8;
 }
 
-void Tama5::write(unsigned const p, unsigned data, unsigned long const cc) {
+void Tama5::write(unsigned const p, unsigned data, gb_ulong const cc) {
 	unsigned char *const s = chip();
 	if (p & 1) {
 		s[reg] = data;
@@ -187,7 +188,7 @@ void Tama5::write(unsigned const p, unsigned data, unsigned long const cc) {
 	}
 }
 
-unsigned Tama5::read(unsigned const p, unsigned long const cc) const {
+unsigned Tama5::read(unsigned const p, gb_ulong const cc) const {
 	if (p & 1)
 		return 0xFF;
 	unsigned char *const s = chip();

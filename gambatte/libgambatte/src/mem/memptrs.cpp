@@ -281,6 +281,10 @@ void MemPtrs::disconnectOamDmaAreas() {
 		::disconnectOamDmaAreas<false>(rmem_, wmem_, oamDmaSrc_);
 	if (romHooked_)
 		std::fill_n(rmem_, 8, static_cast<unsigned char *>(0));
+	if (sramHooked_) {
+		rmem_[0xB] = rmem_[0xA] = 0;
+		wmem_[0xB] = wmem_[0xA] = 0;
+	}
 }
 
 bool MemPtrs::isInOamDmaConflictArea(unsigned p) const {

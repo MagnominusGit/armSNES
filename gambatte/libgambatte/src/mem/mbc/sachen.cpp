@@ -11,6 +11,7 @@
 //   GNU General Public License version 2 for more details.
 //
 
+#include "gbint.h"
 #include "mbc.h"
 
 namespace gambatte {
@@ -35,7 +36,7 @@ bool Sachen::disabledRam() const {
 	return true;
 }
 
-void Sachen::romWrite(unsigned const p, unsigned const data, unsigned long const /*cc*/) {
+void Sachen::romWrite(unsigned const p, unsigned const data, gb_ulong const /*cc*/) {
 	switch (p >> 13 & 3) {
 	case 0:
 		if ((bank_ & 0x30) == 0x30)

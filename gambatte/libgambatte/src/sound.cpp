@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "sound.h"
 #include "gambatte.h"
 #include "savestate.h"
@@ -66,7 +67,7 @@ void PSG::init(bool cgb, bool agb) {
 
 void PSG::reset(bool ds) {
 	int const divOffset = lastUpdate_ & ds;
-	unsigned long const cc = cycleCounter_ + divOffset;
+	gb_ulong const cc = cycleCounter_ + divOffset;
 	// cycleCounter >> 12 & 7 represents the frame sequencer position.
 	cycleCounter_ = (cc & 0xFFF) + 2 * (~(cc + 1 + !ds) & 0x800);
 	lastUpdate_ = ((lastUpdate_ + 3) & -4) - !ds;
@@ -78,7 +79,7 @@ void PSG::reset(bool ds) {
 
 void PSG::divReset(bool ds) {
 	int const divOffset = lastUpdate_ & ds;
-	unsigned long const cc = cycleCounter_ + divOffset;
+	gb_ulong const cc = cycleCounter_ + divOffset;
 	cycleCounter_ = ((cc & -0x1000) + 2 * (cc & 0x800) - divOffset) % SoundUnit::counter_max;
 	ch1_.resetCc(cc - divOffset, cycleCounter_);
 	ch2_.resetCc(cc - divOffset, cycleCounter_);
@@ -86,12 +87,12 @@ void PSG::divReset(bool ds) {
 	ch4_.resetCc(cc - divOffset, cycleCounter_);
 }
 
-void PSG::speedChange(unsigned long const cpuCc, bool const ds) {
+void PSG::speedChange(gb_ulong const cpuCc, bool const ds) {
 	generateSamples(cpuCc, ds);
 	lastUpdate_ -= ds;
 	// correct for cycles since DIV reset (if any).
 	if (!ds) {
-		unsigned long const cc = cycleCounter_;
+		gb_ulong const cc = cycleCounter_;
 		unsigned const divCycles = cc & 0xFFF;
 		cycleCounter_ = cc - divCycles / 2 - lastUpdate_ % 2;
 		ch1_.resetCc(cc, cycleCounter_);
@@ -108,6 +109,7 @@ void PSG::setStatePtrs(SaveState &state) {
 void PSG::saveState(SaveState &state) {
 	state.spu.cycleCounter = cycleCounter_;
 	state.spu.lastUpdate = (lastUpdate_ + 1) % 4;
+	state.spu.rsum = rsum_ ^ 0x8000;
 	ch1_.saveState(state, cycleCounter_);
 	ch2_.saveState(state, cycleCounter_);
 	ch3_.saveState(state);
@@ -122,13 +124,17 @@ void PSG::loadState(SaveState const &state) {
 
 	cycleCounter_ = state.spu.cycleCounter;
 	lastUpdate_ = state.cpu.cycleCounter - (1 - state.spu.lastUpdate) % 4u;
+	rsum_ = state.spu.rsum ^ 0x8000;
 	setSoVolume(state.mem.ioamhram.get()[0x124]);
 	mapSo(state.mem.ioamhram.get()[0x125]);
 	enabled_ = state.mem.ioamhram.get()[0x126] >> 7 & 1;
+	ch1_.restoreEvents(state);
+	ch2_.restoreEvents(state);
+	ch4_.restoreCounting(state);
 }
 
-inline void PSG::accumulateChannels(unsigned long const cycles) {
-	unsigned long const cc = cycleCounter_;
+inline void PSG::accumulateChannels(gb_ulong const cycles) {
+	gb_ulong const cc = cycleCounter_;
 	uint_least32_t *const buf = buffer_ + bufferPos_;
 	std::memset(buf, 0, cycles * sizeof *buf);
 	ch1_.update(buf, soVol_, cc, cc + cycles);
@@ -138,8 +144,8 @@ inline void PSG::accumulateChannels(unsigned long const cycles) {
 	cycleCounter_ = (cc + cycles) % SoundUnit::counter_max;
 }
 
-void PSG::generateSamples(unsigned long const cpuCc, bool const doubleSpeed) {
-	unsigned long const cycles = (cpuCc - lastUpdate_) >> (1 + doubleSpeed);
+void PSG::generateSamples(gb_ulong const cpuCc, bool const doubleSpeed) {
+	gb_ulong const cycles = (cpuCc - lastUpdate_) >> (1 + doubleSpeed);
 	lastUpdate_ += cycles << (1 + doubleSpeed);
 
 	if (!(speedupFlags_ & GB::NO_SOUND)) {
@@ -150,7 +156,7 @@ void PSG::generateSamples(unsigned long const cpuCc, bool const doubleSpeed) {
 	bufferPos_ += cycles;
 }
 
-void PSG::resetCounter(unsigned long newCc, unsigned long oldCc, bool doubleSpeed) {
+void PSG::resetCounter(gb_ulong newCc, gb_ulong oldCc, bool doubleSpeed) {
 	generateSamples(oldCc, doubleSpeed);
 	lastUpdate_ = newCc - (oldCc - lastUpdate_);
 }
@@ -206,8 +212,8 @@ static bool isBigEndianSampleOrder() {
 	return u.uc[0];
 }
 
-static unsigned long so1Mul() { return isBigEndianSampleOrder() ? 0x00000001 : 0x00010000; }
-static unsigned long so2Mul() { return isBigEndianSampleOrder() ? 0x00010000 : 0x00000001; }
+static gb_ulong so1Mul() { return isBigEndianSampleOrder() ? 0x00000001 : 0x00010000; }
+static gb_ulong so2Mul() { return isBigEndianSampleOrder() ? 0x00010000 : 0x00000001; }
 
 void PSG::setSoVolume(unsigned nr50) {
 	soVol_ = ((nr50      & 0x7) + 1) * so1Mul() * 64
@@ -215,7 +221,7 @@ void PSG::setSoVolume(unsigned nr50) {
 }
 
 void PSG::mapSo(unsigned nr51) {
-	unsigned long so = nr51 * so1Mul() + (nr51 >> 4) * so2Mul();
+	gb_ulong so = nr51 * so1Mul() + (nr51 >> 4) * so2Mul();
 	ch1_.setSo((so      & 0x00010001) * 0xFFFF, cycleCounter_);
 	ch2_.setSo((so >> 1 & 0x00010001) * 0xFFFF, cycleCounter_);
 	ch3_.setSo((so >> 2 & 0x00010001) * 0xFFFF);
@@ -229,18 +235,18 @@ unsigned PSG::getStatus() const {
 	     | ch4_.isActive() << 3;
 }
 
-unsigned long PSG::callbackCycleOffset(unsigned long const cpuCc, bool const doubleSpeed) const {
-	unsigned long const cyclesOff = (cpuCc - lastUpdate_) >> (1 + doubleSpeed);
+gb_ulong PSG::callbackCycleOffset(gb_ulong const cpuCc, bool const doubleSpeed) const {
+	gb_ulong const cyclesOff = (cpuCc - lastUpdate_) >> (1 + doubleSpeed);
 	return bufferPos_ + cyclesOff;
 }
 
-unsigned char PSG::pcm12Read(unsigned long const cpuCc, bool const doubleSpeed) {
+unsigned char PSG::pcm12Read(gb_ulong const cpuCc, bool const doubleSpeed) {
 	generateSamples(cpuCc, doubleSpeed);
 	return ((ch2_.isActive() ? ch2_.getVolume() : 0) << 4)
 	| (ch1_.isActive() ? ch1_.getVolume() : 0);
 }
 
-unsigned char PSG::pcm34Read(unsigned long const cpuCc, bool const doubleSpeed) {
+unsigned char PSG::pcm34Read(gb_ulong const cpuCc, bool const doubleSpeed) {
 	generateSamples(cpuCc, doubleSpeed);
 	return ((ch4_.isActive() ? ch4_.getVolume() : 0) << 4)
 	| (ch3_.isActive() ? ch3_.getVolume() : 0);

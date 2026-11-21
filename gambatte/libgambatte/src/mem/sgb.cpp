@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "sgb.h"
 #include "../savestate.h"
 
@@ -89,11 +90,11 @@ Sgb::Sgb()
 	spc.init();
 }
 
-unsigned long Sgb::gbcToRgb32(unsigned const bgr15) {
+gb_ulong Sgb::gbcToRgb32(unsigned const bgr15) {
 	return cgbColorsRgb32_[bgr15 & 0x7FFF];
 }
 
-unsigned long Sgb::gbcToRgb32(unsigned const bgr15, unsigned const fade) {
+gb_ulong Sgb::gbcToRgb32(unsigned const bgr15, unsigned const fade) {
 	int const r = (bgr15 & 0x1F) - fade;
 	int const g = ((bgr15 >> 5) & 0x1F) - fade;
 	int const b = ((bgr15 >> 10) & 0x1F) - fade;
@@ -221,7 +222,7 @@ void Sgb::updateScreen(bool blanklcd) {
 		break;
 	case 2:
 	{
-		unsigned long const black = gbcToRgb32(0);
+		gb_ulong const black = gbcToRgb32(0);
 		for (unsigned y = 0; y < 144; y++) {
 			for (unsigned x = 0; x < 160; x++)
 				gbFrame[y * 256 + x] = black;
@@ -231,7 +232,7 @@ void Sgb::updateScreen(bool blanklcd) {
 	}
 	case 3:
 	{
-		unsigned long const pal0 = palette[0];
+		gb_ulong const pal0 = palette[0];
 		for (unsigned y = 0; y < 144; y++) {
 			for (unsigned x = 0; x < 160; x++)
 				gbFrame[y * 256 + x] = pal0;
@@ -247,7 +248,7 @@ void Sgb::updateScreen(bool blanklcd) {
 		std::memcpy(systemTileColors, tileColors, sizeof tileColors);
 	}
 
-	unsigned long colors[16 * 4];
+	gb_ulong colors[16 * 4];
 	if (borderFade == 0) {
 		for (unsigned i = 0; i < 16 * 4; i++)
 			colors[i] = gbcToRgb32(systemTileColors[i]);
@@ -305,7 +306,7 @@ unsigned Sgb::updateScreenBorder(uint_least32_t *videoBuf, std::ptrdiff_t pitch)
 	uint_least32_t frame[256 * 224];
 	std::memset(frame, 0, sizeof frame);
 
-	unsigned long colors[16 * 4];
+	gb_ulong colors[16 * 4];
 	if (borderFade == 0) {
 		for (unsigned i = 0; i < 16 * 4; i++)
 			colors[i] = gbcToRgb32(systemTileColors[i]);

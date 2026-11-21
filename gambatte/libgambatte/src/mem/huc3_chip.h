@@ -19,6 +19,7 @@
 #ifndef HuC3Chip_H
 #define HuC3Chip_H
 
+#include "gbint.h"
 #include "time.h"
 #include "infrared.h"
 
@@ -43,22 +44,22 @@ public:
 	bool isHuC3() const { return enabled_; }
 	void set(bool enabled) { enabled_ = enabled; }
 
-	void getHuC3Regs(unsigned char *dest, unsigned long cycleCounter);
+	void getHuC3Regs(unsigned char *dest, gb_ulong cycleCounter);
 	void setHuC3Regs(unsigned char *src);
 
-	void resetCc(unsigned long oldCc, unsigned long newCc);
-	void speedChange(unsigned long cycleCounter);
+	void resetCc(gb_ulong oldCc, gb_ulong newCc);
+	void speedChange(gb_ulong cycleCounter);
 
-	void accumulateSamples(unsigned long cycleCounter);
+	void accumulateSamples(gb_ulong cycleCounter);
 	unsigned generateSamples(short *soundBuf);
 
-	unsigned char read(unsigned p, unsigned long const cc);
-	void write(unsigned p, unsigned data, unsigned long cycleCounter);
+	unsigned char read(unsigned p, gb_ulong const cc);
+	void write(unsigned p, unsigned data, gb_ulong cycleCounter);
 	template<bool isReader>void SyncState(NewState *ns);
 
-	virtual void updateClock(unsigned long const cc);
+	virtual void updateClock(gb_ulong const cc);
 	virtual void setTime(unsigned long long const dividers);
-	virtual void setBaseTime(unsigned long long baseTime, unsigned long const cc);
+	virtual void setBaseTime(unsigned long long baseTime, gb_ulong const cc);
 
 private:
 	enum { max_samples = 35112 + 2064 };
@@ -69,13 +70,13 @@ private:
 	unsigned char ioIndex_;
 	unsigned char transferValue_;
 	unsigned char ramflag_;
-	unsigned long rtcCycles_;
+	gb_ulong rtcCycles_;
 	short toneBuf_[max_samples * 2];
 	short currentSample_;
-	unsigned long toneBufPos_;
-	unsigned long toneLastUpdate_;
-	unsigned long nextPhaseChangeTime_;
-	long remainingToneSamples_;
+	gb_ulong toneBufPos_;
+	gb_ulong toneLastUpdate_;
+	gb_ulong nextPhaseChangeTime_;
+	gb_long remainingToneSamples_;
 	bool enabled_;
 	bool committing_;
 	bool highIoReadOnly_;

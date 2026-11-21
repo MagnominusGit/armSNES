@@ -19,6 +19,7 @@
 #ifndef SOUND_H
 #define SOUND_H
 
+#include "gbint.h"
 #include "sound/channel1.h"
 #include "sound/channel2.h"
 #include "sound/channel3.h"
@@ -37,9 +38,9 @@ public:
 	void saveState(SaveState &state);
 	void loadState(SaveState const &state);
 
-	void generateSamples(unsigned long cycleCounter, bool doubleSpeed);
-	void resetCounter(unsigned long newCc, unsigned long oldCc, bool doubleSpeed);
-	void speedChange(unsigned long cc, bool doubleSpeed);
+	void generateSamples(gb_ulong cycleCounter, bool doubleSpeed);
+	void resetCounter(gb_ulong newCc, gb_ulong oldCc, bool doubleSpeed);
+	void speedChange(gb_ulong cc, bool doubleSpeed);
 	std::size_t fillBuffer();
 	void setBuffer(uint_least32_t *buf) { buffer_ = buf; bufferPos_ = 0; }
 
@@ -74,9 +75,9 @@ public:
 	void mapSo(unsigned nr51);
 	unsigned getStatus() const;
 
-	unsigned long callbackCycleOffset(unsigned long cycleCounter, bool doubleSpeed) const;
-	unsigned char pcm12Read(unsigned long cycleCounter, bool doubleSpeed);
-	unsigned char pcm34Read(unsigned long cycleCounter, bool doubleSpeed);
+	gb_ulong callbackCycleOffset(gb_ulong cycleCounter, bool doubleSpeed) const;
+	unsigned char pcm12Read(gb_ulong cycleCounter, bool doubleSpeed);
+	unsigned char pcm34Read(gb_ulong cycleCounter, bool doubleSpeed);
 
 	void setSpeedupFlags(unsigned flags) { speedupFlags_ = flags; }
 
@@ -89,15 +90,15 @@ private:
 	Channel4 ch4_;
 	uint_least32_t *buffer_;
 	std::size_t bufferPos_;
-	unsigned long lastUpdate_;
-	unsigned long cycleCounter_;
-	unsigned long soVol_;
+	gb_ulong lastUpdate_;
+	gb_ulong cycleCounter_;
+	gb_ulong soVol_;
 	uint_least32_t rsum_;
 	bool enabled_;
 
 	unsigned speedupFlags_;
 
-	void accumulateChannels(unsigned long cycles);
+	void accumulateChannels(gb_ulong cycles);
 };
 
 }

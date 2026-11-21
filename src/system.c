@@ -253,8 +253,8 @@ void systemRunFrame(void) {
 	if (cart.st018) {
 		st018FrameStart();
 	}
-	// The MSU-1 looks at the DSP as it plays.
-	smpThreaded = smpThreadable = systemFast && systemSoundThread && !cart.msu1 && smpCanThread();
+	// The MSU-1 looks at the DSP as it plays, and it and the Super Game Boy hand it their sound.
+	smpThreaded = smpThreadable = systemFast && systemSoundThread && !cart.msu1 && !cart.icd && smpCanThread();
 	sys.frameEvent = false;
 	if (systemFast && !inputGuns) {
 		cpuRunFast();

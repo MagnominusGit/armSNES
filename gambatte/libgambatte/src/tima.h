@@ -19,6 +19,7 @@
 #ifndef TIMA_H
 #define TIMA_H
 
+#include "gbint.h"
 #include "interruptrequester.h"
 
 namespace gambatte {
@@ -27,9 +28,9 @@ class TimaInterruptRequester {
 public:
 	explicit TimaInterruptRequester(InterruptRequester &intreq) : intreq_(intreq) {}
 	void flagIrq() const { intreq_.flagIrq(4); }
-	void flagIrq(unsigned long cc) const { intreq_.flagIrq(4, cc); }
-	unsigned long nextIrqEventTime() const { return intreq_.eventTime(intevent_tima); }
-	void setNextIrqEventTime(unsigned long time) const { intreq_.setEventTime<intevent_tima>(time); }
+	void flagIrq(gb_ulong cc) const { intreq_.flagIrq(4, cc); }
+	gb_ulong nextIrqEventTime() const { return intreq_.eventTime(intevent_tima); }
+	void setNextIrqEventTime(gb_ulong time) const { intreq_.setEventTime<intevent_tima>(time); }
 
 private:
 	InterruptRequester &intreq_;
@@ -40,31 +41,31 @@ public:
 	Tima();
 	void saveState(SaveState &) const;
 	void loadState(const SaveState &, TimaInterruptRequester timaIrq);
-	void resetCc(unsigned long oldCc, unsigned long newCc, TimaInterruptRequester timaIrq);
-	void setTima(unsigned tima, unsigned long cc, TimaInterruptRequester timaIrq);
-	void setTma(unsigned tma, unsigned long cc, TimaInterruptRequester timaIrq);
-	void setTac(unsigned tac, unsigned long cc, TimaInterruptRequester timaIrq, bool agbFlag);
-	void divReset(unsigned long cc, TimaInterruptRequester);
+	void resetCc(gb_ulong oldCc, gb_ulong newCc, TimaInterruptRequester timaIrq);
+	void setTima(unsigned tima, gb_ulong cc, TimaInterruptRequester timaIrq);
+	void setTma(unsigned tma, gb_ulong cc, TimaInterruptRequester timaIrq);
+	void setTac(unsigned tac, gb_ulong cc, TimaInterruptRequester timaIrq, bool agbFlag);
+	void divReset(gb_ulong cc, TimaInterruptRequester);
 	void speedChange(TimaInterruptRequester);
-	unsigned long divLastUpdate() const { return divLastUpdate_; }
-	unsigned tima(unsigned long cc);
+	gb_ulong divLastUpdate() const { return divLastUpdate_; }
+	unsigned tima(gb_ulong cc);
 	void doIrqEvent(TimaInterruptRequester timaIrq);
 	template<bool isReader>void SyncState(NewState *ns);
 
 private:
-	unsigned long divLastUpdate_;
-	unsigned long lastUpdate_;
-	unsigned long tmatime_;
+	gb_ulong divLastUpdate_;
+	gb_ulong lastUpdate_;
+	gb_ulong tmatime_;
 	unsigned char tima_;
 	unsigned char tma_;
 	unsigned char tac_;
 
-	void updateIrq(unsigned long const cc, TimaInterruptRequester timaIrq) {
+	void updateIrq(gb_ulong const cc, TimaInterruptRequester timaIrq) {
 		while (cc >= timaIrq.nextIrqEventTime())
 			doIrqEvent(timaIrq);
 	}
 
-	void updateTima(unsigned long cc);
+	void updateTima(gb_ulong cc);
 };
 
 }

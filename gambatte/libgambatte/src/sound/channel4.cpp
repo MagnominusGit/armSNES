@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "channel4.h"
 #include "psgdef.h"
 #include "../savestate.h"
@@ -26,7 +27,7 @@ using namespace gambatte;
 
 namespace {
 
-unsigned long toPeriod(unsigned const nr3) {
+gb_ulong toPeriod(unsigned const nr3) {
 	unsigned s = nr3 / (1u * psg_nr43_s & -psg_nr43_s) + 3;
 	unsigned r = nr3 & psg_nr43_r;
 
@@ -48,10 +49,10 @@ Channel4::Lfsr::Lfsr()
 {
 }
 
-void Channel4::Lfsr::updateBackupCounter(unsigned long const cc) {
+void Channel4::Lfsr::updateBackupCounter(gb_ulong const cc) {
 	if (backupCounter_ <= cc) {
-		unsigned long const period = toPeriod(nr3_);
-		unsigned long periods = (cc - backupCounter_) / period + 1;
+		gb_ulong const period = toPeriod(nr3_);
+		gb_ulong periods = (cc - backupCounter_) / period + 1;
 		backupCounter_ += periods * period;
 
 		if (master_ && nr3_ < 0xE * (1u * psg_nr43_s & -psg_nr43_s)) {
@@ -76,7 +77,7 @@ void Channel4::Lfsr::updateBackupCounter(unsigned long const cc) {
 	}
 }
 
-void Channel4::Lfsr::reviveCounter(unsigned long cc) {
+void Channel4::Lfsr::reviveCounter(gb_ulong cc) {
 	updateBackupCounter(cc);
 	counter_ = backupCounter_;
 }
@@ -95,12 +96,12 @@ inline void Channel4::Lfsr::event() {
 	backupCounter_ = counter_;
 }
 
-bool Channel4::Lfsr::isHighState(unsigned long const cc) {
+bool Channel4::Lfsr::isHighState(gb_ulong const cc) {
 	updateBackupCounter(cc);
 	return ~reg_ & 1;
 }
 
-void Channel4::Lfsr::nr3Change(unsigned newNr3, unsigned long cc) {
+void Channel4::Lfsr::nr3Change(unsigned newNr3, gb_ulong cc) {
 	updateBackupCounter(cc);
 	nr3_ = newNr3;
 	
@@ -109,7 +110,7 @@ void Channel4::Lfsr::nr3Change(unsigned newNr3, unsigned long cc) {
 	counter_ = cc;
 }
 
-void Channel4::Lfsr::nr4Init(unsigned long cc) {
+void Channel4::Lfsr::nr4Init(gb_ulong cc) {
 	disableMaster();
 	updateBackupCounter(cc);
 	master_ = true;
@@ -117,31 +118,40 @@ void Channel4::Lfsr::nr4Init(unsigned long cc) {
 	counter_ = backupCounter_;
 }
 
-void Channel4::Lfsr::reset(unsigned long cc) {
+void Channel4::Lfsr::reset(gb_ulong cc) {
 	nr3_ = 0;
 	disableMaster();
 	backupCounter_ = cc + toPeriod(nr3_);
 }
 
-void Channel4::Lfsr::resetCc(unsigned long cc, unsigned long newCc) {
+// armGBA: whether the LFSR counted when saved, once the rest of the sound has loaded and tested its
+// output
+void Channel4::Lfsr::restoreCounting(unsigned char const counting) {
+	if (counting)
+		counter_ = counting == 2 ? backupCounter_ : 1 * counter_disabled;
+}
+
+void Channel4::Lfsr::resetCc(gb_ulong cc, gb_ulong newCc) {
 	updateBackupCounter(cc);
 	backupCounter_ -= cc - newCc;
 	if (counter_ != counter_disabled)
 		counter_ -= cc - newCc;
 }
 
-void Channel4::Lfsr::resetCounters(unsigned long cc) {
+void Channel4::Lfsr::resetCounters(gb_ulong cc) {
 	resetCc(cc, cc - counter_max);
 }
 
-void Channel4::Lfsr::saveState(SaveState &state, unsigned long cc) {
+void Channel4::Lfsr::saveState(SaveState &state, gb_ulong cc) {
 	updateBackupCounter(cc);
 	state.spu.ch4.lfsr.counter = backupCounter_;
+	state.spu.ch4.lfsr.counting = counter_ == counter_disabled ? 1 : 2;
 	state.spu.ch4.lfsr.reg = reg_;
 }
 
 void Channel4::Lfsr::loadState(SaveState const &state) {
-	counter_ = backupCounter_ = std::max(state.spu.ch4.lfsr.counter, state.spu.cycleCounter);
+	// armGBA: as saved, even when past, as the machine had it
+	counter_ = backupCounter_ = state.spu.ch4.lfsr.counter;
 	reg_ = state.spu.ch4.lfsr.reg;
 	master_ = state.spu.ch4.master;
 	nr3_ = state.mem.ioamhram.get()[0x122];
@@ -177,12 +187,12 @@ void Channel4::setEvent() {
 		nextEventUnit_ = &lengthCounter_;
 }
 
-void Channel4::setNr1(unsigned data, unsigned long cc) {
+void Channel4::setNr1(unsigned data, gb_ulong cc) {
 	lengthCounter_.nr1Change(data, nr4_, cc);
 	setEvent();
 }
 
-void Channel4::setNr2(unsigned data, unsigned long cc) {
+void Channel4::setNr2(unsigned data, gb_ulong cc) {
 	envelopeUnit_.nr2Change(data, cc, master_);
 	if (!(data & (psg_nr2_initvol | psg_nr2_inc)))
 		disableMaster_();
@@ -192,7 +202,7 @@ void Channel4::setNr2(unsigned data, unsigned long cc) {
 	setEvent();
 }
 
-void Channel4::setNr4(unsigned const data, unsigned long const cc) {
+void Channel4::setNr4(unsigned const data, gb_ulong const cc) {
 	lengthCounter_.nr4Change(nr4_, data, cc);
 	nr4_ = data;
 
@@ -208,19 +218,20 @@ void Channel4::setNr4(unsigned const data, unsigned long const cc) {
 	setEvent();
 }
 
-void Channel4::setSo(unsigned long soMask, unsigned long cc) {
+void Channel4::setSo(gb_ulong soMask, gb_ulong cc) {
 	soMask_ = soMask;
 	staticOutputTest_(cc);
 	setEvent();
 }
 
-void Channel4::reset(unsigned long cc) {
+void Channel4::reset(gb_ulong cc) {
 	lfsr_.reset(cc);
 	envelopeUnit_.reset();
 	setEvent();
 }
 
-void Channel4::saveState(SaveState &state, unsigned long cc) {
+void Channel4::saveState(SaveState &state, gb_ulong cc) {
+	state.spu.prevOut4 = prevOut_;
 	lfsr_.saveState(state, cc);
 	envelopeUnit_.saveState(state.spu.ch4.env);
 	lengthCounter_.saveState(state.spu.ch4.lcounter);
@@ -230,6 +241,7 @@ void Channel4::saveState(SaveState &state, unsigned long cc) {
 }
 
 void Channel4::loadState(SaveState const &state) {
+	prevOut_ = state.spu.prevOut4;
 	lfsr_.loadState(state);
 	envelopeUnit_.loadState(state.spu.ch4.env, state.mem.ioamhram.get()[0x121],
 		state.spu.cycleCounter);
@@ -239,14 +251,14 @@ void Channel4::loadState(SaveState const &state) {
 	master_ = state.spu.ch4.master;
 }
 
-void Channel4::update(uint_least32_t *buf, unsigned long const soBaseVol, unsigned long cc, unsigned long const end) {
-	unsigned long const outBase = envelopeUnit_.dacIsOn() ? soBaseVol & soMask_ : 0;
-	unsigned long const outLow = outBase * -15;
+void Channel4::update(uint_least32_t *buf, gb_ulong const soBaseVol, gb_ulong cc, gb_ulong const end) {
+	gb_ulong const outBase = envelopeUnit_.dacIsOn() ? soBaseVol & soMask_ : 0;
+	gb_ulong const outLow = outBase * -15;
 
 	while (cc < end) {
-		unsigned long const outHigh = outBase * (envelopeUnit_.getVolume() * 2l - 15);
-		unsigned long const nextMajorEvent = std::min(nextEventUnit_->counter(), end);
-		unsigned long out = lfsr_.isHighState() ? outHigh : outLow;
+		gb_ulong const outHigh = outBase * (envelopeUnit_.getVolume() * 2 - 15);
+		gb_ulong const nextMajorEvent = std::min(nextEventUnit_->counter(), end);
+		gb_ulong out = lfsr_.isHighState() ? outHigh : outLow;
 		if (lfsr_.counter() <= nextMajorEvent) {
 			Lfsr lfsr = lfsr_;
 			while (lfsr.counter() <= nextMajorEvent) {

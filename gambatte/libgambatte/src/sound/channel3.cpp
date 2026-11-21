@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "channel3.h"
 #include "psgdef.h"
 #include "../savestate.h"
@@ -53,7 +54,7 @@ Channel3::Channel3()
 {
 }
 
-void Channel3::setNr0(unsigned data, unsigned long cc, unsigned short pc) {
+void Channel3::setNr0(unsigned data, gb_ulong cc, unsigned short pc) {
 	nr0_ = data & psg_nr4_init;
 	if (!nr0_) {
 		if (!agb_ && master_) {
@@ -71,7 +72,7 @@ void Channel3::setNr2(unsigned data) {
 	rshift_ = std::min((data >> 5 & 3) - 1, 4u);
 }
 
-void Channel3::setNr4(unsigned const data, unsigned long const cc) {
+void Channel3::setNr4(unsigned const data, gb_ulong const cc) {
 	lengthCounter_.nr4Change(nr4_, data, cc);
 	nr4_ = data & ~(1u * psg_nr4_init);
 
@@ -95,7 +96,7 @@ void Channel3::setNr4(unsigned const data, unsigned long const cc) {
 	}
 }
 
-void Channel3::setSo(unsigned long soMask) {
+void Channel3::setSo(gb_ulong soMask) {
 	soMask_ = soMask;
 }
 
@@ -103,7 +104,7 @@ void Channel3::reset() {
 	sampleBuf_ = 0;
 }
 
-void Channel3::resetCc(unsigned long cc, unsigned long newCc) {
+void Channel3::resetCc(gb_ulong cc, gb_ulong newCc) {
 	lastReadTime_ -= cc - newCc;
 	if (waveCounter_ != SoundUnit::counter_disabled)
 		waveCounter_ -= cc - newCc;
@@ -119,6 +120,7 @@ void Channel3::setStatePtrs(SaveState &state) {
 }
 
 void Channel3::saveState(SaveState &state) const {
+	state.spu.prevOut3 = prevOut_;
 	lengthCounter_.saveState(state.spu.ch3.lcounter);
 
 	state.spu.ch3.waveCounter = waveCounter_;
@@ -131,9 +133,11 @@ void Channel3::saveState(SaveState &state) const {
 }
 
 void Channel3::loadState(SaveState const &state) {
+	prevOut_ = state.spu.prevOut3;
 	lengthCounter_.loadState(state.spu.ch3.lcounter, state.spu.cycleCounter);
 
-	waveCounter_ = std::max(state.spu.ch3.waveCounter, state.spu.cycleCounter);
+	// armGBA: as saved, even when past, as the machine had it
+	waveCounter_ = state.spu.ch3.waveCounter;
 	lastReadTime_ = state.spu.ch3.lastReadTime;
 	nr3_ = state.spu.ch3.nr3;
 	nr4_ = state.spu.ch3.nr4;
@@ -145,10 +149,10 @@ void Channel3::loadState(SaveState const &state) {
 	setNr2(state.mem.ioamhram.get()[0x11C]);
 }
 
-void Channel3::updateWaveCounter(unsigned long const cc) {
+void Channel3::updateWaveCounter(gb_ulong const cc) {
 	if (cc >= waveCounter_) {
 		unsigned const period = toPeriod(nr3_, nr4_);
-		unsigned long const periods = (cc - waveCounter_) / period;
+		gb_ulong const periods = (cc - waveCounter_) / period;
 
 		lastReadTime_ = waveCounter_ + periods * period;
 		waveCounter_ = lastReadTime_ + period;
@@ -157,18 +161,18 @@ void Channel3::updateWaveCounter(unsigned long const cc) {
 	}
 }
 
-void Channel3::update(uint_least32_t *buf, unsigned long const soBaseVol, unsigned long cc, unsigned long const end) {
-	unsigned long const outBase = nr0_ ? soBaseVol & soMask_ : 0;
+void Channel3::update(uint_least32_t *buf, gb_ulong const soBaseVol, gb_ulong cc, gb_ulong const end) {
+	gb_ulong const outBase = nr0_ ? soBaseVol & soMask_ : 0;
 
 	if (outBase && rshift_ != 4) {
 		while (std::min(waveCounter_, lengthCounter_.counter()) <= end) {
 			unsigned pos = wavePos_;
 			unsigned const period = toPeriod(nr3_, nr4_), rsh = rshift_;
-			unsigned long const nextMajorEvent =
+			gb_ulong const nextMajorEvent =
 				std::min(lengthCounter_.counter(), end);
-			unsigned long cnt = waveCounter_, prevOut = prevOut_;
-			unsigned long out = master_
-				? waveSample(pos, sampleBuf_, rsh) * 2l - 15
+			gb_ulong cnt = waveCounter_, prevOut = prevOut_;
+			gb_ulong out = master_
+				? waveSample(pos, sampleBuf_, rsh) * 2 - 15
 				: -15;
 			out *= outBase;
 			while (cnt <= nextMajorEvent) {
@@ -179,7 +183,7 @@ void Channel3::update(uint_least32_t *buf, unsigned long const soBaseVol, unsign
 				cnt += period;
 				++pos;
 				unsigned const s = waveRam_[pos / 2 % sizeof waveRam_];
-				out = waveSample(pos, s, rsh) * 2l - 15;
+				out = waveSample(pos, s, rsh) * 2 - 15;
 				out *= outBase;
 			}
 			if (cnt != waveCounter_) {
@@ -199,8 +203,8 @@ void Channel3::update(uint_least32_t *buf, unsigned long const soBaseVol, unsign
 				lengthCounter_.event();
 		}
 		if (cc < end) {
-			unsigned long out = master_
-				? waveSample(wavePos_, sampleBuf_, rshift_) * 2l - 15
+			gb_ulong out = master_
+				? waveSample(wavePos_, sampleBuf_, rshift_) * 2 - 15
 				: -15;
 			out *= outBase;
 			*buf += out - prevOut_;
@@ -208,7 +212,7 @@ void Channel3::update(uint_least32_t *buf, unsigned long const soBaseVol, unsign
 			cc = end;
 		}
 	} else {
-		unsigned long const out = outBase * -15;
+		gb_ulong const out = outBase * -15;
 		*buf += out - prevOut_;
 		prevOut_ = out;
 		cc = end;

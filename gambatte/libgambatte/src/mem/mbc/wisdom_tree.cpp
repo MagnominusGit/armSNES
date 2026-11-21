@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "mbc.h"
 
 namespace gambatte {
@@ -30,7 +31,7 @@ bool WisdomTree::disabledRam() const {
 	return true;
 }
 
-void WisdomTree::romWrite(unsigned const p, unsigned const /*data*/, unsigned long const /*cc*/) {
+void WisdomTree::romWrite(unsigned const p, unsigned const /*data*/, gb_ulong const /*cc*/) {
 	rombank_ = (p & 0xFF) << 1;
 	setRombank();
 }

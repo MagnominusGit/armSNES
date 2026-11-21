@@ -27,6 +27,8 @@ void setInitState(struct SaveState &state, bool cgb, bool sgb, bool agb, std::si
 void setInitStateCart(struct SaveState &state, bool cgb, bool agb);
 void setPostBiosState(struct SaveState &state, bool cgb, bool agb, bool mgb, bool notCgbDmg, char const *romTitlePtr);
 void setSachenLogo(struct SaveState &state, unsigned char const *logo);
+// armGBA: the Mega Duck has no boot ROM to leave its logo in VRAM; it starts cleared, as on SameDuck
+void setMegaDuckVram(struct SaveState &state);
 
 }
 

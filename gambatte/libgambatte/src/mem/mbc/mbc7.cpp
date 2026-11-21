@@ -11,6 +11,7 @@
 //   GNU General Public License version 2 for more details.
 //
 
+#include "gbint.h"
 #include "mbc.h"
 
 namespace gambatte {
@@ -53,7 +54,7 @@ bool Mbc7::disabledRam() const {
 	return !(enable1_ && enable2_);
 }
 
-void Mbc7::romWrite(unsigned const p, unsigned const data, unsigned long const /*cc*/) {
+void Mbc7::romWrite(unsigned const p, unsigned const data, gb_ulong const /*cc*/) {
 	switch (p >> 13 & 3) {
 	case 0: enable1_ = data == 0x0A; break;
 	case 1: rombank_ = data & 0x7F; break;
@@ -62,7 +63,7 @@ void Mbc7::romWrite(unsigned const p, unsigned const data, unsigned long const /
 	setBanks();
 }
 
-unsigned Mbc7::read(unsigned const p, unsigned long) const {
+unsigned Mbc7::read(unsigned const p, gb_ulong) const {
 	if (p >= 0xB000)
 		return 0xFF;
 	unsigned char const *const s = memptrs_.rambankdata();
@@ -77,7 +78,7 @@ unsigned Mbc7::read(unsigned const p, unsigned long) const {
 	return 0xFF;
 }
 
-void Mbc7::write(unsigned const p, unsigned const data, unsigned long) {
+void Mbc7::write(unsigned const p, unsigned const data, gb_ulong) {
 	if (p >= 0xB000)
 		return;
 	switch (p >> 4 & 0xF) {
@@ -195,7 +196,7 @@ void Mbc7::saveState(SaveState::Mem &ss) const {
 	ss.rombank = rombank_;
 	ss.enableRam = enable1_;
 	ss.rambankMode = enable2_;
-	ss.mbcExtra = x_ | 1ul * y_ << 16;
+	ss.mbcExtra = x_ | 1u * y_ << 16;
 }
 
 void Mbc7::loadState(SaveState::Mem const &ss) {
@@ -242,7 +243,7 @@ bool Mbc6::disabledRam() const {
 	return !enableRam_;
 }
 
-void Mbc6::romWrite(unsigned const p, unsigned const data, unsigned long const /*cc*/) {
+void Mbc6::romWrite(unsigned const p, unsigned const data, gb_ulong const /*cc*/) {
 	switch (p >> 10) {
 	case 0x0: enableRam_ = (data & 0xF) == 0xA; break;
 	case 0x1: rambank_ = data & 7; break;
@@ -280,6 +281,9 @@ void Mbc6::SyncState(NewState *ns, bool isReader) {
 	NSS(flash_);
 	NSS(rambank_);
 	NSS(enableRam_);
+	// The spare bank the switchable area reads from isn't in the state.
+	if (isReader)
+		setBanks();
 }
 
 void Mbc6::setBanks() const {
@@ -288,7 +292,7 @@ void Mbc6::setBanks() const {
 		if (flash_[i])
 			std::memset(spare + i * 0x2000, 0xFF, 0x2000);
 		else
-			std::memcpy(spare + i * 0x2000, memptrs_.romdata() + (half_[i] & (banks_ * 2 - 1)) * 0x2000ul, 0x2000);
+			std::memcpy(spare + i * 0x2000, memptrs_.romdata() + (half_[i] & (banks_ * 2 - 1)) * 0x2000u, 0x2000);
 	}
 	memptrs_.setRombank(banks_);
 	// The RAM switches in 4 KiB halves as well; the first half's number picks the 8 KiB here.

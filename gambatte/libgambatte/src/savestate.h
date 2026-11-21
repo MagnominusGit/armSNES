@@ -19,6 +19,7 @@
 #ifndef SAVESTATE_H
 #define SAVESTATE_H
 
+#include "gbint.h"
 #include <cstddef>
 
 namespace gambatte {
@@ -39,13 +40,14 @@ struct SaveState {
 		friend void setInitStateCart(SaveState &, bool, bool);
 		friend void setPostBiosState(SaveState &, bool, bool, bool, bool, char const *);
 		friend void setSachenLogo(SaveState &, unsigned char const *);
+		friend void setMegaDuckVram(SaveState &);
 	private:
 		T *ptr;
 		std::size_t size_;
 	};
 
 	struct CPU {
-		unsigned long cycleCounter;
+		gb_ulong cycleCounter;
 		unsigned short pc;
 		unsigned short sp;
 		unsigned char a;
@@ -64,31 +66,35 @@ struct SaveState {
 	struct Mem {
 		Ptr<unsigned char> vram;
 		Ptr<unsigned char> sram;
+		// armGBA: a cheat cartridge's registers and RAM (CheatCartGb::stateData), when one is in
+		Ptr<unsigned char> cartChip;
+		// armGBA: the Action Replay's flash chip, so netplay's devices run the same codes and menus
+		Ptr<unsigned char> cartFlash;
 		Ptr<unsigned char> wram;
 		Ptr<unsigned char> ioamhram;
-		unsigned long divLastUpdate;
-		unsigned long timaLastUpdate;
-		unsigned long tmatime;
-		unsigned long nextSerialtime;
-		unsigned long lastOamDmaUpdate;
-		unsigned long minIntTime;
-		unsigned long unhaltTime;
-		unsigned long lastCartBusUpdate;
-		unsigned long totalSamplesEmittedHigh;
-		unsigned long totalSamplesEmittedLow;
+		gb_ulong divLastUpdate;
+		gb_ulong timaLastUpdate;
+		gb_ulong tmatime;
+		gb_ulong nextSerialtime;
+		gb_ulong lastOamDmaUpdate;
+		gb_ulong minIntTime;
+		gb_ulong unhaltTime;
+		gb_ulong lastCartBusUpdate;
+		gb_ulong totalSamplesEmittedHigh;
+		gb_ulong totalSamplesEmittedLow;
 		// armGBA: when the next frame is handed over, which with the display off is nothing the rest of
 		// the state tells; 0 in a state from before this was kept
-		unsigned long nextBlitTime;
+		gb_ulong nextBlitTime;
 		unsigned char /*bool*/ blankLcd;
 		// armGBA: what an unlicensed mapper keeps beyond a bank number
-		unsigned long mbcExtra;
-		unsigned long mbcExtra2;
-		unsigned long mbcExtra3;
-		unsigned long mbcExtra4;
+		gb_ulong mbcExtra;
+		gb_ulong mbcExtra2;
+		gb_ulong mbcExtra3;
+		gb_ulong mbcExtra4;
 		// armGBA: the CPU Clock's part of a cycle carried over, and how long the CPU keeps the console's
 		// pace (Memory::cpuTimingPicture); 0 in a state from before these were kept
-		unsigned long cpuCarry;
-		unsigned long cpuStockLeft;
+		gb_ulong cpuCarry;
+		gb_ulong cpuStockLeft;
 		unsigned short rombank;
 		unsigned short dmaSource;
 		unsigned short dmaDestination;
@@ -122,7 +128,7 @@ struct SaveState {
 			Ptr<unsigned char> hookBuf;
 			Ptr<unsigned char> spcState;
 			Ptr<unsigned char> soundControl;
-			unsigned long samplesAccumulated;
+			gb_ulong samplesAccumulated;
 			unsigned char transfer;
 			unsigned char commandIndex;
 			unsigned char joypadIndex;
@@ -144,10 +150,13 @@ struct SaveState {
 		Ptr<unsigned char> oamReaderBuf;
 		Ptr<bool> oamReaderSzbuf;
 
-		unsigned long videoCycles;
-		unsigned long enableDisplayM0Time;
+		gb_ulong videoCycles;
+		gb_ulong enableDisplayM0Time;
 		unsigned short lastM0Time;
 		unsigned short nextM0Irq;
+		// armGBA: 2 when a mode 0 interrupt event is scheduled, 1 when none is; 0 in a state from before
+		// this was kept, which counts on the STAT register instead
+		unsigned char m0IrqScheduled;
 		unsigned short tileword;
 		unsigned short ntileword;
 		unsigned char spAttribList[10];
@@ -176,26 +185,32 @@ struct SaveState {
 
 	struct SPU {
 		struct Duty {
-			unsigned long nextPosUpdate;
+			gb_ulong nextPosUpdate;
 			unsigned char nr3;
+			// armGBA: the frequency's top three bits, which the sweep changes without NRx4 knowing,
+			// with bit 3 set; 0 in a state from before this was kept
+			unsigned char freqHigh;
+			// armGBA: 2 when the unit's events run, 1 when its output is static; 0 in a state from before
+			// this was kept
+			unsigned char events;
 			unsigned char pos;
 			unsigned char /*bool*/ high;
 		};
 
 		struct Env {
-			unsigned long counter;
+			gb_ulong counter;
 			unsigned char volume;
 			unsigned char /*bool*/ clock;
 		};
 
 		struct LCounter {
-			unsigned long counter;
+			gb_ulong counter;
 			unsigned short lengthCounter;
 		};
 
 		struct {
 			struct {
-				unsigned long counter;
+				gb_ulong counter;
 				unsigned short shadow;
 				unsigned char nr0;
 				unsigned char /*bool*/ neg;
@@ -218,8 +233,8 @@ struct SaveState {
 		struct {
 			Ptr<unsigned char> waveRam;
 			LCounter lcounter;
-			unsigned long waveCounter;
-			unsigned long lastReadTime;
+			gb_ulong waveCounter;
+			gb_ulong lastReadTime;
 			unsigned char nr3;
 			unsigned char nr4;
 			unsigned char wavePos;
@@ -229,8 +244,11 @@ struct SaveState {
 
 		struct {
 			struct {
-				unsigned long counter;
+				gb_ulong counter;
 				unsigned short reg;
+				// armGBA: 2 when the LFSR counts, 1 when its output is static; 0 in a state from before
+				// this was kept
+				unsigned char counting;
 			} lfsr;
 			Env env;
 			LCounter lcounter;
@@ -238,12 +256,20 @@ struct SaveState {
 			unsigned char /*bool*/ master;
 		} ch4;
 
-		unsigned long cycleCounter;
+		gb_ulong cycleCounter;
 		unsigned char lastUpdate;
+		// armGBA: the mixer's running sum (xor its power-on value) and each channel's last output, which
+		// the next samples are worked out from; a state from before these were kept loads with the
+		// mixer as at power-on
+		gb_ulong rsum;
+		gb_ulong prevOut1;
+		gb_ulong prevOut2;
+		gb_ulong prevOut3;
+		gb_ulong prevOut4;
 	} spu;
 
 	struct Time {
-		unsigned long seconds;
+		gb_ulong seconds;
 	} time;
 
 	struct RTC {
@@ -252,7 +278,7 @@ struct SaveState {
 		unsigned char /*signed*/ dataH;
 		unsigned char /*signed*/ dataM;
 		unsigned char /*signed*/ dataS;
-		unsigned long dataC;
+		gb_ulong dataC;
 		unsigned char latchDh;
 		unsigned char latchDl;
 		unsigned char latchH;
@@ -267,8 +293,8 @@ struct SaveState {
 
 		struct {
 			unsigned char /*bool*/ isActive;
-			unsigned long lastUpdate;
-			unsigned long cyclesElapsed;
+			gb_ulong lastUpdate;
+			gb_ulong cyclesElapsed;
 			unsigned char command;
 		} remote;
 	} ir;
@@ -279,11 +305,11 @@ struct SaveState {
 		unsigned char ioIndex;
 		unsigned char transferValue;
 		unsigned char ramflag;
-		unsigned long rtcCycles;
+		gb_ulong rtcCycles;
 		unsigned short /*signed*/ currentSample;
-		unsigned long toneLastUpdate;
-		unsigned long nextPhaseChangeTime;
-		unsigned long /*signed*/ remainingToneSamples;
+		gb_ulong toneLastUpdate;
+		gb_ulong nextPhaseChangeTime;
+		gb_ulong /*signed*/ remainingToneSamples;
 		unsigned char /*bool*/ committing;
 		unsigned char /*bool*/ highIoReadOnly;
 	} huc3;
@@ -298,8 +324,8 @@ struct SaveState {
 		unsigned char edgeAlpha;
 		unsigned char /*bool*/ blank;
 		unsigned char /*bool*/ invert;
-		unsigned long lastCycles;
-		unsigned long /*signed*/ cameraCyclesLeft;
+		gb_ulong lastCycles;
+		gb_ulong /*signed*/ cameraCyclesLeft;
 	} camera;
 };
 

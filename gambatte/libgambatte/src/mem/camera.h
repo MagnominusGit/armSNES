@@ -19,6 +19,7 @@
 #ifndef CAMERA_H
 #define CAMERA_H
 
+#include "gbint.h"
 #include "newstate.h"
 
 #include <algorithm>
@@ -38,13 +39,13 @@ public:
 	void saveState(SaveState &state) const;
 	void loadState(SaveState const &state, bool const ds);
 
-	void resetCc(unsigned long oldCc, unsigned long newCc);
-	void speedChange(unsigned long cycleCounter);
+	void resetCc(gb_ulong oldCc, gb_ulong newCc);
+	void speedChange(gb_ulong cycleCounter);
 
-	bool cameraIsActive(unsigned long cycleCounter);
+	bool cameraIsActive(gb_ulong cycleCounter);
 
-	unsigned char read(unsigned p, unsigned long cycleCounter);
-	void write(unsigned p, unsigned data, unsigned long cycleCounter);
+	unsigned char read(unsigned p, gb_ulong cycleCounter);
+	void write(unsigned p, unsigned data, gb_ulong cycleCounter);
 
 	void setCameraCallback(void (*callback)(int *cameraBuf)) { cameraCallback_ = callback; }
 
@@ -63,11 +64,11 @@ private:
 	bool invert_;
 	unsigned char matrix_[4 * 4 * 3];
 
-	unsigned long lastCycles_;
-	long cameraCyclesLeft_;
+	gb_ulong lastCycles_;
+	gb_long cameraCyclesLeft_;
 	bool ds_;
 
-	void update(unsigned long cycleCounter);
+	void update(gb_ulong cycleCounter);
 	void process();
 	void (*cameraCallback_)(int *cameraBuf);
 };

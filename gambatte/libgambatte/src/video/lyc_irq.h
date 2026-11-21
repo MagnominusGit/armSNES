@@ -19,6 +19,7 @@
 #ifndef VIDEO_LYC_IRQ_H
 #define VIDEO_LYC_IRQ_H
 
+#include "gbint.h"
 #include "newstate.h"
 
 namespace gambatte {
@@ -33,23 +34,23 @@ public:
 	unsigned lycReg() const { return lycRegSrc_; }
 	void loadState(SaveState const &state);
 	void saveState(SaveState &state) const;
-	unsigned long time() const { return time_; }
+	gb_ulong time() const { return time_; }
 	void setCgb(bool cgb) { cgb_ = cgb; }
 	void lcdReset();
-	void reschedule(LyCounter const &lyCounter, unsigned long cc);
+	void reschedule(LyCounter const &lyCounter, gb_ulong cc);
 
-	void statRegChange(unsigned statReg, LyCounter const &lyCounter, unsigned long cc) {
+	void statRegChange(unsigned statReg, LyCounter const &lyCounter, gb_ulong cc) {
 		regChange(statReg, lycRegSrc_, lyCounter, cc);
 	}
 
-	void lycRegChange(unsigned lycReg, LyCounter const &lyCounter, unsigned long cc) {
+	void lycRegChange(unsigned lycReg, LyCounter const &lyCounter, gb_ulong cc) {
 		regChange(statRegSrc_, lycReg, lyCounter, cc);
 	}
 
 	template<bool isReader>void SyncState(NewState *ns);
 
 private:
-	unsigned long time_;
+	gb_ulong time_;
  	unsigned char lycRegSrc_;
  	unsigned char statRegSrc_;
 	unsigned char lycReg_;
@@ -57,7 +58,7 @@ private:
 	bool cgb_;
 
 	void regChange(unsigned statReg, unsigned lycReg,
-	               LyCounter const &lyCounter, unsigned long cc);
+	               LyCounter const &lyCounter, gb_ulong cc);
 };
 
 }

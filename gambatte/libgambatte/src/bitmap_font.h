@@ -44,7 +44,7 @@ std::size_t getWidth(char const *chars);
 template<class RandomAccessIterator, class Fill>
 void print(RandomAccessIterator dest, std::ptrdiff_t pitch, Fill fill, char const *chars);
 
-void print(gambatte::uint_least32_t *dest, std::ptrdiff_t pitch, unsigned long color, char const *chars);
+void print(gambatte::uint_least32_t *dest, std::ptrdiff_t pitch, gb_ulong color, char const *chars);
 void utoa(unsigned u, char *a);
 
 // --- INTERFACE END ---

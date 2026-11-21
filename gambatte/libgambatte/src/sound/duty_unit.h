@@ -19,6 +19,7 @@
 #ifndef DUTY_UNIT_H
 #define DUTY_UNIT_H
 
+#include "gbint.h"
 #include "sound_unit.h"
 #include "master_disabler.h"
 #include "../savestate.h"
@@ -30,27 +31,28 @@ class DutyUnit : public SoundUnit {
 public:
 	DutyUnit();
 	virtual void event();
-	virtual void resetCounters(unsigned long oldCc);
+	virtual void resetCounters(gb_ulong oldCc);
 	bool isHighState() const { return high_; }
-	bool isHighState(unsigned long cc) const;
-	void nr1Change(unsigned newNr1, unsigned long cc);
-	void nr3Change(unsigned newNr3, unsigned long cc);
-	void nr4Change(unsigned newNr4, unsigned long cc, unsigned long ref, bool master);
+	bool isHighState(gb_ulong cc) const;
+	void nr1Change(unsigned newNr1, gb_ulong cc);
+	void nr3Change(unsigned newNr3, gb_ulong cc);
+	void nr4Change(unsigned newNr4, gb_ulong cc, gb_ulong ref, bool master);
 	void reset();
-	void resetCc(unsigned long cc, unsigned long newCc);
-	void saveState(SaveState::SPU::Duty &dstate, unsigned long cc);
-	void loadState(SaveState::SPU::Duty const &dstate, unsigned nr1, unsigned nr4, unsigned long cc);
+	void resetCc(gb_ulong cc, gb_ulong newCc);
+	void saveState(SaveState::SPU::Duty &dstate, gb_ulong cc);
+	void loadState(SaveState::SPU::Duty const &dstate, unsigned nr1, unsigned nr4, gb_ulong cc);
 	void killCounter();
-	void reviveCounter(unsigned long cc);
+	void restoreEvents(unsigned char events);
+	void reviveCounter(gb_ulong cc);
 
 	//intended for use by SweepUnit only.
 	unsigned freq() const { return 2048 - (period_ >> 1); }
-	void setFreq(unsigned newFreq, unsigned long cc);
+	void setFreq(unsigned newFreq, gb_ulong cc);
 
 	template<bool isReader>void SyncState(NewState *ns);
 
 private:
-	unsigned long nextPosUpdate_;
+	gb_ulong nextPosUpdate_;
 	unsigned short period_;
 	unsigned char pos_;
 	unsigned char duty_;
@@ -60,7 +62,7 @@ private:
 
 	void setCounter();
 	void setDuty(unsigned nr1);
-	void updatePos(unsigned long cc);
+	void updatePos(gb_ulong cc);
 };
 
 class DutyMasterDisabler : public MasterDisabler {

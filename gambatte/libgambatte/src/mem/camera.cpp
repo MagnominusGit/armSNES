@@ -18,6 +18,7 @@
 
 // most of this is copied from https://github.com/AntonioND/giibiiadvance/blob/master/source/gb_core/camera.c
 
+#include "gbint.h"
 #include "camera.h"
 #include "clamp.h"
 #include "../savestate.h"
@@ -69,22 +70,24 @@ void Camera::loadState(SaveState const &state, bool const ds) {
 	ds_ = ds;
 }
 
-void Camera::resetCc(unsigned long const newCc, unsigned long const oldCc) {
+// armGBA: the old and new counts were named the wrong way round, so a capture under way when the
+// counter was wound back ran on from the wrong time.
+void Camera::resetCc(gb_ulong const oldCc, gb_ulong const newCc) {
 	update(oldCc);
 	lastCycles_ -= oldCc - newCc;
 }
 
-void Camera::speedChange(unsigned long const cc) {
+void Camera::speedChange(gb_ulong const cc) {
 	update(cc);
 	ds_ = !ds_;
 }
 
-bool Camera::cameraIsActive(unsigned long const cc) {
+bool Camera::cameraIsActive(gb_ulong const cc) {
 	update(cc);
 	return trigger_ & 0x01;
 }
 
-unsigned char Camera::read(unsigned p, unsigned long const cc) {
+unsigned char Camera::read(unsigned p, gb_ulong const cc) {
 	if (p & 0x7F)
 		return 0x00;
 
@@ -92,7 +95,7 @@ unsigned char Camera::read(unsigned p, unsigned long const cc) {
 	return trigger_;
 }
 
-void Camera::write(unsigned p, unsigned data, unsigned long const cc) {
+void Camera::write(unsigned p, unsigned data, gb_ulong const cc) {
 	switch (p & 0x7F) {
 	case 0x00:
 	{
@@ -148,7 +151,7 @@ void Camera::write(unsigned p, unsigned data, unsigned long const cc) {
 	}
 }
 
-void Camera::update(unsigned long const cc) {
+void Camera::update(gb_ulong const cc) {
 	if (cameraCyclesLeft_ > 0) {
 		cameraCyclesLeft_ -= (cc - lastCycles_) >> ds_;
 		lastCycles_ = cc;

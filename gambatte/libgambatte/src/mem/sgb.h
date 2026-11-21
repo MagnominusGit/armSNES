@@ -60,7 +60,7 @@ public:
 	template<bool isReader>void SyncState(NewState *ns);
 
 private:
-	unsigned long cgbColorsRgb32_[32768];
+	gb_ulong cgbColorsRgb32_[32768];
 
 	unsigned char transfer;
 	unsigned char packet[0x10];
@@ -82,7 +82,7 @@ private:
 
 	unsigned short systemColors[512 * 4];
 	unsigned short colors[4 * 4];
-	unsigned long palette[4 * 4];
+	gb_ulong palette[4 * 4];
 	// Only the first 45 * 90 bytes have valid attributes
 	unsigned char systemAttributes[0x1000];
 	unsigned char attributes[20 * 18];
@@ -102,7 +102,7 @@ private:
 	SNES_SPC spc;
 	unsigned char spcState[SNES_SPC::state_size];
 	unsigned char soundControl[4];
-	unsigned long samplesAccumulated_;
+	gb_ulong samplesAccumulated_;
 
 	enum Command {
 		PAL01    = 0x00,
@@ -141,8 +141,8 @@ private:
 	void onCommand();
 	void onTransfer(unsigned char *frame);
 
-	unsigned long gbcToRgb32(unsigned bgr15);
-	unsigned long gbcToRgb32(unsigned bgr15, unsigned fade);
+	gb_ulong gbcToRgb32(unsigned bgr15);
+	gb_ulong gbcToRgb32(unsigned bgr15, unsigned fade);
 	void refreshPalettes();
 
 	unsigned char readCmdBuf(unsigned offset);

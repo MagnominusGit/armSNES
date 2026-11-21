@@ -19,6 +19,7 @@
 #ifndef REMOTE_H
 #define REMOTE_H
 
+#include "gbint.h"
 #include "savestate.h"
 #include "newstate.h"
 #include "../counterdef.h"
@@ -28,7 +29,7 @@ namespace gambatte {
 class Remote {
 public:
 	Remote();
-	bool getRemoteSignal(unsigned long const cc);
+	bool getRemoteSignal(gb_ulong const cc);
 
 	void setRemoteActive(bool active) {
 		if (isActive_ ^ active) {
@@ -42,8 +43,8 @@ public:
 
 	void setRemoteCallback(unsigned char (*callback)()) { remoteCallback_ = callback; }
 
-	void resetCc(unsigned long const oldCc, unsigned long const newCc);
-	void speedChange(unsigned long const cc);
+	void resetCc(gb_ulong const oldCc, gb_ulong const newCc);
+	void speedChange(gb_ulong const cc);
 
 	void saveState(SaveState::Infrared &state) const;
 	void loadState(SaveState::Infrared const &state, bool const ds);
@@ -51,13 +52,13 @@ public:
 
 private:
 	bool isActive_;
-	unsigned long lastUpdate_;
-	unsigned long cyclesElapsed_;
+	gb_ulong lastUpdate_;
+	gb_ulong cyclesElapsed_;
 	unsigned char command_;
 	bool ds_;
 
 	unsigned char (*remoteCallback_)();
-	void update(unsigned long const cc);
+	void update(gb_ulong const cc);
 };
 
 }

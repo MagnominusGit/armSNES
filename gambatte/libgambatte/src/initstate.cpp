@@ -110,7 +110,7 @@ void gambatte::setInitState(SaveState &state, bool const cgb, bool const sgb, bo
 	state.mem.hdmaTransfer = false;
 	state.mem.stopped = false;
 	// armGBA: a reset hands frames over as from power-on, not where the running game had them
-	state.mem.nextBlitTime = 1l * lcd_vres * lcd_cycles_per_line;
+	state.mem.nextBlitTime = 1 * lcd_vres * lcd_cycles_per_line;
 	state.mem.blankLcd = false;
 
 
@@ -530,7 +530,7 @@ void gambatte::setPostBiosState(SaveState &state, bool const cgb, bool const agb
 		state.ppu.objpData.ptr[1] = state.mem.ioamhram.get()[0x149];
 	}
 
-	state.ppu.videoCycles = cgb ? 144*456ul + 164 + (agb * 4) : 153*456ul + 396;
+	state.ppu.videoCycles = cgb ? 144*456u + 164 + (agb * 4) : 153*456u + 396;
 	state.ppu.enableDisplayM0Time = state.cpu.cycleCounter;
 	state.ppu.notCgbDmg = cgb && notCgbDmg;
 	state.ppu.spPriority = 2 | !(cgb && notCgbDmg);
@@ -541,11 +541,11 @@ void gambatte::setPostBiosState(SaveState &state, bool const cgb, bool const agb
 		state.spu.cycleCounter = 0x1000 | ((state.cpu.cycleCounter - state.mem.divLastUpdate) >> 1 & 0xFFF);
 
 	if (cgb) {
-		state.spu.ch1.duty.nextPosUpdate = (state.spu.cycleCounter & ~1ul) + (37 - agb) * 2;
+		state.spu.ch1.duty.nextPosUpdate = (state.spu.cycleCounter & ~1u) + (37 - agb) * 2;
 		state.spu.ch1.duty.pos = 6;
 		state.spu.ch1.duty.high = true;
 	} else {
-		state.spu.ch1.duty.nextPosUpdate = (state.spu.cycleCounter & ~1ul) + 69 * 2;
+		state.spu.ch1.duty.nextPosUpdate = (state.spu.cycleCounter & ~1u) + 69 * 2;
 		state.spu.ch1.duty.pos = 3;
 		state.spu.ch1.duty.high = false;
 	}
@@ -570,4 +570,8 @@ void gambatte::setSachenLogo(SaveState &state, unsigned char const *const logo) 
 			wide |= (half >> bit & 1) * 3 << bit * 2;
 		state.mem.vram.ptr[0x10 + i * 4] = state.mem.vram.ptr[0x12 + i * 4] = wide;
 	}
+}
+
+void gambatte::setMegaDuckVram(SaveState &state) {
+	std::memset(state.mem.vram.ptr, 0, state.mem.vram.size());
 }

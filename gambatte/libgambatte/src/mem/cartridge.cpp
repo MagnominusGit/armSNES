@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "cartridge.h"
 #include "file/file.h"
 #include "../savestate.h"
@@ -170,7 +171,7 @@ int presumedUnl(unsigned char const romdata[], unsigned size) {
 		}
 		// Two dumps of such games are patched to run on the cartridge their headers name
 		// (Pokemon Adventure, Shuma Baolong 2); nothing but their headers tells them apart
-		unsigned long const header = crc32(0, romdata + 0x100, 0x50);
+		gb_ulong const header = crc32(0, romdata + 0x100, 0x50);
 		return header == 0x72EDBF3E || header == 0x212ECA2F ? -1 : UnlMbc5::ntnew;
 	}
 	return -1;
@@ -278,9 +279,16 @@ void Cartridge::setStatePtrs(SaveState &state) {
 
 	huc3_.setStatePtrs(state);
 	camera_.setStatePtrs(state);
+	if (cheatCart_) {
+		state.mem.cartChip.set(cheatCart_->stateData(), cheatCart_->stateSize());
+		state.mem.cartFlash.set(cheatCart_->flashData(), cheatCart_->flashSize());
+	} else {
+		state.mem.cartChip.set(0, 0);
+		state.mem.cartFlash.set(0, 0);
+	}
 }
 
-void Cartridge::saveState(SaveState &state, unsigned long const cc) {
+void Cartridge::saveState(SaveState &state, gb_ulong const cc) {
 	mbc_->saveState(state.mem);
 	time_.saveState(state, cc);
 	rtc_.saveState(state);
@@ -313,6 +321,7 @@ void Cartridge::setSaveDir(std::string const &dir) {
 
 LoadRes Cartridge::loadROM(Array<unsigned char> &buffer,
                            bool const cgbMode,
+                           unsigned const megaDuck,
                            std::string const &filepath)
 {
 	enum Cartridgetype { type_plain,
@@ -332,7 +341,8 @@ LoadRes Cartridge::loadROM(Array<unsigned char> &buffer,
 	                     type_unl,
 	                     type_mbc6,
 	                     type_mbc7,
-	                     type_vf001 };
+	                     type_vf001,
+	                     type_megaduck };
 	UnlMbc5::Kind unl = UnlMbc5::licheng;
 	Cartridgetype type = type_plain;
 	unsigned rambanks = 1;
@@ -450,6 +460,18 @@ LoadRes Cartridge::loadROM(Array<unsigned char> &buffer,
 	if (type == type_mbc1 && rombanks > 32 && (rambanks > 1 || (romHeader[0x148] < 8 && (2u << romHeader[0x148]) < rombanks)))
 		type = type_mbc3;
 
+	// armGBA: a Mega Duck cartridge has no header: none of the above applies to it. Those with RAM
+	// (32 KiB, 128 KiB on MD25S) keep it as a battery-backed Game Boy cartridge's is kept.
+	MegaDuck::Kind const duckKind = megaDuck ? MegaDuck::Kind(megaDuck - 1) : MegaDuck::automatic;
+	if (megaDuck) {
+		type = type_megaduck;
+		badMmm01 = false;
+		bool const ram = duckKind == MegaDuck::md0 || duckKind == MegaDuck::md20s || duckKind == MegaDuck::md25s;
+		rambanks = !ram ? 0 : duckKind == MegaDuck::md25s ? 16 : 4;
+		romHeader[0x147] = ram ? 0x03 : 0;
+		romHeader[0x149] = !ram ? 0 : duckKind == MegaDuck::md25s ? 0x04 : 0x03;
+	}
+
 	if (badMmm01) {
 		if (rombanks != (buffer.size() / rombank_size())) // probably just bad
 			return LOADRES_BAD_FILE_OR_UNKNOWN_MBC;
@@ -473,6 +495,8 @@ LoadRes Cartridge::loadROM(Array<unsigned char> &buffer,
 	huc1_ = false;
 	io_ = 0;
 	romHook_ = 0;
+	cheatCart_ = 0;
+	sramHook_ = 0;
 	pocketCamera_ = false;
 
 	std::memcpy(memptrs_.romdata(), buffer.get(), (buffer.size() / rombank_size() * rombank_size()));
@@ -537,6 +561,7 @@ LoadRes Cartridge::loadROM(Array<unsigned char> &buffer,
 	case type_mbc7: { Mbc7 *const chip = new Mbc7(memptrs_); io_ = chip; mbc_.reset(chip); } break;
 	case type_unl: mbc_.reset(new UnlMbc5(memptrs_, unl, rombanks)); break;
 	case type_pkjd: { Pkjd *const chip = new Pkjd(memptrs_); io_ = chip; mbc_.reset(chip); } break;
+	case type_megaduck: { MegaDuck *const chip = new MegaDuck(memptrs_, duckKind); io_ = chip; mbc_.reset(chip); } break;
 	}
 
 	return LOADRES_OK;
@@ -557,7 +582,7 @@ unsigned Cartridge::getSavedataLength() {
 	return ret;
 }
 
-void Cartridge::loadSavedata(unsigned long const cc) {
+void Cartridge::loadSavedata(gb_ulong const cc) {
 	std::string const &sbp = saveBasePath();
 
 	if (hasBattery(romHeader[0x147])) {
@@ -602,7 +627,7 @@ void Cartridge::loadSavedata(unsigned long const cc) {
 				}
 				huc3_.setHuC3Regs(huc3Regs);
 			} else {
-				unsigned long rtcRegs[11] { 0 };
+				gb_ulong rtcRegs[11] { 0 };
 				rtcRegs[rtc_dh] = file.get() & 0xC1;
 				if (!file.eof()) {
 					rtcRegs[rtc_dl] = file.get() & 0xFF;
@@ -629,7 +654,7 @@ void Cartridge::loadSavedata(unsigned long const cc) {
 	}
 }
 
-void Cartridge::saveSavedata(unsigned long const cc) {
+void Cartridge::saveSavedata(gb_ulong const cc) {
 	std::string const &sbp = saveBasePath();
 
 	if (hasBattery(romHeader[0x147])) {
@@ -655,7 +680,7 @@ void Cartridge::saveSavedata(unsigned long const cc) {
 			for (unsigned i = 0; i < 0x104; i++)
 				file.put(huc3Regs[i] & 0xFF);
 		} else {
-			unsigned long rtcRegs[11];
+			gb_ulong rtcRegs[11];
 			rtc_.getRtcRegs(rtcRegs, cc);
 			file.put(rtcRegs[rtc_dh]         & 0xC1);
 			file.put(rtcRegs[rtc_dl]         & 0xFF);
@@ -675,7 +700,7 @@ void Cartridge::saveSavedata(unsigned long const cc) {
 	}
 }
 
-void Cartridge::saveSavedata(char* dest, unsigned long const cc) {
+void Cartridge::saveSavedata(char* dest, gb_ulong const cc) {
 	if (hasBattery(romHeader[0x147])) {
 		int length = memptrs_.rambankdataend() - memptrs_.rambankdata();
 		std::memcpy(dest, memptrs_.rambankdata(), length);
@@ -697,7 +722,7 @@ void Cartridge::saveSavedata(char* dest, unsigned long const cc) {
 			huc3_.getHuC3Regs(huc3Regs, cc);
 			std::memcpy(dest, huc3Regs, sizeof huc3Regs);
 		} else {
-			unsigned long rtcRegs[11];
+			gb_ulong rtcRegs[11];
 			rtc_.getRtcRegs(rtcRegs, cc);
 			*dest++ = rtcRegs[rtc_dh]         & 0xC1;
 			*dest++ = rtcRegs[rtc_dl]         & 0xFF;
@@ -717,7 +742,7 @@ void Cartridge::saveSavedata(char* dest, unsigned long const cc) {
 	}
 }
 
-void Cartridge::loadSavedata(char const *data, unsigned long const cc) {
+void Cartridge::loadSavedata(char const *data, gb_ulong const cc) {
 	if (hasBattery(romHeader[0x147])) {
 		int length = memptrs_.rambankdataend() - memptrs_.rambankdata();
 		std::memcpy(memptrs_.rambankdata(), data, length);
@@ -745,7 +770,7 @@ void Cartridge::loadSavedata(char const *data, unsigned long const cc) {
 			std::memcpy(huc3Regs, data, sizeof huc3Regs);
 			huc3_.setHuC3Regs(huc3Regs);
 		} else {
-			unsigned long rtcRegs[11];
+			gb_ulong rtcRegs[11];
 			rtcRegs[rtc_dh] = *data++ & 0xC1;
 			rtcRegs[rtc_dl] = *data++ & 0xFF;
 			rtcRegs[rtc_h] = *data++ & 0x1F;
@@ -837,13 +862,13 @@ void Cartridge::setGameGenie(std::string const &codes) {
 
 PakInfo const Cartridge::pakInfo() const {
 	if (loaded()) {
-		unsigned crc = 0L;
+		unsigned crc = 0;
 		unsigned const rombs = rombanks(memptrs_);
-		crc = crc32(crc, memptrs_.romdata(), rombs*0x4000ul);
+		crc = crc32(crc, memptrs_.romdata(), rombs*0x4000u);
 		return PakInfo(presumedMbc1m(memptrs_.romdata(), rombs),
-		               presumedM161(memptrs_.romdata(), rombs*0x4000ul),
-		               presumedMmm01(memptrs_.romdata(), rombs*0x4000ul),
-		               presumedWisdomTree(memptrs_.romdata(), rombs*0x4000ul),
+		               presumedM161(memptrs_.romdata(), rombs*0x4000u),
+		               presumedMmm01(memptrs_.romdata(), rombs*0x4000u),
+		               presumedWisdomTree(memptrs_.romdata(), rombs*0x4000u),
 		               rombs,
 		               crc,
 		               romHeader);
@@ -860,4 +885,41 @@ SYNCFUNC(Cartridge) {
 	SSS(huc3_);
 	SSS(camera_);
 	TSS(mbc_);
+
+}
+
+// armGBA: the cartridge in the Mega Duck laptop's slot takes the running ROM's place. The ROM it
+// replaces was loaded padded to the bigger of the two, so nothing moves (the memory card's RAM stays
+// where the frontend reads it from); a smaller cartridge shows again over the rest, as it would
+// on its own, and its own mapper starts as at power on.
+bool Cartridge::swapMegaDuckRom(unsigned char const *const data, std::size_t const size, unsigned const kind) {
+	std::size_t const room = memptrs_.romdataend() - memptrs_.romdata();
+	if (!size || size > room || kind > MegaDuck::md25s)
+		return false;
+
+	for (std::size_t at = 0; at < room; at += size)
+		std::memcpy(memptrs_.romdata() + at, data, std::min(size, room - at));
+
+	MegaDuck *const chip = new MegaDuck(memptrs_, MegaDuck::Kind(kind));
+	io_ = chip;
+	mbc_.reset(chip);
+	return true;
+}
+
+// armGBA: the cheat cartridge takes the place of the cartridge's mapper and answers its ROM reads; the
+// game's mapper (and its own answers, for a cartridge that has them) stay behind it.
+bool Cartridge::attachCheatCart(unsigned char const *const program, std::size_t const size, bool const hasGame) {
+	if (!mbc_ || !size || size > 0x80000 || cheatCart_)
+		return false;
+
+	CheatCartGb *const chip = GameGenieGb::is(program, size)
+		? static_cast<CheatCartGb *>(new GameGenieGb(memptrs_, mbc_.release(), romHook_, program, size, hasGame))
+		: XploderGb::is(program, size)
+		? static_cast<CheatCartGb *>(new XploderGb(memptrs_, mbc_.release(), romHook_, program, size, hasGame))
+		: new ActionReplayGb(memptrs_, mbc_.release(), romHook_, program, size, hasGame);
+	mbc_.reset(chip);
+	romHook_ = chip;
+	sramHook_ = chip;
+	cheatCart_ = chip;
+	return true;
 }

@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "envelope_unit.h"
 #include "psgdef.h"
 
@@ -43,15 +44,16 @@ void EnvelopeUnit::saveState(SaveState::SPU::Env &estate) const {
 	estate.clock = clock_;
 }
 
-void EnvelopeUnit::loadState(SaveState::SPU::Env const &estate, unsigned nr2, unsigned long cc) {
-	counter_ = std::max(estate.counter, cc);
+void EnvelopeUnit::loadState(SaveState::SPU::Env const &estate, unsigned nr2, gb_ulong cc) {
+	// armGBA: as saved, even when past, as the machine had it
+	counter_ = estate.counter;
 	volume_ = estate.volume;
 	nr2_ = nr2;
 	clock_ = estate.clock;
 }
 
 void EnvelopeUnit::event() {
-	unsigned long const period = nr2_ & psg_nr2_step;
+	gb_ulong const period = nr2_ & psg_nr2_step;
 
 	if (period) {
 		unsigned newVol = volume_;
@@ -69,10 +71,10 @@ void EnvelopeUnit::event() {
 		} else
 			counter_ = counter_disabled;
 	} else
-		counter_ += 8ul << 15;
+		counter_ += 8u << 15;
 }
 
-void EnvelopeUnit::nr2Change(unsigned const newNr2, unsigned long const cc, bool const master) {
+void EnvelopeUnit::nr2Change(unsigned const newNr2, gb_ulong const cc, bool const master) {
 	if (!master) {
 		nr2_ = newNr2;
 		return;
@@ -80,7 +82,7 @@ void EnvelopeUnit::nr2Change(unsigned const newNr2, unsigned long const cc, bool
 
 	bool willClock = clock(cc);
 	if (willClock) {
-		unsigned long const period = nr2_ & psg_nr2_step;
+		gb_ulong const period = nr2_ & psg_nr2_step;
 		counter_ = cc - ((cc - 0x1000) & 0x7FFF) + period * 0x8000;
 	}
 
@@ -126,8 +128,8 @@ void EnvelopeUnit::nr2Change(unsigned const newNr2, unsigned long const cc, bool
 	nr2_ = newNr2;
 }
 
-bool EnvelopeUnit::nr4Init(unsigned long const cc) {
-	unsigned long period = nr2_ & psg_nr2_step ? nr2_ & psg_nr2_step : 8;
+bool EnvelopeUnit::nr4Init(gb_ulong const cc) {
+	gb_ulong period = nr2_ & psg_nr2_step ? nr2_ & psg_nr2_step : 8;
 
 	if (((cc + 2) & 0x7000) == 0x0000)
 		++period;

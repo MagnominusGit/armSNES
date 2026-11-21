@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "ly_counter.h"
 #include "../savestate.h"
 
@@ -39,26 +40,26 @@ void LyCounter::doEvent() {
 	time_ = time_ + lineTime_;
 }
 
-unsigned long LyCounter::nextLineCycle(unsigned const lineCycle, unsigned long const cc) const {
-	unsigned long tmp = time_ + (lineCycle << ds_);
+gb_ulong LyCounter::nextLineCycle(unsigned const lineCycle, gb_ulong const cc) const {
+	gb_ulong tmp = time_ + (lineCycle << ds_);
 	if (tmp - cc > lineTime_)
 		tmp -= lineTime_;
 
 	return tmp;
 }
 
-unsigned long LyCounter::nextFrameCycle(unsigned long const frameCycle, unsigned long const cc) const {
-	unsigned long tmp = time_ + (((lcd_lines_per_frame - 1l - ly()) * lcd_cycles_per_line + frameCycle) << ds_);
-	if (tmp - cc > 1ul * lcd_cycles_per_frame << ds_)
-		tmp -= 1ul * lcd_cycles_per_frame << ds_;
+gb_ulong LyCounter::nextFrameCycle(gb_ulong const frameCycle, gb_ulong const cc) const {
+	gb_ulong tmp = time_ + (((lcd_lines_per_frame - 1 - ly()) * lcd_cycles_per_line + frameCycle) << ds_);
+	if (tmp - cc > 1u * lcd_cycles_per_frame << ds_)
+		tmp -= 1u * lcd_cycles_per_frame << ds_;
 
 	return tmp;
 }
 
-void LyCounter::reset(unsigned long videoCycles, unsigned long lastUpdate) {
+void LyCounter::reset(gb_ulong videoCycles, gb_ulong lastUpdate) {
 	ly_ = videoCycles / lcd_cycles_per_line;
 	time_ = lastUpdate + ((lcd_cycles_per_line
-		- (videoCycles - 1l * ly_ * lcd_cycles_per_line)) << isDoubleSpeed());
+		- (videoCycles - 1 * ly_ * lcd_cycles_per_line)) << isDoubleSpeed());
 }
 
 void LyCounter::setDoubleSpeed(bool ds) {

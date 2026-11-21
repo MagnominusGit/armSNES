@@ -114,7 +114,7 @@ void runHuC3(unsigned char* state, unsigned long long seconds) {
 // An MBC3 clock moved on by some seconds the way the chip counts: a field past its range counts up to
 // its last value and wraps to 0 without a carry; past 511 days the day counter wraps and sets its
 // carry bit.
-void runClock(unsigned long r[11], unsigned long long seconds) {
+void runClock(gb_ulong r[11], unsigned long long seconds) {
 	if (r[RTC_DH] & 0x40) {
 		return;
 	}
@@ -123,7 +123,7 @@ void runClock(unsigned long r[11], unsigned long long seconds) {
 	static const int fields[3] = { RTC_S, RTC_M, RTC_H };
 	unsigned long long carry = seconds;
 	for (int i = 0; i < 3 && carry; ++i) {
-		unsigned long& value = r[fields[i]];
+		gb_ulong& value = r[fields[i]];
 		if (value >= limits[i]) {
 			if (carry < ends[i] - value) {
 				value += carry;
@@ -248,7 +248,7 @@ void gbRtcRead(void) {
 		gb->setHuC3Regs(state);
 		return;
 	}
-	unsigned long r[11] = { 0 };
+	gb_ulong r[11] = { 0 };
 	bool const ours = !std::memcmp(file + RTC_MAGIC, "aGBm", 4), older = !std::memcmp(file + RTC_MAGIC, "aGBc", 4);
 	if (older) {
 		const unsigned char* const regs = file + RTC_REGS;
@@ -316,7 +316,7 @@ void gbRtcWrite(void) {
 		put64(file + RTC_BASE, now - shown);
 		return;
 	}
-	unsigned long r[11];
+	gb_ulong r[11];
 	gb->getRtcRegs(r);
 	unsigned long long const shown = (((((r[RTC_DH] & 1) << 8 | r[RTC_DL]) * 24 + r[RTC_H]) * 60 + r[RTC_M]) * 60 + r[RTC_S]);
 	put64(file + RTC_BASE, now - shown);

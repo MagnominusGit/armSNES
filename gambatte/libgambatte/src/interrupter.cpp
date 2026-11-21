@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "interrupter.h"
 #include "memory.h"
 
@@ -29,7 +30,7 @@ Interrupter::Interrupter(unsigned short &sp, unsigned short &pc, unsigned char &
 {
 }
 
-void Interrupter::prefetch(unsigned long cc, Memory &mem) {
+void Interrupter::prefetch(gb_ulong cc, Memory &mem) {
 	if (!prefetched_) {
 		opcode_ = mem.read<false, true, true, false>(pc_, cc);
 		pc_ = (pc_ + 1) & 0xFFFF;
@@ -37,7 +38,7 @@ void Interrupter::prefetch(unsigned long cc, Memory &mem) {
 	}
 }
 
-unsigned long Interrupter::interrupt(unsigned long cc, Memory &memory) {
+gb_ulong Interrupter::interrupt(gb_ulong cc, Memory &memory) {
 	// undo prefetch (presumably unconditional on hw).
 	if (prefetched_) {
 		pc_ = (pc_ - 1) & 0xFFFF;
@@ -92,7 +93,7 @@ void Interrupter::setGameShark(std::string const &codes) {
 	}
 }
 
-void Interrupter::applyVblankCheats(unsigned long const cc, Memory &memory) {
+void Interrupter::applyVblankCheats(gb_ulong const cc, Memory &memory) {
 	for (std::size_t i = 0, size = gsCodes_.size(); i < size; ++i) {
 		if (gsCodes_[i].type == 0x01)
 			memory.write<true, false>(gsCodes_[i].address, gsCodes_[i].value, cc);

@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "huc3_chip.h"
 #include "../savestate.h"
 
@@ -44,11 +45,11 @@ HuC3Chip::HuC3Chip(Time &time, Infrared &ir)
 	std::memset(toneBuf_, 0, sizeof toneBuf_);
 }
 
-void HuC3Chip::updateClock(unsigned long const cc) {
-	unsigned long const cycleDivisor = time_.getRtcDivisor() * 60;
+void HuC3Chip::updateClock(gb_ulong const cc) {
+	gb_ulong const cycleDivisor = time_.getRtcDivisor() * 60;
 	unsigned long long diff = time_.diff(cc);
-	unsigned long minutes = (io_[0x10] & 0x0F) | ((io_[0x11] & 0x0F) << 4) | ((io_[0x12] & 0x0F) << 8);
-	unsigned long days = (io_[0x13] & 0x0F) | ((io_[0x14] & 0x0F) << 4) | ((io_[0x15] & 0x0F) << 8);
+	gb_ulong minutes = (io_[0x10] & 0x0F) | ((io_[0x11] & 0x0F) << 4) | ((io_[0x12] & 0x0F) << 8);
+	gb_ulong days = (io_[0x13] & 0x0F) | ((io_[0x14] & 0x0F) << 4) | ((io_[0x15] & 0x0F) << 8);
 	rtcCycles_ += diff % cycleDivisor;
 	if (rtcCycles_ >= cycleDivisor) {
 		minutes++;
@@ -71,10 +72,10 @@ void HuC3Chip::updateClock(unsigned long const cc) {
 }
 
 void HuC3Chip::setTime(unsigned long long const dividers) {
-	unsigned long const cycleDivisor = time_.getRtcDivisor() * 60;
+	gb_ulong const cycleDivisor = time_.getRtcDivisor() * 60;
 	rtcCycles_ = dividers * 2 % cycleDivisor;
-	unsigned long const minutes = dividers * 2 / cycleDivisor % 1440;
-	unsigned long const days = dividers * 2 / cycleDivisor / 1440;
+	gb_ulong const minutes = dividers * 2 / cycleDivisor % 1440;
+	gb_ulong const days = dividers * 2 / cycleDivisor / 1440;
 	io_[0x10] = minutes & 0x0F;
 	io_[0x11] = minutes >> 4 & 0x0F;
 	io_[0x12] = minutes >> 8 & 0x0F;
@@ -83,11 +84,11 @@ void HuC3Chip::setTime(unsigned long long const dividers) {
 	io_[0x15] = days >> 8 & 0x0F;
 }
 
-void HuC3Chip::setBaseTime(unsigned long long baseTime, unsigned long const cc) {
-	unsigned long const cycleDivisor = time_.getRtcDivisor() * 60;
+void HuC3Chip::setBaseTime(unsigned long long baseTime, gb_ulong const cc) {
+	gb_ulong const cycleDivisor = time_.getRtcDivisor() * 60;
 	unsigned long long diff = (std::time(0) - baseTime) * cycleDivisor / 60 + cc;
-	unsigned long minutes = (io_[0x10] & 0x0F) | ((io_[0x11] & 0x0F) << 4) | ((io_[0x12] & 0x0F) << 8);
-	unsigned long days = (io_[0x13] & 0x0F) | ((io_[0x14] & 0x0F) << 4) | ((io_[0x15] & 0x0F) << 8);
+	gb_ulong minutes = (io_[0x10] & 0x0F) | ((io_[0x11] & 0x0F) << 4) | ((io_[0x12] & 0x0F) << 8);
+	gb_ulong days = (io_[0x13] & 0x0F) | ((io_[0x14] & 0x0F) << 4) | ((io_[0x15] & 0x0F) << 8);
 	rtcCycles_ += diff % cycleDivisor;
 	if (rtcCycles_ >= cycleDivisor) {
 		minutes++;
@@ -109,7 +110,7 @@ void HuC3Chip::setBaseTime(unsigned long long baseTime, unsigned long const cc) 
 	io_[0x15] = (days >> 8) & 0x0F;
 }
 
-void HuC3Chip::getHuC3Regs(unsigned char *dest, unsigned long const cc) {
+void HuC3Chip::getHuC3Regs(unsigned char *dest, gb_ulong const cc) {
 	updateClock(cc);
 	dest[0] = (rtcCycles_ >> 24) & 0xFF;
 	dest[1] = (rtcCycles_ >> 16) & 0xFF;
@@ -127,8 +128,8 @@ void HuC3Chip::setHuC3Regs(unsigned char *src) {
 }
 
 // fixme: this is assuming a "BING BONG" sound
-void HuC3Chip::accumulateSamples(unsigned long const cc) {
-	unsigned long samples = (cc - toneLastUpdate_) >> (1 + ds_);
+void HuC3Chip::accumulateSamples(gb_ulong const cc) {
+	gb_ulong samples = (cc - toneLastUpdate_) >> (1 + ds_);
 	toneLastUpdate_ = cc;
 	if ((toneBufPos_ + samples) >= max_samples)
 		samples = max_samples - toneBufPos_ - 1;
@@ -174,12 +175,12 @@ unsigned HuC3Chip::generateSamples(short *soundBuf) {
 	return samples;
 }
 
-void HuC3Chip::resetCc(unsigned long const oldCc, unsigned long const newCc) {
+void HuC3Chip::resetCc(gb_ulong const oldCc, gb_ulong const newCc) {
 	accumulateSamples(oldCc);
 	toneLastUpdate_ -= oldCc - newCc;
 }
 
-void HuC3Chip::speedChange(unsigned long const cc) {
+void HuC3Chip::speedChange(gb_ulong const cc) {
 	accumulateSamples(cc);
 	ds_ = !ds_;
 }
@@ -215,7 +216,7 @@ void HuC3Chip::loadState(SaveState const &state, bool const ds) {
 	ds_ = ds;
 }
 
-unsigned char HuC3Chip::read(unsigned /*p*/, unsigned long const cc) {
+unsigned char HuC3Chip::read(unsigned /*p*/, gb_ulong const cc) {
 	// should only reach here with ramflag = 0B-0E
 	switch (ramflag_) {
 		case 0xB: // write mode
@@ -230,7 +231,7 @@ unsigned char HuC3Chip::read(unsigned /*p*/, unsigned long const cc) {
 	return 0xFF;
 }
 
-void HuC3Chip::write(unsigned /*p*/, unsigned data, unsigned long const cc) {
+void HuC3Chip::write(unsigned /*p*/, unsigned data, gb_ulong const cc) {
 	switch (ramflag_) {
 		case 0xB: // write mode
 			transferValue_ = 0x80 | data;

@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "memory.h"
 #include "gambatte.h"
 #include "inputgetter.h"
@@ -33,12 +34,12 @@ namespace {
 
 int const oam_size = 4 * lcd_num_oam_entries;
 
-void decCycles(unsigned long &counter, unsigned long dec) {
+void decCycles(gb_ulong &counter, gb_ulong dec) {
 	if (counter != disabled_time)
 		counter -= dec;
 }
 
-int serialCntFrom(unsigned long cyclesUntilDone, bool cgbFast) {
+int serialCntFrom(gb_ulong cyclesUntilDone, bool cgbFast) {
 	return cgbFast ? (cyclesUntilDone + 0xF) >> 4 : (cyclesUntilDone + 0x1FF) >> 9;
 }
 
@@ -73,8 +74,9 @@ Memory::Memory(Interrupter const &interrupter)
 , linkCallback_(0)
 , linked_(false)
 , linkClockTrigger_(false)
+, megaDuck_(false)
 {
-	intreq_.setEventTime<intevent_blit>(1l * lcd_vres * lcd_cycles_per_line);
+	intreq_.setEventTime<intevent_blit>(1 * lcd_vres * lcd_cycles_per_line);
 	intreq_.setEventTime<intevent_end>(0);
 }
 
@@ -87,7 +89,7 @@ void Memory::setStatePtrs(SaveState &state) {
 	psg_.setStatePtrs(state);
 }
 
-unsigned long Memory::saveState(SaveState &state, unsigned long cc) {
+gb_ulong Memory::saveState(SaveState &state, gb_ulong cc) {
 	cc = resetCounters(cc);
 	ioamhram_[0x104] = 0;
 	nontrivial_ff_read(0x05, cc);
@@ -185,7 +187,7 @@ void Memory::loadState(SaveState const &state) {
 		std::fill_n(cart_.vramdata() + vrambank_size(), vrambank_size(), 0);
 }
 
-void Memory::setEndtime(unsigned long cc, unsigned long inc) {
+void Memory::setEndtime(gb_ulong cc, gb_ulong inc) {
 	if (intreq_.eventTime(intevent_blit) <= cc) {
 		intreq_.setEventTime<intevent_blit>(intreq_.eventTime(intevent_blit)
 			+ (lcd_cycles_per_frame << isDoubleSpeed()));
@@ -194,7 +196,7 @@ void Memory::setEndtime(unsigned long cc, unsigned long inc) {
 	intreq_.setEventTime<intevent_end>(cc + (inc << isDoubleSpeed()));
 }
 
-void Memory::updateSerial(unsigned long const cc) {
+void Memory::updateSerial(gb_ulong const cc) {
 	if (!linked_) {
 		if (intreq_.eventTime(intevent_serial) != disabled_time) {
 			if (intreq_.eventTime(intevent_serial) <= cc) {
@@ -221,18 +223,18 @@ void Memory::updateSerial(unsigned long const cc) {
 	}
 }
 
-void Memory::updateTimaIrq(unsigned long cc) {
+void Memory::updateTimaIrq(gb_ulong cc) {
 	while (intreq_.eventTime(intevent_tima) <= cc)
 		tima_.doIrqEvent(TimaInterruptRequester(intreq_));
 }
 
-void Memory::updateIrqs(unsigned long cc) {
+void Memory::updateIrqs(gb_ulong cc) {
 	updateSerial(cc);
 	updateTimaIrq(cc);
 	lcd_.update(cc);
 }
 
-unsigned long Memory::event(unsigned long cc) {
+gb_ulong Memory::event(gb_ulong cc) {
 	if (lastOamDmaUpdate_ != disabled_time)
 		updateOamDma(cc);
 
@@ -260,7 +262,7 @@ unsigned long Memory::event(unsigned long cc) {
 	case intevent_blit:
 		{
 			bool const lcden = ioamhram_[0x140] & lcdc_en;
-			unsigned long blitTime = intreq_.eventTime(intevent_blit);
+			gb_ulong blitTime = intreq_.eventTime(intevent_blit);
 
 			if (lcden | blanklcd_) {
 				lcd_.updateScreen(blanklcd_, cc, 0);
@@ -342,14 +344,14 @@ unsigned long Memory::event(unsigned long cc) {
 	return cc;
 }
 
-unsigned long Memory::dma(unsigned long cc) {
+gb_ulong Memory::dma(gb_ulong cc) {
 	bool const doubleSpeed = isDoubleSpeed();
 	unsigned dmaSrc = dmaSource_;
 	unsigned dmaDest = dmaDestination_;
 	unsigned dmaLength = ((ioamhram_[0x155] & 0x7F) + 1) * 0x10;
 	unsigned length = hdmaReqFlagged(intreq_) ? 0x10 : dmaLength;
 
-	if (1ul * dmaDest + length >= 0x10000) {
+	if (1u * dmaDest + length >= 0x10000) {
 		length = 0x10000 - dmaDest;
 		ioamhram_[0x155] |= 0x80;
 	}
@@ -359,13 +361,15 @@ unsigned long Memory::dma(unsigned long cc) {
 	if (!(ioamhram_[0x140] & lcdc_en) && gdmaReqFlagged(intreq_)) // FIXME: This is wrong for HDMA, but is it right for GDMA?
 		dmaLength = 0;
 
-	unsigned long lOamDmaUpdate = lastOamDmaUpdate_;
+	gb_ulong lOamDmaUpdate = lastOamDmaUpdate_;
 	lastOamDmaUpdate_ = disabled_time;
 
 	while (length--) {
 		unsigned const src = dmaSrc++ & 0xFFFF;
 		unsigned const data = (src & -vrambank_size()) == mm_vram_begin || src >= mm_wram_mirror_begin
 			? cartBus(cc + 4) // cart bus seems to pull up sooner here? might be prefetch related
+			// armGBA: the Action Replay answers DMA's reads of the ROM area without a CPU read's effects
+			: src < mm_vram_begin && cart_.cheatCart() ? cart_.romHookDmaRead(src)
 			: read<false, false, false, false>(src, cc);
 
 		cc += 2 + 2 * doubleSpeed;
@@ -412,7 +416,7 @@ unsigned long Memory::dma(unsigned long cc) {
 	return cc;
 }
 
-void Memory::freeze(unsigned long cc) {
+void Memory::freeze(gb_ulong cc) {
 	// permanently halt CPU.
 	// simply halt and clear IE to avoid unhalt from occuring,
 	// which avoids additional state to represent a "frozen" state.
@@ -421,7 +425,7 @@ void Memory::freeze(unsigned long cc) {
 	intreq_.halt();
 }
 
-bool Memory::halt(unsigned long cc) {
+bool Memory::halt(gb_ulong cc) {
 	if (lastOamDmaUpdate_ != disabled_time)
 		updateOamDma(cc);
 
@@ -438,7 +442,7 @@ bool Memory::halt(unsigned long cc) {
 	return hdmaReq;
 }
 
-unsigned Memory::pendingIrqs(unsigned long cc) {
+unsigned Memory::pendingIrqs(gb_ulong cc) {
 	if (lastOamDmaUpdate_ != disabled_time)
 		updateOamDma(cc);
 
@@ -446,7 +450,7 @@ unsigned Memory::pendingIrqs(unsigned long cc) {
 	return intreq_.pendingIrqs();
 }
 
-void Memory::ackIrq(unsigned bit, unsigned long cc) {
+void Memory::ackIrq(unsigned bit, gb_ulong cc) {
 	if (lastOamDmaUpdate_ != disabled_time)
 		updateOamDma(cc);
 
@@ -458,7 +462,7 @@ void Memory::ackIrq(unsigned bit, unsigned long cc) {
 	intreq_.ackIrq(bit);
 }
 
-unsigned long Memory::stop(unsigned long cc, bool &prefetched) {
+gb_ulong Memory::stop(gb_ulong cc, bool &prefetched) {
 	// FIXME: this is incomplete.
 	intreq_.setEventTime<intevent_unhalt>(cc + 0x20000 + 4);
 
@@ -472,7 +476,7 @@ unsigned long Memory::stop(unsigned long cc, bool &prefetched) {
 		prefetched = hdmaReqFlagged(intreq_);
 		if (prefetched && isDoubleSpeed())
 			haltHdmaState_ = hdma_requested;
-		unsigned long const cc_ = cc + 8 * !isDoubleSpeed();
+		gb_ulong const cc_ = cc + 8 * !isDoubleSpeed();
 		if (cc_ >= cc + 4) {
 			if (lastOamDmaUpdate_ != disabled_time)
 				updateOamDma(cc + 4);
@@ -519,25 +523,25 @@ unsigned long Memory::stop(unsigned long cc, bool &prefetched) {
 	return cc;
 }
 
-void Memory::stall(unsigned long cc, unsigned long cycles) {
+void Memory::stall(gb_ulong cc, gb_ulong cycles) {
 	intreq_.halt();
 	intreq_.setEventTime<intevent_unhalt>(cc + cycles);
 }
 
-void Memory::decEventCycles(IntEventId eventId, unsigned long dec) {
+void Memory::decEventCycles(IntEventId eventId, gb_ulong dec) {
 	if (intreq_.eventTime(eventId) != disabled_time)
 		intreq_.setEventTime(eventId, intreq_.eventTime(eventId) - dec);
 }
 
-unsigned long Memory::resetCounters(unsigned long cc) {
+gb_ulong Memory::resetCounters(gb_ulong cc) {
 	if (lastOamDmaUpdate_ != disabled_time)
 		updateOamDma(cc);
 
 	updateIrqs(cc);
 
-	unsigned long const dec = cc < 0x20000
+	gb_ulong const dec = cc < 0x20000
 		? 0
-		: (cc & -0x10000l) - 0x10000;
+		: (cc & -0x10000) - 0x10000;
 	decCycles(lastOamDmaUpdate_, dec);
 	decCycles(lastCartBusUpdate_, dec);
 	decEventCycles(intevent_serial, dec);
@@ -546,7 +550,7 @@ unsigned long Memory::resetCounters(unsigned long cc) {
 	decEventCycles(intevent_end, dec);
 	decEventCycles(intevent_unhalt, dec);
 
-	unsigned long const oldCC = cc;
+	gb_ulong const oldCC = cc;
 	cc -= dec;
 	intreq_.resetCc(oldCC, cc);
 	cart_.resetCc(oldCC, cc);
@@ -587,7 +591,7 @@ void Memory::updateInput() {
 	ioamhram_[0x100] = (ioamhram_[0x100] & -0x10u) | state;
 }
 
-void Memory::updateOamDma(unsigned long const cc) {
+void Memory::updateOamDma(gb_ulong const cc) {
 	unsigned char const *const oamDmaSrc = oamDmaSrcPtr();
 	unsigned const step = oamDmaStep();
 	unsigned cycles = (cc - lastOamDmaUpdate_) / step;
@@ -601,7 +605,10 @@ void Memory::updateOamDma(unsigned long const cc) {
 			startOamDma(lastOamDmaUpdate_);
 
 		if (oamDmaPos_ < oam_size) {
-			if (oamDmaSrc) ioamhram_[oamDmaPos_] = oamDmaSrc[oamDmaPos_];
+			// armGBA: the Action Replay answers OAM DMA's reads of the ROM area too
+			if (cart_.oamDmaSrc() == oam_dma_src_rom && cart_.cheatCart())
+				ioamhram_[oamDmaPos_] = cart_.romHookDmaRead(ioamhram_[0x146] * 0x100 + oamDmaPos_);
+			else if (oamDmaSrc) ioamhram_[oamDmaPos_] = oamDmaSrc[oamDmaPos_];
 			else if (cart_.isHuC3()) ioamhram_[oamDmaPos_] = cart_.HuC3Read(oamDmaPos_, cc);
 			else ioamhram_[oamDmaPos_] = cart_.rtcRead();
 		} else if (oamDmaPos_ == oam_size) {
@@ -626,13 +633,13 @@ void Memory::oamDmaInitSetup() {
 unsigned char const * Memory::oamDmaSrcPtr() const {
 	switch (cart_.oamDmaSrc()) {
 	case oam_dma_src_rom:
-		return cart_.romdata(ioamhram_[0x146] >> 6) + ioamhram_[0x146] * 0x100l;
+		return cart_.romdata(ioamhram_[0x146] >> 6) + ioamhram_[0x146] * 0x100;
 	case oam_dma_src_sram:
-		return cart_.rsrambankptr() ? cart_.rsrambankptr() + ioamhram_[0x146] * 0x100l : 0;
+		return cart_.rsrambankptr() ? cart_.rsrambankptr() + ioamhram_[0x146] * 0x100 : 0;
 	case oam_dma_src_vram:
-		return cart_.vrambankptr() + ioamhram_[0x146] * 0x100l;
+		return cart_.vrambankptr() + ioamhram_[0x146] * 0x100;
 	case oam_dma_src_wram:
-		return cart_.wramdata(ioamhram_[0x146] >> 4 & 1) + (ioamhram_[0x146] * 0x100l & 0xFFF);
+		return cart_.wramdata(ioamhram_[0x146] >> 4 & 1) + (ioamhram_[0x146] * 0x100 & 0xFFF);
 	case oam_dma_src_invalid:
 	case oam_dma_src_off:
 		break;
@@ -641,13 +648,13 @@ unsigned char const * Memory::oamDmaSrcPtr() const {
 	return cart_.rdisabledRam();
 }
 
-void Memory::startOamDma(unsigned long cc) {
+void Memory::startOamDma(gb_ulong cc) {
 	oamDmaPos_ = 0;
 	oamDmaStartPos_ = 0;
 	lcd_.oamChange(cart_.rdisabledRam(), cc);
 }
 
-void Memory::endOamDma(unsigned long cc) {
+void Memory::endOamDma(gb_ulong cc) {
 	if (oamDmaStartPos_ == 0) {
 		oamDmaPos_ = -2u & 0xFF;
 		cart_.setOamDmaSrc(oam_dma_src_off);
@@ -655,7 +662,71 @@ void Memory::endOamDma(unsigned long cc) {
 	lcd_.oamChange(ioamhram_, cc);
 }
 
-unsigned Memory::nontrivial_ff_read(unsigned const p, unsigned long const cc) {
+// armGBA: the Mega Duck is a Game Boy with its I/O registers moved and some of their bits rearranged
+// (as SameDuck has them). Each Mega Duck register is the Game Boy register here, or none (-1).
+namespace {
+
+signed char const megaDuckIo[0x80] = {
+	// 00-0F: joypad, serial, timer and IF, where the Game Boy has them
+	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+	// 10-1F: LCDC STAT SCY SCX OBP0 OBP1 WY WX LY LYC DMA BGP
+	0x40, 0x41, 0x42, 0x43, 0x48, 0x49, 0x4A, 0x4B, 0x44, 0x45, 0x46, 0x47,   -1,   -1,   -1,   -1,
+	// 20-2F: NR10 NR12 NR11 NR13 NR14 NR21 (NR20) NR22 NR23 NR24 NR30 NR31 NR32 NR34 NR33 (NR40)
+	0x10, 0x12, 0x11, 0x13, 0x14, 0x16, 0x15, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1E, 0x1D, 0x1F,
+	// 30-3F: wave RAM
+	0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F,
+	// 40-4F: NR41 NR43 NR42 NR44 NR50 NR52 NR51, then nothing up to the Game Boy Color's registers
+	0x20, 0x22, 0x21, 0x23, 0x24, 0x26, 0x25,   -1,   -1,   -1,   -1,   -1, 0x4C, 0x4D, 0x4E, 0x4F,
+	0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F,
+	0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F,
+	0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F,
+};
+
+// LCDC bit by bit: the Mega Duck's bit 6 is the Game Boy's bit 0 (background on), 3 is 6 (window
+// map), 2 is 3 (background map), 1 is 2 (sprite size) and 0 is 1 (sprites on); 7, 5 and 4 match.
+unsigned megaDuckLcdcToDmg(unsigned v) {
+	return (v & 0xB0) | (v >> 6 & 0x01) | (v << 3 & 0x40) | (v << 1 & 0x08) | (v << 1 & 0x04) | (v << 1 & 0x02);
+}
+
+unsigned dmgLcdcToMegaDuck(unsigned v) {
+	return (v & 0xB0) | (v << 6 & 0x40) | (v >> 3 & 0x08) | (v >> 1 & 0x04) | (v >> 1 & 0x02) | (v >> 1 & 0x01);
+}
+
+// The envelopes (NR12, NR22, NR42) and the noise's frequency (NR43) have their two halves swapped.
+// The wave's volume (NR32 bits 6-5) has full and a quarter the other way round: 11 is full, 01 a
+// quarter (as GBDK-2020 has it; SameDuck doesn't).
+unsigned megaDuckValue(unsigned dmgReg, unsigned v, bool toDmg) {
+	switch (dmgReg) {
+	case 0x40: return toDmg ? megaDuckLcdcToDmg(v) : dmgLcdcToMegaDuck(v);
+	case 0x12:
+	case 0x17:
+	case 0x21:
+	case 0x22: return (v << 4 & 0xF0) | (v >> 4 & 0x0F);
+	case 0x1C: return (v & ~0x60u) | (0u - (v & 0x60)) & 0x60;
+	}
+
+	return v;
+}
+
+} // unnamed namespace
+
+unsigned Memory::megaDuckFfRead(unsigned const p, gb_ulong const cc) {
+	int const reg = megaDuckIo[p];
+	return reg < 0 ? 0xFF : megaDuckValue(reg, nontrivial_ff_read(reg, cc), false);
+}
+
+unsigned Memory::megaDuckFfPeek(unsigned const p, gb_ulong const cc) {
+	int const reg = megaDuckIo[p];
+	return reg < 0 ? 0xFF : megaDuckValue(reg, nontrivial_ff_peek(reg, cc), false);
+}
+
+void Memory::megaDuckFfWrite(unsigned const p, unsigned const data, gb_ulong const cc) {
+	int const reg = megaDuckIo[p];
+	if (reg >= 0)
+		nontrivial_ff_write(reg, megaDuckValue(reg, data, true), cc);
+}
+
+unsigned Memory::nontrivial_ff_read(unsigned const p, gb_ulong const cc) {
 	if (lastOamDmaUpdate_ != disabled_time)
 		updateOamDma(cc);
 
@@ -749,7 +820,7 @@ unsigned Memory::nontrivial_ff_read(unsigned const p, unsigned long const cc) {
 	return ioamhram_[p + 0x100];
 }
 
-unsigned Memory::nontrivial_read(unsigned const p, unsigned long const cc) {
+unsigned Memory::nontrivial_read(unsigned const p, gb_ulong const cc) {
 	if (p < mm_hram_begin) {
 		if (lastOamDmaUpdate_ != disabled_time) {
 			updateOamDma(cc);
@@ -782,6 +853,12 @@ unsigned Memory::nontrivial_read(unsigned const p, unsigned long const cc) {
 				return cart_.vrambankptr()[p];
 			}
 
+			{
+				unsigned value;
+				if (cart_.sramHookRead(p, value))
+					return value;
+			}
+
 			if (cart_.rsrambankptr())
 				return cart_.rsrambankptr()[p];
 
@@ -806,9 +883,9 @@ unsigned Memory::nontrivial_read(unsigned const p, unsigned long const cc) {
 		if (p < mm_oam_begin)
 			return cart_.wramdata(p >> 12 & 1)[p & 0xFFF];
 
-		long const ffp = static_cast<long>(p) - mm_io_begin;
+		gb_long const ffp = static_cast<gb_long>(p) - mm_io_begin;
 		if (ffp >= 0)
-			return nontrivial_ff_read(ffp, cc);
+			return megaDuck_ && ffp < 0x80 ? megaDuckFfRead(ffp, cc) : nontrivial_ff_read(ffp, cc);
 
 		if (!lcd_.oamReadable(cc) || oamDmaPos_ < oam_size)
 			return 0xFF;
@@ -820,7 +897,7 @@ unsigned Memory::nontrivial_read(unsigned const p, unsigned long const cc) {
 	return ioamhram_[p - mm_oam_begin];
 }
 
-unsigned Memory::nontrivial_ff_peek(unsigned const p, unsigned long const cc) {
+unsigned Memory::nontrivial_ff_peek(unsigned const p, gb_ulong const cc) {
 	// some regs might be wrong
 	switch (p) {
 	case 0x04:
@@ -865,7 +942,7 @@ unsigned Memory::nontrivial_ff_peek(unsigned const p, unsigned long const cc) {
 	return ioamhram_[p + 0x100];
 }
 
-unsigned Memory::nontrivial_peek(unsigned const p, unsigned long const cc) {
+unsigned Memory::nontrivial_peek(unsigned const p, gb_ulong const cc) {
 	if (p < mm_hram_begin) {
 		if (lastOamDmaUpdate_ != disabled_time) {
 			if (cart_.isInOamDmaConflictArea(p) && oamDmaPos_ < oam_size) {
@@ -902,9 +979,9 @@ unsigned Memory::nontrivial_peek(unsigned const p, unsigned long const cc) {
 		if (p < mm_oam_begin)
 			return cart_.wramdata(p >> 12 & 1)[p & 0xFFF];
 
-		long const ffp = static_cast<long>(p) - mm_io_begin;
+		gb_long const ffp = static_cast<gb_long>(p) - mm_io_begin;
 		if (ffp >= 0)
-			return nontrivial_ff_peek(ffp, cc);
+			return megaDuck_ && ffp < 0x80 ? megaDuckFfPeek(ffp, cc) : nontrivial_ff_peek(ffp, cc);
 
 		if (oamDmaPos_ < oam_size)
 			return 0xFF;
@@ -916,7 +993,7 @@ unsigned Memory::nontrivial_peek(unsigned const p, unsigned long const cc) {
 	return ioamhram_[p - mm_oam_begin];
 }
 
-void Memory::nontrivial_ff_write(unsigned const p, unsigned data, unsigned long const cc) {
+void Memory::nontrivial_ff_write(unsigned const p, unsigned data, gb_ulong const cc) {
 	if (lastOamDmaUpdate_ != disabled_time)
 		updateOamDma(cc);
 
@@ -955,8 +1032,8 @@ void Memory::nontrivial_ff_write(unsigned const p, unsigned data, unsigned long 
 	case 0x04:
 		if (intreq_.eventTime(intevent_serial) != disabled_time
 				&& intreq_.eventTime(intevent_serial) > cc) {
-			unsigned long const t = intreq_.eventTime(intevent_serial);
-			unsigned long const n = ioamhram_[0x102] & isCgb() * 2
+			gb_ulong const t = intreq_.eventTime(intevent_serial);
+			gb_ulong const n = ioamhram_[0x102] & isCgb() * 2
 				? t + (cc - t) % 8 - 2 * ((cc - t) & 4)
 				: t + (cc - t) % 0x100 - 2 * ((cc - t) & 0x80);
 			intreq_.setEventTime<intevent_serial>(std::max(cc, n));
@@ -1142,7 +1219,7 @@ void Memory::nontrivial_ff_write(unsigned const p, unsigned data, unsigned long 
 
 			if (!(data & 0x80)) {
 				for (unsigned i = 0x10; i < 0x26; ++i)
-					ff_write<false>(i, 0, cc);
+					nontrivial_ff_write(i, 0, cc);
 
 				psg_.setEnabled(false);
 			} else {
@@ -1404,7 +1481,7 @@ void Memory::nontrivial_ff_write(unsigned const p, unsigned data, unsigned long 
 	ioamhram_[p + 0x100] = data;
 }
 
-void Memory::nontrivial_write(unsigned const p, unsigned const data, unsigned long const cc) {
+void Memory::nontrivial_write(unsigned const p, unsigned const data, gb_ulong const cc) {
 	if (lastOamDmaUpdate_ != disabled_time) {
 		updateOamDma(cc);
 
@@ -1433,7 +1510,9 @@ void Memory::nontrivial_write(unsigned const p, unsigned const data, unsigned lo
 				cart_.vrambankptr()[p] = data;
 			}
 		} else if (p < mm_wram_begin) {
-			if (cart_.wsrambankptr())
+			if (cart_.sramHookWrite(p, data))
+				;
+			else if (cart_.wsrambankptr())
 				cart_.wsrambankptr()[p] = data;
 			else if (cart_.isHuC1()) {
 				cart_.setIrSignal(Infrared::this_gb, data & 1);
@@ -1448,7 +1527,7 @@ void Memory::nontrivial_write(unsigned const p, unsigned const data, unsigned lo
 		} else
 			cart_.wramdata(p >> 12 & 1)[p & 0xFFF] = data;
 	} else if (p - mm_hram_begin >= 0x7Fu) {
-		long const ffp = static_cast<long>(p) - mm_io_begin;
+		gb_long const ffp = static_cast<gb_long>(p) - mm_io_begin;
 		if (ffp < 0) {
 			bool const validOam = p < (mm_oam_begin + oam_size);
 			if (lcd_.oamWritable(cc) && oamDmaPos_ >= oam_size
@@ -1456,7 +1535,9 @@ void Memory::nontrivial_write(unsigned const p, unsigned const data, unsigned lo
 				lcd_.oamChange(cc);
 				ioamhram_[(p - mm_oam_begin) & (validOam ? 0xFF : 0xE7)] = data;
 			}
-		} else
+		} else if (megaDuck_ && ffp < 0x80)
+			megaDuckFfWrite(ffp, data, cc);
+		else
 			nontrivial_ff_write(ffp, data, cc);
 	} else
 		ioamhram_[p - mm_oam_begin] = data;
@@ -1465,7 +1546,9 @@ void Memory::nontrivial_write(unsigned const p, unsigned const data, unsigned lo
 LoadRes Memory::loadROM(Array<unsigned char> &buffer, unsigned flags, std::string const &filepath) {
 	bool const cgbMode = flags & GB::LoadFlag::CGB_MODE;
 
-	if (LoadRes const fail = cart_.loadROM(buffer, cgbMode, filepath))
+	megaDuck_ = flags & GB::LoadFlag::MEGA_DUCK;
+
+	if (LoadRes const fail = cart_.loadROM(buffer, cgbMode, megaDuck_ ? 1 + (flags / GB::LoadFlag::MEGA_DUCK_MAPPER & 7) : 0, filepath))
 		return fail;
 
 	agbFlag_ = flags & GB::LoadFlag::GBA_FLAG;
@@ -1486,7 +1569,7 @@ LoadRes Memory::loadROM(Array<unsigned char> &buffer, unsigned flags, std::strin
 	return LOADRES_OK;
 }
 
-std::size_t Memory::fillSoundBuffer(unsigned long cc) {
+std::size_t Memory::fillSoundBuffer(gb_ulong cc) {
 	psg_.generateSamples(cc, isDoubleSpeed());
 	std::size_t samples = psg_.fillBuffer();
 	if (isSgb() && !icdJoyp_) // armSNES
@@ -1525,8 +1608,8 @@ bool Memory::getMemoryArea(int which, unsigned char **data, int *length) {
 	}
 }
 
-int Memory::serialLeft(unsigned long const cc) const {
-	unsigned long const end = intreq_.eventTime(intevent_serial);
+int Memory::serialLeft(gb_ulong const cc) const {
+	gb_ulong const end = intreq_.eventTime(intevent_serial);
 	return end == disabled_time ? -1 : end > cc ? static_cast<int>(end - cc) : 0;
 }
 
@@ -1589,6 +1672,7 @@ SYNCFUNC(Memory) {
 	NSS(dmaSource_);
 	NSS(dmaDestination_);
 	NSS(oamDmaPos_);
+	NSS(oamDmaStartPos_);
 	NSS(serialCnt_);
 	NSS(cartBus_);
 	NSS(blanklcd_);
@@ -1598,4 +1682,7 @@ SYNCFUNC(Memory) {
 	NSS(linkClockTrigger_);
 	NSS(totalSamplesEmitted_);
 	NSS(icdInput_); // armSNES
+	// armGBA: the PPU reads the sprites from OAM, or from nothing while an OAM DMA has the bus.
+	if (isReader)
+		lcd_.setOam(lastOamDmaUpdate_ != disabled_time && oamDmaPos_ < oam_size ? cart_.rdisabledRam() : ioamhram_);
 }

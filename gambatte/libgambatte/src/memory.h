@@ -19,6 +19,7 @@
 #ifndef MEMORY_H
 #define MEMORY_H
 
+#include "gbint.h"
 #include "mem/cartridge.h"
 #include "mem/sgb.h"
 #include "inputgetter.h"
@@ -48,13 +49,13 @@ public:
 	unsigned char const * sachenLogo() const { return cart_.sachenLogo(); }
 	PakInfo const pakInfo() const { return cart_.pakInfo(); }
 	void setStatePtrs(SaveState &state);
-	unsigned long saveState(SaveState &state, unsigned long cc);
+	gb_ulong saveState(SaveState &state, gb_ulong cc);
 	void loadState(SaveState const &state);
-	void loadSavedata(unsigned long const cc) { cart_.loadSavedata(cc); }
-	void saveSavedata(unsigned long const cc) { cart_.saveSavedata(cc); }
+	void loadSavedata(gb_ulong const cc) { cart_.loadSavedata(cc); }
+	void saveSavedata(gb_ulong const cc) { cart_.saveSavedata(cc); }
 	unsigned getSavedataLength() { return cart_.getSavedataLength(); }
-	void loadSavedata(char const *data, unsigned long const cc) { cart_.loadSavedata(data, cc); }
-	void saveSavedata(char *dest, unsigned long const cc) { cart_.saveSavedata(dest, cc); }
+	void loadSavedata(char const *data, gb_ulong const cc) { cart_.loadSavedata(data, cc); }
+	void saveSavedata(char *dest, gb_ulong const cc) { cart_.saveSavedata(dest, cc); }
 
 	std::string const saveBasePath() const { return cart_.saveBasePath(); }
 
@@ -63,9 +64,18 @@ public:
 	}
 
 	bool getMemoryArea(int which, unsigned char **data, int *length);
+	bool swapMegaDuckCartridge(unsigned char const *data, std::size_t size, unsigned kind) { return cart_.swapMegaDuckRom(data, size, kind); }
+	bool attachCheatCart(unsigned char const *program, std::size_t size, bool hasGame) {
+		bool const attached = cart_.attachCheatCart(program, size, hasGame);
+		if (attached && cart_.cheatCart())
+			cart_.cheatCart()->setHram(ioamhram_);
+		return attached;
+	}
+	CheatCartGb *cheatCart() const { return cart_.cheatCart(); }
+	void resetCartChip() { cart_.resetChip(); }
 
-	unsigned long stop(unsigned long cycleCounter, bool &prefetched);
-	void stall(unsigned long cycleCounter, unsigned long cycles);
+	gb_ulong stop(gb_ulong cycleCounter, bool &prefetched);
+	void stall(gb_ulong cycleCounter, gb_ulong cycles);
 	bool isCgb() const { return lcd_.isCgb(); }
 	bool inBootRom() const { return biosMode_; }
 	// armGBA: the CPU Clock, in quarters of the console's own (4). The CPU's machine cycles take
@@ -79,7 +89,7 @@ public:
 			cpuCarry_ = 0;
 		}
 	}
-	unsigned long cpuCycles(unsigned mcycles) {
+	gb_ulong cpuCycles(unsigned mcycles) {
 		if (cpuQuarters_ == 4)
 			return 4 * mcycles;
 		if (stockLeft_) {
@@ -88,7 +98,7 @@ public:
 		}
 		unsigned const quarters = cpuQuartersNow(), unit = isDoubleSpeed() ? 2 : 1;
 		cpuCarry_ += 16 * mcycles;
-		unsigned long const cycles = cpuCarry_ / (unit * quarters) * unit;
+		gb_ulong const cycles = cpuCarry_ / (unit * quarters) * unit;
 		cpuCarry_ -= cycles * quarters;
 		return cycles;
 	}
@@ -111,33 +121,41 @@ public:
 	bool isSgb() const { return gbIsSgb_; }
 	bool ime() const { return intreq_.ime(); }
 	bool halted() const { return intreq_.halted(); }
-	unsigned long nextEventTime() const { return intreq_.minEventTime(); }
+	gb_ulong nextEventTime() const { return intreq_.minEventTime(); }
 	void setLayers(unsigned mask) { lcd_.setLayers(mask); }
 	bool isActive() const { return intreq_.eventTime(intevent_end) != disabled_time; }
 
-	long cyclesSinceBlit(unsigned long cc) const {
+	gb_long cyclesSinceBlit(gb_ulong cc) const {
 		if (cc < intreq_.eventTime(intevent_blit))
 			return -1;
 
 		return (cc - intreq_.eventTime(intevent_blit)) >> isDoubleSpeed();
 	}
 
-	void freeze(unsigned long cc);
-	bool halt(unsigned long cc);
-	void ei(unsigned long cycleCounter) { if (!ime()) { intreq_.ei(cycleCounter); } }
+	void freeze(gb_ulong cc);
+	bool halt(gb_ulong cc);
+	void ei(gb_ulong cycleCounter) { if (!ime()) { intreq_.ei(cycleCounter); } }
 	void di() { intreq_.di(); }
-	unsigned pendingIrqs(unsigned long cc);
-	void ackIrq(unsigned bit, unsigned long cc);
+	unsigned pendingIrqs(gb_ulong cc);
+	void ackIrq(unsigned bit, gb_ulong cc);
 
 	unsigned readBios(unsigned p) {
 		return bios_.get()[p];
 	}
 
 	template <bool callbacksActive>
-	unsigned ff_read(unsigned p, unsigned long cc) {
+	unsigned ff_read(unsigned p, gb_ulong cc) {
 		if (callbacksActive && readCallback_)
 			readCallback_(p, callbackCycleOffset(cc));
 
+		if (p >= 0x80)
+			return ioamhram_[p + 0x100];
+
+		return megaDuck_ ? megaDuckFfRead(p, cc) : nontrivial_ff_read(p, cc);
+	}
+
+	// armGBA: an I/O register by its Game Boy address, on a Mega Duck too (the machine's own reads)
+	unsigned dmgFfRead(unsigned p, gb_ulong cc) {
 		return p < 0x80 ? nontrivial_ff_read(p, cc) : ioamhram_[p + 0x100];
 	}
 
@@ -184,7 +202,7 @@ public:
 	}
 
 	template <bool peek, bool execute, bool opcode, bool callbacksActive>
-	unsigned read(unsigned p, unsigned long cc) {
+	unsigned read(unsigned p, gb_ulong cc) {
 		if (!peek && callbacksActive && !execute && readCallback_)
 			readCallback_(p, callbackCycleOffset(cc));
 		else if (!peek && callbacksActive && execute && opcode && execCallback_)
@@ -208,7 +226,7 @@ public:
 		}
 
 		unsigned char const *const rmem = cart_.rmem(p >> 12);
-		unsigned (Memory::*nontrivial_handling)(unsigned, unsigned long) = peek ? &Memory::nontrivial_peek : &Memory::nontrivial_read;
+		unsigned (Memory::*nontrivial_handling)(unsigned, gb_ulong) = peek ? &Memory::nontrivial_peek : &Memory::nontrivial_read;
 		switch (p >> 13 & 7) {
 			case 0:
 			case 1:
@@ -253,7 +271,7 @@ public:
 	}
 
 	template <bool poke, bool callbacksActive>
-	void write(unsigned p, unsigned data, unsigned long cc) {
+	void write(unsigned p, unsigned data, gb_ulong cc) {
 		if (cart_.isMbc2() && (p >= mm_sram_begin && p < mm_wram_begin))
 			p &= 0xA1FF;
 
@@ -275,9 +293,11 @@ public:
 	}
 
 	template <bool callbacksActive>
-	void ff_write(unsigned p, unsigned data, unsigned long cc) {
+	void ff_write(unsigned p, unsigned data, gb_ulong cc) {
 		if (p - 0x80u < 0x7Fu)
 			ioamhram_[p + 0x100] = data;
+		else if (megaDuck_ && p < 0x80)
+			megaDuckFfWrite(p, data, cc);
 		else
 			nontrivial_ff_write(p, data, cc);
 
@@ -290,8 +310,8 @@ public:
 		}
 	}
 
-	unsigned long event(unsigned long cycleCounter);
-	unsigned long resetCounters(unsigned long cycleCounter);
+	gb_ulong event(gb_ulong cycleCounter);
+	gb_ulong resetCounters(gb_ulong cycleCounter);
 	LoadRes loadROM(Array<unsigned char> &buffer, unsigned flags, std::string const &filepath);
 	void setSaveDir(std::string const &dir) { cart_.setSaveDir(dir); }
 
@@ -307,7 +327,7 @@ public:
 		icdInput_ = 0xF;
 		lcd_.setIcdLine(line, p);
 	}
-	void updateVideo(unsigned long cc) { lcd_.update(cc); }
+	void updateVideo(gb_ulong cc) { lcd_.update(cc); }
 
 	unsigned getJoypadIndex() {
 		return sgb_.getJoypadIndex();
@@ -348,12 +368,12 @@ public:
 
 	inline bool slowCallbacksActive() { return readCallback_ || writeCallback_ || execCallback_ || cdCallback_; }
 
-	void setEndtime(unsigned long cc, unsigned long inc);
+	void setEndtime(gb_ulong cc, gb_ulong inc);
 
-	std::size_t callbackCycleOffset(unsigned long const cc) { return psg_.callbackCycleOffset(cc, isDoubleSpeed()); }
+	std::size_t callbackCycleOffset(gb_ulong const cc) { return psg_.callbackCycleOffset(cc, isDoubleSpeed()); }
 
 	void setSoundBuffer(uint_least32_t *buf) { psg_.setBuffer(buf); }
-	std::size_t fillSoundBuffer(unsigned long cc);
+	std::size_t fillSoundBuffer(gb_ulong cc);
 
 	void setVideoBuffer(uint_least32_t *videoBuf, std::ptrdiff_t pitch) {
 		lcd_.setVideoBuffer(videoBuf, pitch);
@@ -376,7 +396,7 @@ public:
 		return cart_.generateSamples(soundBuf);
 	}
 
-	void setDmgPaletteColor(int palNum, int colorNum, unsigned long rgb32) {
+	void setDmgPaletteColor(int palNum, int colorNum, gb_ulong rgb32) {
 		if (!isSgb())
 			lcd_.setDmgPaletteColor(palNum, colorNum, rgb32);
 	}
@@ -393,22 +413,22 @@ public:
 			lcd_.setCgbPalette(lut);
 	}
 
-	void setTimeMode(bool useCycles, unsigned long const cc) { cart_.setTimeMode(useCycles, cc); }
-	void setRtcDivisorOffset(long const rtcDivisorOffset) { cart_.setRtcDivisorOffset(rtcDivisorOffset); }
-	void setRtcSpeed(unsigned percent, unsigned long const cc) { cart_.setRtcSpeed(percent, cc); }
+	void setTimeMode(bool useCycles, gb_ulong const cc) { cart_.setTimeMode(useCycles, cc); }
+	void setRtcDivisorOffset(gb_long const rtcDivisorOffset) { cart_.setRtcDivisorOffset(rtcDivisorOffset); }
+	void setRtcSpeed(unsigned percent, gb_ulong const cc) { cart_.setRtcSpeed(percent, cc); }
 	bool deviceTime() const { return cart_.deviceTime(); }
-	void setDeviceTime(bool device, unsigned long const cc) { cart_.setDeviceTime(device, cc); }
+	void setDeviceTime(bool device, gb_ulong const cc) { cart_.setDeviceTime(device, cc); }
 	bool hasMbc3Rtc() const { return cart_.hasMbc3Rtc(); }
-	void getRtcRegs(unsigned long *dest, unsigned long const cc) { cart_.getRtcRegs(dest, cc); }
-	void setRtcRegs(unsigned long *src, unsigned long const cc) { cart_.setRtcRegs(src, cc); }
+	void getRtcRegs(gb_ulong *dest, gb_ulong const cc) { cart_.getRtcRegs(dest, cc); }
+	void setRtcRegs(gb_ulong *src, gb_ulong const cc) { cart_.setRtcRegs(src, cc); }
 	bool isHuC3() const { return cart_.isHuC3(); }
-	void getHuC3Regs(unsigned char *dest, unsigned long const cc) { cart_.getHuC3Regs(dest, cc); }
-	void setHuC3Regs(unsigned char *src, unsigned long const cc) { cart_.setHuC3Regs(src, cc); }
+	void getHuC3Regs(unsigned char *dest, gb_ulong const cc) { cart_.getHuC3Regs(dest, cc); }
+	void setHuC3Regs(unsigned char *src, gb_ulong const cc) { cart_.setHuC3Regs(src, cc); }
 
-	void setCartBusPullUpTime(unsigned long const cartBusPullUpTime) { cartBusPullUpTime_ = cartBusPullUpTime; }
+	void setCartBusPullUpTime(gb_ulong const cartBusPullUpTime) { cartBusPullUpTime_ = cartBusPullUpTime; }
 
 	int linkStatus(int which);
-	int serialLeft(unsigned long cc) const;
+	int serialLeft(gb_ulong cc) const;
 
 	void setGameGenie(std::string const &codes) { cart_.setGameGenie(codes); }
 	void setGameShark(std::string const &codes) { interrupter_.setGameShark(codes); }
@@ -423,7 +443,7 @@ public:
 
 	void setTime(unsigned long long dividers) { cart_.setTime(dividers); }
 
-	unsigned long getDivLastUpdate() { return divLastUpdate_; }
+	gb_ulong getDivLastUpdate() { return divLastUpdate_; }
 	unsigned char getRawIOAMHRAM(int offset) { return ioamhram_[offset]; }
 
 	void setSpeedupFlags(unsigned flags) {
@@ -436,7 +456,7 @@ public:
 private:
 	unsigned cpuQuarters_;
 	unsigned cpuCarry_;
-	unsigned long stockLeft_;
+	gb_ulong stockLeft_;
 	Cartridge cart_;
 	Sgb sgb_;
 	unsigned char ioamhram_[0x200];
@@ -447,10 +467,10 @@ private:
 	void *icdP_;
 	unsigned char icdInput_;
 	void *getInputP_;
-	unsigned long divLastUpdate_;
-	unsigned long lastOamDmaUpdate_;
-	unsigned long lastCartBusUpdate_;
-	unsigned long cartBusPullUpTime_; 
+	gb_ulong divLastUpdate_;
+	gb_ulong lastOamDmaUpdate_;
+	gb_ulong lastCartBusUpdate_;
+	gb_ulong cartBusPullUpTime_; 
 	InterruptRequester intreq_;
 	Tima tima_;
 	LCD lcd_;
@@ -466,6 +486,7 @@ private:
 	bool biosMode_;
 	bool agbFlag_;
 	bool gbIsSgb_;
+	bool megaDuck_;
 	bool stopped_;
 	enum HdmaState { hdma_low, hdma_high, hdma_requested } haltHdmaState_;
 
@@ -479,25 +500,30 @@ private:
 
 	unsigned long long totalSamplesEmitted_;
 
-	void decEventCycles(IntEventId eventId, unsigned long dec);
+	void decEventCycles(IntEventId eventId, gb_ulong dec);
 	void oamDmaInitSetup();
-	void updateOamDma(unsigned long cycleCounter);
-	void startOamDma(unsigned long cycleCounter);
-	void endOamDma(unsigned long cycleCounter);
+	void updateOamDma(gb_ulong cycleCounter);
+	void startOamDma(gb_ulong cycleCounter);
+	void endOamDma(gb_ulong cycleCounter);
 	unsigned char const * oamDmaSrcPtr() const;
-	unsigned long dma(unsigned long cc);
-	unsigned nontrivial_ff_read(unsigned p, unsigned long cycleCounter);
-	unsigned nontrivial_read(unsigned p, unsigned long cycleCounter);
-	unsigned nontrivial_ff_peek(unsigned p, unsigned long cycleCounter);
-	unsigned nontrivial_peek(unsigned p, unsigned long cycleCounter);
-	void nontrivial_ff_write(unsigned p, unsigned data, unsigned long cycleCounter);
-	void nontrivial_write(unsigned p, unsigned data, unsigned long cycleCounter);
-	void updateSerial(unsigned long cc);
-	void updateTimaIrq(unsigned long cc);
-	void updateIrqs(unsigned long cc);
+	gb_ulong dma(gb_ulong cc);
+	unsigned nontrivial_ff_read(unsigned p, gb_ulong cycleCounter);
+	unsigned nontrivial_read(unsigned p, gb_ulong cycleCounter);
+	unsigned nontrivial_ff_peek(unsigned p, gb_ulong cycleCounter);
+	// armGBA: the Mega Duck's I/O registers, at its own addresses and with its own bit layouts, on
+	// the Game Boy's
+	unsigned megaDuckFfRead(unsigned p, gb_ulong cycleCounter);
+	unsigned megaDuckFfPeek(unsigned p, gb_ulong cycleCounter);
+	void megaDuckFfWrite(unsigned p, unsigned data, gb_ulong cycleCounter);
+	unsigned nontrivial_peek(unsigned p, gb_ulong cycleCounter);
+	void nontrivial_ff_write(unsigned p, unsigned data, gb_ulong cycleCounter);
+	void nontrivial_write(unsigned p, unsigned data, gb_ulong cycleCounter);
+	void updateSerial(gb_ulong cc);
+	void updateTimaIrq(gb_ulong cc);
+	void updateIrqs(gb_ulong cc);
 	bool isDoubleSpeed() const { return lcd_.isDoubleSpeed(); }
-	unsigned char cartBus(unsigned long const cc) const {
-		unsigned long const diff = cc - lastCartBusUpdate_;
+	unsigned char cartBus(gb_ulong const cc) const {
+		gb_ulong const diff = cc - lastCartBusUpdate_;
 		return diff >= (cartBusPullUpTime_ << isDoubleSpeed()) ? 0xFF : cartBus_;
 	}
 };

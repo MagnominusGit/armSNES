@@ -19,6 +19,7 @@
 #ifndef INTERRUPTER_H
 #define INTERRUPTER_H
 
+#include "gbint.h"
 #include <string>
 #include <vector>
 
@@ -35,8 +36,8 @@ class Memory;
 class Interrupter {
 public:
 	Interrupter(unsigned short &sp, unsigned short &pc, unsigned char &opcode, bool &prefetched);
-	void prefetch(unsigned long cc, Memory &mem);
-	unsigned long interrupt(unsigned long cycleCounter, Memory &memory);
+	void prefetch(gb_ulong cc, Memory &mem);
+	gb_ulong interrupt(gb_ulong cycleCounter, Memory &memory);
 	void setGameShark(std::string const &codes);
 	unsigned short getPc() const { return pc_; }
 
@@ -47,7 +48,7 @@ private:
 	bool &prefetched_;
 	std::vector<GsCode> gsCodes_;
 
-	void applyVblankCheats(unsigned long cc, Memory &mem);
+	void applyVblankCheats(gb_ulong cc, Memory &mem);
 };
 
 }

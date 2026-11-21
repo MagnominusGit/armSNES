@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "mbc.h"
 
 namespace gambatte {
@@ -33,7 +34,7 @@ bool HuC1::disabledRam() const {
 	return ramflag_ != 0x0 && ramflag_ != 0xA && ramflag_ != 0xE;
 }
 
-void HuC1::romWrite(unsigned const p, unsigned const data, unsigned long const /*cc*/) {
+void HuC1::romWrite(unsigned const p, unsigned const data, gb_ulong const /*cc*/) {
 	switch (p >> 13 & 3) {
 	case 0:
 		ramflag_ = data & 0xF;

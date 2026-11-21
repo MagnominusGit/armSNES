@@ -67,6 +67,7 @@
   gnome dot org.
 */
 
+#include "gbint.h"
 #include "bitmap_font.h"
 #include <algorithm>
 
@@ -287,7 +288,7 @@ namespace {
 
 class Rgb32Fill {
 public:
-	explicit Rgb32Fill(unsigned long color)
+	explicit Rgb32Fill(gb_ulong color)
 	: color_(color)
 	{
 	}
@@ -297,12 +298,12 @@ public:
 	}
 
 private:
-	unsigned long const color_;
+	gb_ulong const color_;
 };
 
 }
 
-void print(gambatte::uint_least32_t *dest, std::ptrdiff_t pitch, unsigned long color, char const *chars) {
+void print(gambatte::uint_least32_t *dest, std::ptrdiff_t pitch, gb_ulong color, char const *chars) {
 	print(dest, pitch, Rgb32Fill(color), chars);
 }
 

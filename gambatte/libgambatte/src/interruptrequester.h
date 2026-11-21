@@ -19,6 +19,7 @@
 #ifndef INTERRUPT_REQUESTER_H
 #define INTERRUPT_REQUESTER_H
 
+#include "gbint.h"
 #include "counterdef.h"
 #include "minkeeper.h"
 #include "newstate.h"
@@ -42,27 +43,27 @@ public:
 	InterruptRequester();
 	void saveState(SaveState &) const;
 	void loadState(SaveState const &);
-	void resetCc(unsigned long oldCc, unsigned long newCc);
+	void resetCc(gb_ulong oldCc, gb_ulong newCc);
 	unsigned ifreg() const { return ifreg_; }
 	unsigned pendingIrqs() const { return ifreg_ & iereg_; }
 	bool ime() const { return intFlags_.ime(); }
 	bool halted() const { return intFlags_.halted(); }
-	void ei(unsigned long cc);
+	void ei(gb_ulong cc);
 	void di();
 	void halt();
 	void unhalt();
 	void flagIrq(unsigned bit);
-	void flagIrq(unsigned bit, unsigned long cc);
+	void flagIrq(unsigned bit, gb_ulong cc);
 	void ackIrq(unsigned bit) { ifreg_ &= ~bit; }
 	void setIereg(unsigned iereg);
 	void setIfreg(unsigned ifreg);
-	void setMinIntTime(unsigned long cc);
+	void setMinIntTime(gb_ulong cc);
 
 	IntEventId minEventId() const { return static_cast<IntEventId>(eventTimes_.min()); }
-	unsigned long minEventTime() const { return eventTimes_.minValue(); }
-	template<IntEventId id> void setEventTime(unsigned long value) { eventTimes_.setValue<id>(value); }
-	void setEventTime(IntEventId id, unsigned long value) { eventTimes_.setValue(id, value); }
-	unsigned long eventTime(IntEventId id) const { return eventTimes_.value(id); }
+	gb_ulong minEventTime() const { return eventTimes_.minValue(); }
+	template<IntEventId id> void setEventTime(gb_ulong value) { eventTimes_.setValue<id>(value); }
+	void setEventTime(IntEventId id, gb_ulong value) { eventTimes_.setValue(id, value); }
+	gb_ulong eventTime(IntEventId id) const { return eventTimes_.value(id); }
 
 	template<bool isReader>void SyncState(NewState *ns);
 
@@ -86,7 +87,7 @@ private:
 	};
 
 	MinKeeper<intevent_last + 1> eventTimes_;
-	unsigned long minIntTime_;
+	gb_ulong minIntTime_;
 	unsigned ifreg_;
 	unsigned iereg_;
 	IntFlags intFlags_;

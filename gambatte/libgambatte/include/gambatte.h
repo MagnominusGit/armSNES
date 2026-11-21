@@ -63,8 +63,14 @@ public:
 		                            what its header advertises. */
 		READONLY_SAV     = 16, /**< Prevent implicit saveSavedata calls for the ROM. */
 		NO_BIOS          = 32, /**< Use heuristics to boot without a BIOS. */
-		MGB_FLAG         = 64  /**< armGBA: without a BIOS and outside CGB mode, the Game Boy
+		MGB_FLAG         = 64, /**< armGBA: without a BIOS and outside CGB mode, the Game Boy
 		                            Pocket's initial CPU register values. */
+		MEGA_DUCK        = 256, /**< armGBA: a Mega Duck: no boot ROM, its I/O registers where the
+		                            Mega Duck has them, and its mapper. */
+		MEGA_DUCK_MAPPER = 512, /**< armGBA: times the Mega Duck cartridge's kind (0 for both handheld
+		                            kinds at once, 1 none, 2 MD0, 3 MD1, 4 MD2, 5 MD20S, 6 MD25S). */
+		MEGA_DUCK_LAPTOP = 4096 /**< armGBA: a Mega Duck laptop, whose stack pointer starts at FFFF
+		                            (as Super Junior SameDuck has it) rather than 0000. */
 	};
 
 	/**
@@ -182,7 +188,7 @@ public:
 	  * @param palNum 0 <= palNum < 3. One of BG_PALETTE, SP1_PALETTE and SP2_PALETTE.
 	  * @param colorNum 0 <= colorNum < 4, or (armGBA:) 4 with BG_PALETTE for a Game Boy's screen while it is off
 	  */
-	void setDmgPaletteColor(int palNum, int colorNum, unsigned long rgb32);
+	void setDmgPaletteColor(int palNum, int colorNum, gb_ulong rgb32);
 
 	/**
 	  * Set CGB palette lookup.
@@ -248,7 +254,7 @@ public:
 	void setRemoteCallback(unsigned char (*callback)());
 
 	/** adjust the assumed clock speed of the CPU compared to the RTC */
-	void setRtcDivisorOffset(long const rtcDivisorOffset);
+	void setRtcDivisorOffset(gb_long const rtcDivisorOffset);
 
 	/** armGBA: the clock's speed in percent of the console's, 0 stopped */
 	void setRtcSpeed(unsigned percent);
@@ -260,8 +266,8 @@ public:
 	/** armGBA: whether the cartridge has an MBC3 clock, and its registers: rtc_dh, rtc_dl, rtc_h, rtc_m, rtc_s,
 	  * rtc_c (cycles into the second), then the latched five (mem/rtc.h) */
 	bool hasMbc3Rtc() const;
-	void getRtcRegs(unsigned long dest[11]);
-	void setRtcRegs(unsigned long src[11]);
+	void getRtcRegs(gb_ulong dest[11]);
+	void setRtcRegs(gb_ulong src[11]);
 
 	/** armGBA: whether the cartridge has a HuC3 chip, and the chip's state: the cycles into the current
 	  * minute (4 bytes, big-endian), then its 256 bytes of I/O, minutes at 0x10-0x12 and days at
@@ -271,7 +277,7 @@ public:
 	void setHuC3Regs(unsigned char src[0x104]);
 
 	/** Sets how long until the cart bus pulls up */
-	void setCartBusPullUpTime(unsigned long const cartBusPullUpTime);
+	void setCartBusPullUpTime(gb_ulong const cartBusPullUpTime);
 
 	/**
 	  * Sets the directory used for storing save data. The default is the same directory as
@@ -308,6 +314,26 @@ public:
 
 	/** 0 = vram, 1 = rom, 2 = wram, 3 = cartram, 4 = oam, 5 = hram */
 	bool getMemoryArea(int which, unsigned char **data, int *length);
+
+	/** armGBA: the Mega Duck laptop runs the cartridge in its slot. Its ROM takes the running one's
+	  * place, which must be at least as big; RAM, VRAM, the memory card and the CPU stay as they are.
+	  * kind as GB::MEGA_DUCK_MAPPER numbers it. */
+	bool swapMegaDuckCartridge(char const *romdata, std::size_t size, unsigned kind);
+
+	/** armGBA: puts a cheat cartridge, its program these bytes, in front of the cartridge loaded, which
+	  * is the game on top of it; with hasGame false nothing is on top. Galoob's Game Genie by its
+	  * program, else Datel's Action Replay, its flash chip holding them. Call after load(); it powers
+	  * on with the console's next reset. */
+	bool attachCheatCart(char const *program, std::size_t size, bool hasGame);
+	/** armGBA: the Action Replay's button and switch (on: codes on) */
+	void setActionReplayControls(bool button, bool switchOn);
+	/** armGBA: what the Action Replay keeps with the power off (its flash chip, or the first one's
+	  * battery-backed RAM), or 0 without one */
+	unsigned char * actionReplayFlash(std::size_t *size);
+	/** armGBA: whether the Action Replay's flash chip was written since this was last asked */
+	bool actionReplayFlashChanged();
+	// armGBA: codes for the Game Genie to put in its empty slots (see CheatCartGb::setCodes)
+	void setGameGenieCodes(unsigned char const *digits, unsigned char const *counts);
 
 	/**
 	  * Saves emulator state to the state slot selected with selectState().
@@ -500,6 +526,8 @@ public:
 private:
 	struct Priv;
 	Priv *const p_;
+	// armGBA: a cheat cartridge's chip, in a state, as it differs from its image (see CheatCartGb)
+	void swapCheatFactory();
 
 	GB(GB const &);
 	GB & operator=(GB const &);

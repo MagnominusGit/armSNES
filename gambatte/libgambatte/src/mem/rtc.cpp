@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "rtc.h"
 #include "../savestate.h"
 
@@ -41,8 +42,8 @@ Rtc::Rtc(Time &time)
 {
 }
 
-void Rtc::updateClock(unsigned long const cc) {
-	unsigned long const cycleDivisor = time_.getRtcDivisor();
+void Rtc::updateClock(gb_ulong const cc) {
+	gb_ulong const cycleDivisor = time_.getRtcDivisor();
 	unsigned long long diff = time_.diff(cc);
 	if (!(dataDh_ & 0x40)) {
 		dataC_ += diff % cycleDivisor;
@@ -64,7 +65,7 @@ void Rtc::updateClock(unsigned long const cc) {
 		}
 		diff /= 60;
 		dataH_ += diff % 24;
-		unsigned long days = ((dataDh_ & 0x01) << 8) | dataDl_;
+		gb_ulong days = ((dataDh_ & 0x01) << 8) | dataDl_;
 		if (dataH_ >= 24) {
 			days++;
 			dataH_ -= 24;
@@ -79,12 +80,12 @@ void Rtc::updateClock(unsigned long const cc) {
 }
 
 void Rtc::setTime(unsigned long long const dividers) {
-	unsigned long const cycleDivisor = time_.getRtcDivisor();
+	gb_ulong const cycleDivisor = time_.getRtcDivisor();
 	dataC_ = dividers * 2 % cycleDivisor;
 	dataS_ = dividers * 2 / cycleDivisor % 60;
 	dataM_ = dividers * 2 / cycleDivisor / 60 % 60;
 	dataH_ = dividers * 2 / cycleDivisor / 60 / 60 % 24;
-	unsigned long const days = dividers * 2 / cycleDivisor / 60 / 60 / 24;
+	gb_ulong const days = dividers * 2 / cycleDivisor / 60 / 60 / 24;
 	dataDl_ = days & 0xFF;
 	dataDh_ &= 0xFE;
 	dataDh_ |= (days >> 8) & 0x01;
@@ -93,7 +94,7 @@ void Rtc::setTime(unsigned long long const dividers) {
 		dataDh_ |= 0x80;
 }
 
-void Rtc::doLatch(unsigned long const cc) {
+void Rtc::doLatch(gb_ulong const cc) {
 	updateClock(cc);
 	latchDh_ = dataDh_;
 	latchDl_ = dataDl_;
@@ -185,7 +186,7 @@ void Rtc::loadState(SaveState const &state) {
 	doSwapActive();
 }
 
-void Rtc::getRtcRegs(unsigned long *dest, unsigned long const cc) {
+void Rtc::getRtcRegs(gb_ulong *dest, gb_ulong const cc) {
 	updateClock(cc);
 	dest[rtc_dh] = dataDh_;
 	dest[rtc_dl] = dataDl_;
@@ -209,7 +210,7 @@ void Rtc::getRtcRegs(unsigned long *dest, unsigned long const cc) {
 	dest[rtc_s + rtc_l] = latchS_;
 }
 
-void Rtc::setRtcRegs(unsigned long *src) {
+void Rtc::setRtcRegs(gb_ulong *src) {
 	dataDh_ = src[rtc_dh];
 	dataDl_ = src[rtc_dl];
 	dataH_ = src[rtc_h];
@@ -232,8 +233,8 @@ void Rtc::setRtcRegs(unsigned long *src) {
 	latchS_ = src[rtc_s + rtc_l];
 }
 
-void Rtc::setBaseTime(unsigned long long baseTime, unsigned long const cc) {
-	unsigned long const cycleDivisor = time_.getRtcDivisor();
+void Rtc::setBaseTime(unsigned long long baseTime, gb_ulong const cc) {
+	gb_ulong const cycleDivisor = time_.getRtcDivisor();
 	unsigned long long diff = (std::time(0) - baseTime) * cycleDivisor + cc;
 	if (!(dataDh_ & 0x40)) {
 		dataC_ += diff % cycleDivisor;
@@ -255,7 +256,7 @@ void Rtc::setBaseTime(unsigned long long baseTime, unsigned long const cc) {
 		}
 		diff /= 60;
 		dataH_ += diff % 24;
-		unsigned long days = ((dataDh_ & 0x01) << 8) | dataDl_;
+		gb_ulong days = ((dataDh_ & 0x01) << 8) | dataDl_;
 		if (dataH_ >= 24) {
 			days++;
 			dataH_ -= 24;
@@ -269,31 +270,31 @@ void Rtc::setBaseTime(unsigned long long baseTime, unsigned long const cc) {
 	}
 }
 
-void Rtc::setDh(unsigned const newDh, unsigned const long cc) {
+void Rtc::setDh(unsigned const newDh, gb_ulong const cc) {
 	updateClock(cc);
 	dataDh_ = newDh & 0xC1;
 }
 
-void Rtc::setDl(unsigned const newLowdays, unsigned const long cc) {
+void Rtc::setDl(unsigned const newLowdays, gb_ulong const cc) {
 	updateClock(cc);
 	dataDl_ = newLowdays;
 }
 
-void Rtc::setH(unsigned const newHours, unsigned const long cc) {
+void Rtc::setH(unsigned const newHours, gb_ulong const cc) {
 	updateClock(cc);
 	dataH_ = newHours & 0x1F;
 	if (dataH_ >= 24)
 		dataH_ -= 0x20;
 }
 
-void Rtc::setM(unsigned const newMinutes, unsigned const long cc) {
+void Rtc::setM(unsigned const newMinutes, gb_ulong const cc) {
 	updateClock(cc);
 	dataM_ = newMinutes & 0x3F;
 	if (dataM_ >= 60)
 		dataM_ -= 0x40;
 }
 
-void Rtc::setS(unsigned const newSeconds, unsigned const long cc) {
+void Rtc::setS(unsigned const newSeconds, gb_ulong const cc) {
 	updateClock(cc);
 	dataS_ = newSeconds & 0x3F;
 	if (dataS_ >= 60)

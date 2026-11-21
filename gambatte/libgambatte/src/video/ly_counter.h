@@ -19,6 +19,7 @@
 #ifndef LY_COUNTER_H
 #define LY_COUNTER_H
 
+#include "gbint.h"
 #include "lcddef.h"
 #include "newstate.h"
 
@@ -32,25 +33,25 @@ public:
 	void doEvent();
 	bool isDoubleSpeed() const { return ds_; }
 
-	unsigned long frameCycles(unsigned long cc) const {
-		return 1l * ly_ * lcd_cycles_per_line + lineCycles(cc);
+	gb_ulong frameCycles(gb_ulong cc) const {
+		return 1 * ly_ * lcd_cycles_per_line + lineCycles(cc);
 	}
 
-	unsigned lineCycles(unsigned long cc) const {
+	unsigned lineCycles(gb_ulong cc) const {
 		return lcd_cycles_per_line - ((time_ - cc) >> isDoubleSpeed());
 	}
 
 	unsigned lineTime() const { return lineTime_; }
 	unsigned ly() const { return ly_; }
-	unsigned long nextLineCycle(unsigned lineCycle, unsigned long cycleCounter) const;
-	unsigned long nextFrameCycle(unsigned long frameCycle, unsigned long cycleCounter) const;
-	void reset(unsigned long videoCycles, unsigned long lastUpdate);
+	gb_ulong nextLineCycle(unsigned lineCycle, gb_ulong cycleCounter) const;
+	gb_ulong nextFrameCycle(gb_ulong frameCycle, gb_ulong cycleCounter) const;
+	void reset(gb_ulong videoCycles, gb_ulong lastUpdate);
 	void setDoubleSpeed(bool ds);
-	unsigned long time() const { return time_; }
+	gb_ulong time() const { return time_; }
 	template<bool isReader>void SyncState(NewState *ns);
 
 private:
-	unsigned long time_;
+	gb_ulong time_;
 	unsigned short lineTime_;
 	unsigned char ly_;
 	bool ds_;

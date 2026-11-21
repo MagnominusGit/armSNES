@@ -2,6 +2,7 @@
 #define CRC32_H
 
 #ifdef HAVE_ZLIB_H
+#include "gbint.h"
 #include <zlib.h>
 #else
 
@@ -9,7 +10,7 @@
 
 namespace gambatte {
 
-unsigned long crc32(unsigned long crc, void const *buf, std::size_t size);
+gb_ulong crc32(gb_ulong crc, void const *buf, std::size_t size);
 
 }
 

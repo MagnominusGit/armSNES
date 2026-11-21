@@ -19,6 +19,7 @@
 #ifndef LENGTH_COUNTER_H
 #define LENGTH_COUNTER_H
 
+#include "gbint.h"
 #include "sound_unit.h"
 #include "../savestate.h"
 #include "newstate.h"
@@ -31,10 +32,10 @@ class LengthCounter : public SoundUnit {
 public:
 	LengthCounter(MasterDisabler &disabler, unsigned lengthMask);
 	virtual void event();
-	void nr1Change(unsigned newNr1, unsigned nr4, unsigned long cc);
-	void nr4Change(unsigned oldNr4, unsigned newNr4, unsigned long cc);
+	void nr1Change(unsigned newNr1, unsigned nr4, gb_ulong cc);
+	void nr4Change(unsigned oldNr4, unsigned newNr4, gb_ulong cc);
 	void saveState(SaveState::SPU::LCounter &lstate) const;
-	void loadState(SaveState::SPU::LCounter const &lstate, unsigned long cc);
+	void loadState(SaveState::SPU::LCounter const &lstate, gb_ulong cc);
 	template<bool isReader>void SyncState(NewState *ns);
 
 private:

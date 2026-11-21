@@ -3,6 +3,7 @@
 
 #include <cstring>
 #include <cstddef>
+#include "gbint.h"
 
 namespace gambatte {
 
@@ -17,19 +18,19 @@ public:
 class NewStateDummy : public NewState {
 public:
 	NewStateDummy();
-	long GetLength() { return length; }
+	gb_long GetLength() { return length; }
 	void Rewind() { length = 0; }
 	virtual void Save(void const *ptr, std::size_t size, char const *name);
 	virtual void Load(void *ptr, std::size_t size, char const *name);
 
 private:
-	long length;
+	gb_long length;
 };
 
 class NewStateExternalBuffer : public NewState {
 public:
-	NewStateExternalBuffer(char *buffer, long maxlength);
-	long GetLength() { return length; }
+	NewStateExternalBuffer(char *buffer, gb_long maxlength);
+	gb_long GetLength() { return length; }
 	void Rewind() { length = 0; }
 	bool Overflow() { return length > maxlength; }
 	virtual void Save(void const *ptr, std::size_t size, char const *name);
@@ -37,8 +38,8 @@ public:
 
 private:
 	char *const buffer;
-	long length;
-	const long maxlength;
+	gb_long length;
+	const gb_long maxlength;
 };
 
 struct FPtrs {
@@ -81,10 +82,12 @@ private:
 #define EVS(x,v,n) else if (!isReader && (x) == (v)) _ttmp = (n); else if (isReader && _ttmp == (n)) (x) = (v)
 #define EES(x,d) else if (isReader) (x) = (d); if (!isReader) ns->Save(&_ttmp, sizeof _ttmp, #x); } while (0)
 
+// armGBA: pointer offsets are saved as 64 bits, and Gambatte's longs are 32 bits on every build
+// (gbint.h), so a 32-bit build's state is the same as a 64-bit build's.
 #define RSS(x,b) do { if (isReader)\
-{ std::ptrdiff_t _ttmp; ns->Load(&_ttmp, sizeof _ttmp, #x); (x) = (_ttmp == (std::ptrdiff_t)0xdeadbeef ? 0 : (b) + _ttmp); }\
+{ long long _ttmp; ns->Load(&_ttmp, sizeof _ttmp, #x); (x) = (_ttmp == 0xdeadbeef ? 0 : (b) + (std::ptrdiff_t)_ttmp); }\
 	else\
-{ std::ptrdiff_t _ttmp = (x) == 0 ? 0xdeadbeef : (x) - (b); ns->Save(&_ttmp, sizeof _ttmp, #x); } } while (0)
+{ long long _ttmp = (x) == 0 ? 0xdeadbeef : (long long)((x) - (b)); ns->Save(&_ttmp, sizeof _ttmp, #x); } } while (0)
 
 #define PSS(x,s) do { if (isReader) ns->Load((x), (s), #x); else ns->Save((x), (s), #x); } while (0)
 

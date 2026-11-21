@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "time.h"
 #include "../savestate.h"
 
@@ -39,7 +40,7 @@ Time::Time()
 {
 }
 
-void Time::saveState(SaveState &state, unsigned long const cc) {
+void Time::saveState(SaveState &state, gb_ulong const cc) {
 	update(cc);
 	state.time.seconds = 0; // old total seconds field, 0 indicates new time system
 	// other fields used to be saved, but they no longer need to be saved
@@ -54,17 +55,17 @@ void Time::loadState(SaveState const &state, bool const ds) {
 		setTime(state.time.seconds * rtcDivisor_ / 2);
 }
 
-void Time::resetCc(unsigned long const oldCc, unsigned long const newCc) {
+void Time::resetCc(gb_ulong const oldCc, gb_ulong const newCc) {
 	update(oldCc);
 	lastCycles_ -= oldCc - newCc;
 }
 
-void Time::speedChange(unsigned long const cc) {
+void Time::speedChange(gb_ulong const cc) {
 	update(cc);
 	ds_ = !ds_;
 }
 
-void Time::setTimeMode(bool useCycles, unsigned long const cc) {
+void Time::setTimeMode(bool useCycles, gb_ulong const cc) {
 	update(cc);
 	useCycles_ = useCycles;
 	lastCycles_ = cc;
@@ -74,7 +75,7 @@ void Time::setTimeMode(bool useCycles, unsigned long const cc) {
 
 // armGBA: on the device's time, the clock starts again from now. Staying on the console's cycles, it
 // keeps those it hasn't counted yet.
-void Time::setDeviceTime(bool const device, unsigned long const cc) {
+void Time::setDeviceTime(bool const device, gb_ulong const cc) {
 	if (!device && useCycles_)
 		return;
 	useCycles_ = !device;
@@ -83,12 +84,12 @@ void Time::setDeviceTime(bool const device, unsigned long const cc) {
 	nanoRest_ = 0;
 }
 
-void Time::setSpeed(unsigned const percent, unsigned long const cc) {
+void Time::setSpeed(unsigned const percent, gb_ulong const cc) {
 	update(cc);
 	percent_ = percent;
 }
 
-unsigned long long Time::diff(unsigned long const cc) {
+unsigned long long Time::diff(gb_ulong const cc) {
 	unsigned long long diff;
 	if (useCycles_) {
 		diff = ((cc - lastCycles_) >> ds_) * (unsigned long long) percent_ / 100;
@@ -105,7 +106,13 @@ unsigned long long Time::diff(unsigned long const cc) {
 }
 
 SYNCFUNC(Time) {
-	NSS(lastCycles_);
+	// armGBA: on the device's time the console's cycles aren't counted, and the cycle they were last
+	// counted at is set again on load (setDeviceTime), so a state holds 0 for it then: one saved
+	// straight after a load is the same as the one loaded, as netplay checks.
+	gb_ulong cycles = isReader || useCycles_ ? lastCycles_ : 0;
+	NSS(cycles);
+	if (isReader)
+		lastCycles_ = cycles;
 	NSS(useCycles_);
 	NSS(ds_);
 }

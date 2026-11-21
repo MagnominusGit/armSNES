@@ -19,6 +19,7 @@
 #ifndef VIDEO_H
 #define VIDEO_H
 
+#include "gbint.h"
 #include "interruptrequester.h"
 #include "minkeeper.h"
 #include "osd_element.h"
@@ -40,8 +41,8 @@ public:
 
 	void flagHdmaReq() const { if (!intreq_.halted()) gambatte::flagHdmaReq(intreq_); }
 	void flagIrq(unsigned bit) const { intreq_.flagIrq(bit); }
-	void flagIrq(unsigned bit, unsigned long cc) const { intreq_.flagIrq(bit, cc); }
-	void setNextEventTime(unsigned long time) const { intreq_.setEventTime<intevent_video>(time); }
+	void flagIrq(unsigned bit, gb_ulong cc) const { intreq_.flagIrq(bit, cc); }
+	void setNextEventTime(gb_ulong time) const { intreq_.setEventTime<intevent_video>(time); }
 
 private:
 	InterruptRequester &intreq_;
@@ -53,11 +54,11 @@ public:
 	    VideoInterruptRequester memEventRequester);
 	void reset(unsigned char const *oamram, unsigned char const *vram, bool cgb, bool agb);
 	void setCgbDmg(bool enabled) { ppu_.setCgbDmg(enabled); }
-	void setSpPriority(bool xSpPriority, unsigned long cc) { update(cc); ppu_.setSpPriority(xSpPriority); }
+	void setSpPriority(bool xSpPriority, gb_ulong cc) { update(cc); ppu_.setSpPriority(xSpPriority); }
 	void setStatePtrs(SaveState &state);
 	void saveState(SaveState &state) const;
 	void loadState(SaveState const &state, unsigned char const *oamram);
-	void setDmgPaletteColor(unsigned palNum, unsigned colorNum, unsigned long rgb32);
+	void setDmgPaletteColor(unsigned palNum, unsigned colorNum, gb_ulong rgb32);
 	void setCgbPalette(unsigned *lut);
 	void setVideoBuffer(uint_least32_t *videoBuf, std::ptrdiff_t pitch);
 	void setLayers(unsigned mask) { ppu_.setLayers(mask); }
@@ -68,62 +69,64 @@ public:
 
 	int peekLy() const { return ppu_.lyCounter().ly(); }
 
-	void dmgBgPaletteChange(unsigned data, unsigned long cycleCounter) {
+	void dmgBgPaletteChange(unsigned data, gb_ulong cycleCounter) {
 		update(cycleCounter);
 		bgpData_[0] = data;
 		setDmgPalette(ppu_.bgPalette(), dmgColorsBgr15_, data);
 	}
 
-	void dmgSpPalette1Change(unsigned data, unsigned long cycleCounter) {
+	void dmgSpPalette1Change(unsigned data, gb_ulong cycleCounter) {
 		update(cycleCounter);
 		objpData_[0] = data;
 		setDmgPalette(ppu_.spPalette(), dmgColorsBgr15_ + 4, data);
 	}
 
-	void dmgSpPalette2Change(unsigned data, unsigned long cycleCounter) {
+	void dmgSpPalette2Change(unsigned data, gb_ulong cycleCounter) {
 		update(cycleCounter);
 		objpData_[1] = data;
 		setDmgPalette(ppu_.spPalette() + 4, dmgColorsBgr15_ + 8, data);
 	}
 
-	void cgbBgColorChange(unsigned index, unsigned data, unsigned long cycleCounter) {
+	void cgbBgColorChange(unsigned index, unsigned data, gb_ulong cycleCounter) {
 		if (bgpData_[index] != data)
 			doCgbBgColorChange(index, data, cycleCounter);
 	}
 
-	void cgbSpColorChange(unsigned index, unsigned data, unsigned long cycleCounter) {
+	void cgbSpColorChange(unsigned index, unsigned data, gb_ulong cycleCounter) {
 		if (objpData_[index] != data)
 			doCgbSpColorChange(index, data, cycleCounter);
 	}
 
-	unsigned cgbBgColorRead(unsigned index, unsigned long cycleCounter) {
+	unsigned cgbBgColorRead(unsigned index, gb_ulong cycleCounter) {
 		return ppu_.cgb() && cgbpAccessible(cycleCounter) ? bgpData_[index] : 0xFF;
 	}
 
-	unsigned cgbSpColorRead(unsigned index, unsigned long cycleCounter) {
+	unsigned cgbSpColorRead(unsigned index, gb_ulong cycleCounter) {
 		return ppu_.cgb() && cgbpAccessible(cycleCounter) ? objpData_[index] : 0xFF;
 	}
 
-	void updateScreen(bool blanklcd, unsigned long cc, unsigned stage);
+	void updateScreen(bool blanklcd, gb_ulong cc, unsigned stage);
 	void whiteScreen();
 	void blackScreen();
-	void resetCc(unsigned long oldCC, unsigned long newCc);
-	void speedChange(unsigned long cycleCounter);
-	bool vramReadable(unsigned long cycleCounter);
-	bool vramExactlyReadable(unsigned long cycleCounter);
-	bool vramWritable(unsigned long cycleCounter);
-	bool oamReadable(unsigned long cycleCounter);
-	bool oamWritable(unsigned long cycleCounter);
-	void wxChange(unsigned newValue, unsigned long cycleCounter);
-	void wyChange(unsigned newValue, unsigned long cycleCounter);
-	void oamChange(unsigned long cycleCounter);
-	void oamChange(const unsigned char *oamram, unsigned long cycleCounter);
-	void scxChange(unsigned newScx, unsigned long cycleCounter);
-	void scyChange(unsigned newValue, unsigned long cycleCounter);
-	void vramChange(unsigned long cycleCounter) { update(cycleCounter); }
-	unsigned getStat(unsigned lycReg, unsigned long cycleCounter);
+	void resetCc(gb_ulong oldCC, gb_ulong newCc);
+	void speedChange(gb_ulong cycleCounter);
+	bool vramReadable(gb_ulong cycleCounter);
+	bool vramExactlyReadable(gb_ulong cycleCounter);
+	bool vramWritable(gb_ulong cycleCounter);
+	bool oamReadable(gb_ulong cycleCounter);
+	bool oamWritable(gb_ulong cycleCounter);
+	void wxChange(unsigned newValue, gb_ulong cycleCounter);
+	void wyChange(unsigned newValue, gb_ulong cycleCounter);
+	void oamChange(gb_ulong cycleCounter);
+	void oamChange(const unsigned char *oamram, gb_ulong cycleCounter);
+	// armGBA: where the sprites are read from, with nothing else changed, for an exact state's load
+	void setOam(const unsigned char *oamram) { ppu_.setOam(oamram); }
+	void scxChange(unsigned newScx, gb_ulong cycleCounter);
+	void scyChange(unsigned newValue, gb_ulong cycleCounter);
+	void vramChange(gb_ulong cycleCounter) { update(cycleCounter); }
+	unsigned getStat(unsigned lycReg, gb_ulong cycleCounter);
 
-	unsigned getLyReg(unsigned long const cc) {
+	unsigned getLyReg(gb_ulong const cc) {
 		unsigned lyReg = 0;
 
 		if (ppu_.lcdc() & lcdc_en) {
@@ -147,15 +150,15 @@ public:
 		return lyReg;
 	}
 
-	unsigned long nextMode1IrqTime() const { return eventTimes_(memevent_m1irq); }
-	void lcdcChange(unsigned data, unsigned long cycleCounter);
-	void lcdstatChange(unsigned data, unsigned long cycleCounter);
-	void lycRegChange(unsigned data, unsigned long cycleCounter);
-	void enableHdma(unsigned long cycleCounter);
-	void disableHdma(unsigned long cycleCounter);
-	bool isHdmaPeriod(unsigned long cycleCounter);
+	gb_ulong nextMode1IrqTime() const { return eventTimes_(memevent_m1irq); }
+	void lcdcChange(unsigned data, gb_ulong cycleCounter);
+	void lcdstatChange(unsigned data, gb_ulong cycleCounter);
+	void lycRegChange(unsigned data, gb_ulong cycleCounter);
+	void enableHdma(gb_ulong cycleCounter);
+	void disableHdma(gb_ulong cycleCounter);
+	bool isHdmaPeriod(gb_ulong cycleCounter);
 	bool hdmaIsEnabled() const { return eventTimes_(memevent_hdma) != disabled_time; }
-	void update(unsigned long cycleCounter);
+	void update(gb_ulong cycleCounter);
 	bool isCgb() const { return ppu_.cgb(); }
 	bool isAgb() const { return ppu_.agb(); }
 	bool isCgbDmg() const { return ppu_.cgbDmg(); }
@@ -164,8 +167,8 @@ public:
 
 	template<bool isReader>void SyncState(NewState *ns);
 
-	unsigned long *bgPalette() { return ppu_.bgPalette(); }
-	unsigned long *spPalette() { return ppu_.spPalette(); }
+	gb_ulong *bgPalette() { return ppu_.bgPalette(); }
+	gb_ulong *spPalette() { return ppu_.spPalette(); }
 
 	void setScanlineCallback(void (*callback)(), int sl) { scanlinecallback = callback; scanlinecallbacksl = sl; }
 
@@ -195,21 +198,21 @@ private:
 		}
 
 		Event nextEvent() const { return static_cast<Event>(eventMin_.min()); }
-		unsigned long nextEventTime() const { return eventMin_.minValue(); }
-		unsigned long operator()(Event e) const { return eventMin_.value(e); }
-		template<Event e> void set(unsigned long time) { eventMin_.setValue<e>(time); }
-		void set(Event e, unsigned long time) { eventMin_.setValue(e, time); }
+		gb_ulong nextEventTime() const { return eventMin_.minValue(); }
+		gb_ulong operator()(Event e) const { return eventMin_.value(e); }
+		template<Event e> void set(gb_ulong time) { eventMin_.setValue<e>(time); }
+		void set(Event e, gb_ulong time) { eventMin_.setValue(e, time); }
 
 		MemEvent nextMemEvent() const { return static_cast<MemEvent>(memEventMin_.min()); }
-		unsigned long nextMemEventTime() const { return memEventMin_.minValue(); }
-		unsigned long operator()(MemEvent e) const { return memEventMin_.value(e); }
+		gb_ulong nextMemEventTime() const { return memEventMin_.minValue(); }
+		gb_ulong operator()(MemEvent e) const { return memEventMin_.value(e); }
 
 		template<MemEvent e>
-		void setm(unsigned long time) { memEventMin_.setValue<e>(time); setMemEvent(); }
-		void set(MemEvent e, unsigned long time) { memEventMin_.setValue(e, time); setMemEvent(); }
+		void setm(gb_ulong time) { memEventMin_.setValue<e>(time); setMemEvent(); }
+		void set(MemEvent e, gb_ulong time) { memEventMin_.setValue(e, time); setMemEvent(); }
 
 		void flagIrq(unsigned bit) { memEventRequester_.flagIrq(bit); }
-		void flagIrq(unsigned bit, unsigned long cc) { memEventRequester_.flagIrq(bit, cc); }
+		void flagIrq(unsigned bit, gb_ulong cc) { memEventRequester_.flagIrq(bit, cc); }
 		void flagHdmaReq() { memEventRequester_.flagHdmaReq(); }
 
 		template<bool isReader>
@@ -224,7 +227,7 @@ private:
 		VideoInterruptRequester memEventRequester_;
 
 		void setMemEvent() {
-			unsigned long nmet = nextMemEventTime();
+			gb_ulong nmet = nextMemEventTime();
 			eventMin_.setValue<event_mem>(nmet);
 			memEventRequester_.setNextEventTime(nmet);
 		}
@@ -233,8 +236,8 @@ private:
 	PPU ppu_;
 	unsigned short dmgColorsBgr15_[3 * 4];
 	// armGBA: a Game Boy's screen while the game has it off, and whether it shows the background color instead
-	unsigned long offColor_;
-	unsigned long  cgbColorsRgb32_[32768];
+	gb_ulong offColor_;
+	gb_ulong  cgbColorsRgb32_[32768];
 	unsigned char  bgpData_[2 * max_num_palettes * num_palette_entries];
 	unsigned char objpData_[2 * max_num_palettes * num_palette_entries];
 	EventTimes eventTimes_;
@@ -245,27 +248,27 @@ private:
 	unsigned char statReg_;
 	bool vramHasBeenExactlyRead = false;
 
-	void setDmgPalette(unsigned long palette[],
+	void setDmgPalette(gb_ulong palette[],
 	                   unsigned short const dmgColors[],
 	                   unsigned data);
 
-	unsigned long gbcToRgb32(const unsigned bgr15);
-	void doCgbColorChange(unsigned char *const pdata, unsigned long *const palette, unsigned index, const unsigned data);
+	gb_ulong gbcToRgb32(const unsigned bgr15);
+	void doCgbColorChange(unsigned char *const pdata, gb_ulong *const palette, unsigned index, const unsigned data);
 	void refreshPalettes();
 	void setDBuffer();
 	void doMode2IrqEvent();
 	void event();
-	unsigned long m0TimeOfCurrentLine(unsigned long cc);
-	bool cgbpAccessible(unsigned long cycleCounter);
-	bool lycRegChangeStatTriggerBlockedByM0OrM1Irq(unsigned data, unsigned long cc);
-	bool lycRegChangeTriggersStatIrq(unsigned old, unsigned data, unsigned long cc);
-	bool statChangeTriggersM0LycOrM1StatIrqCgb(unsigned old, unsigned data, bool lycperiod, unsigned long cc);
-	bool statChangeTriggersStatIrqCgb(unsigned old, unsigned data, unsigned long cc);
-	bool statChangeTriggersStatIrqDmg(unsigned old, unsigned long cc);
-	bool statChangeTriggersStatIrq(unsigned old, unsigned data, unsigned long cc);
+	gb_ulong m0TimeOfCurrentLine(gb_ulong cc);
+	bool cgbpAccessible(gb_ulong cycleCounter);
+	bool lycRegChangeStatTriggerBlockedByM0OrM1Irq(unsigned data, gb_ulong cc);
+	bool lycRegChangeTriggersStatIrq(unsigned old, unsigned data, gb_ulong cc);
+	bool statChangeTriggersM0LycOrM1StatIrqCgb(unsigned old, unsigned data, bool lycperiod, gb_ulong cc);
+	bool statChangeTriggersStatIrqCgb(unsigned old, unsigned data, gb_ulong cc);
+	bool statChangeTriggersStatIrqDmg(unsigned old, gb_ulong cc);
+	bool statChangeTriggersStatIrq(unsigned old, unsigned data, gb_ulong cc);
 	void mode3CyclesChange();
-	void doCgbBgColorChange(unsigned index, unsigned data, unsigned long cycleCounter);
-	void doCgbSpColorChange(unsigned index, unsigned data, unsigned long cycleCounter);
+	void doCgbBgColorChange(unsigned index, unsigned data, gb_ulong cycleCounter);
+	void doCgbSpColorChange(unsigned index, unsigned data, gb_ulong cycleCounter);
 
 	void (*scanlinecallback)();
 	int scanlinecallbacksl;

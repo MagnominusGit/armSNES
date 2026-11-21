@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "infrared.h"
 
 namespace gambatte {
@@ -28,7 +29,7 @@ Infrared::Infrared()
 {
 }
 
-bool Infrared::getIrSignal(WhichIrGb which, unsigned long const cc) {
+bool Infrared::getIrSignal(WhichIrGb which, gb_ulong const cc) {
 	switch (which) {
 		case this_gb: return thisGbIrSignal_;
 		case linked_gb: return linkedGbIrSignal_;

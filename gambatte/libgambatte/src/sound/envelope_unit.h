@@ -19,6 +19,7 @@
 #ifndef ENVELOPE_UNIT_H
 #define ENVELOPE_UNIT_H
 
+#include "gbint.h"
 #include "sound_unit.h"
 #include "../savestate.h"
 #include "newstate.h"
@@ -29,18 +30,18 @@ class EnvelopeUnit : public SoundUnit {
 public:
 	struct VolOnOffEvent {
 		virtual ~VolOnOffEvent() {}
-		virtual void operator()(unsigned long /*cc*/) {}
+		virtual void operator()(gb_ulong /*cc*/) {}
 	};
 
 	explicit EnvelopeUnit(VolOnOffEvent &volOnOffEvent = nullEvent_);
 	void event();
 	bool dacIsOn() const { return nr2_ & 0xF8; }
 	unsigned getVolume() const { return volume_; }
-	void nr2Change(unsigned newNr2, unsigned long cc, bool master);
-	bool nr4Init(unsigned long cycleCounter);
+	void nr2Change(unsigned newNr2, gb_ulong cc, bool master);
+	bool nr4Init(gb_ulong cycleCounter);
 	void reset();
 	void saveState(SaveState::SPU::Env &estate) const;
-	void loadState(SaveState::SPU::Env const &estate, unsigned nr2, unsigned long cc);
+	void loadState(SaveState::SPU::Env const &estate, unsigned nr2, gb_ulong cc);
 	template<bool isReader>void SyncState(NewState *ns);
 
 private:
@@ -50,7 +51,7 @@ private:
 	unsigned char volume_;
 	bool clock_;
 
-	bool clock(unsigned long cc) {
+	bool clock(gb_ulong cc) {
 		if (counter_ == counter_disabled)
 			return false;
 

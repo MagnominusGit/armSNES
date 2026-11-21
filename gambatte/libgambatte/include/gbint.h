@@ -19,6 +19,13 @@
 #ifndef GAMBATTE_INT_H
 #define GAMBATTE_INT_H
 
+// armGBA: Gambatte's long and unsigned long, 32 bits on every build. Its counters wrap at 32 bits,
+// as they do where long is 32 bits (32-bit ARM, Windows); with a 64-bit long, times that have gone
+// negative compare and save differently, and a 32-bit and a 64-bit device in netplay fall out of
+// step.
+typedef int gb_long;
+typedef unsigned gb_ulong;
+
 #ifdef HAVE_CSTDINT
 
 #include <cstdint>

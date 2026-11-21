@@ -12,6 +12,8 @@ public:
 	~scoped_ptr() { Deleter::del(p_); }
 	T * get() const { return p_; }
 	void reset(T *p = 0) { Deleter::del(p_); p_ = p; }
+	// armGBA: gives up what it holds without deleting it
+	T * release() { T *const p = p_; p_ = 0; return p; }
 	T & operator*() const { return *p_; }
 	T * operator->() const { return p_; }
 	operator bool() const { return p_; }

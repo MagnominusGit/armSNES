@@ -1,3 +1,4 @@
+#include "gbint.h"
 #include "newstate.h"
 #include <cstring>
 #include <algorithm>
@@ -16,7 +17,7 @@ void NewStateDummy::Save(void const */*ptr*/, size_t size, char const */*name*/)
 void NewStateDummy::Load(void */*ptr*/, size_t /*size*/, char const */*name*/) {
 }
 
-NewStateExternalBuffer::NewStateExternalBuffer(char *buffer, long maxlength)
+NewStateExternalBuffer::NewStateExternalBuffer(char *buffer, gb_long maxlength)
 : buffer(buffer)
 , length(0)
 , maxlength(maxlength)
@@ -24,7 +25,7 @@ NewStateExternalBuffer::NewStateExternalBuffer(char *buffer, long maxlength)
 }
 
 void NewStateExternalBuffer::Save(void const *ptr, size_t size, char const */*name*/) {
-	if (maxlength - length >= (long)size)
+	if (maxlength - length >= (gb_long)size)
 		std::memcpy(buffer + length, ptr, size);
 
 	length += size;
@@ -32,7 +33,7 @@ void NewStateExternalBuffer::Save(void const *ptr, size_t size, char const */*na
 
 void NewStateExternalBuffer::Load(void *ptr, size_t size, char const */*name*/) {
 	char *dst = static_cast<char *>(ptr);
-	if (maxlength - length >= (long)size)
+	if (maxlength - length >= (gb_long)size)
 		std::memcpy(dst, buffer + length, size);
 
 	length += size;

@@ -19,6 +19,7 @@
 #ifndef INFRARED_H
 #define INFRARED_H
 
+#include "gbint.h"
 #include "remote.h"
 #include "savestate.h"
 #include "newstate.h"
@@ -33,13 +34,13 @@ public:
 	bool getIrTrigger() const { return irTrigger_; };
 	void ackIrTrigger() { irTrigger_ = false; };
 
-	bool getIrSignal(WhichIrGb which, unsigned long const cc);
+	bool getIrSignal(WhichIrGb which, gb_ulong const cc);
 	void setIrSignal(WhichIrGb which, bool signal);
 
 	void setRemoteCallback(unsigned char (*callback)()) { remote_.setRemoteCallback(callback); }
 	void setRemoteActive(bool active) { remote_.setRemoteActive(active); }
-	void resetCc(unsigned long const oldCc, unsigned long const newCc) { remote_.resetCc(oldCc, newCc); }
-	void speedChange(unsigned long const cc) { remote_.speedChange(cc); }
+	void resetCc(gb_ulong const oldCc, gb_ulong const newCc) { remote_.resetCc(oldCc, newCc); }
+	void speedChange(gb_ulong const cc) { remote_.speedChange(cc); }
 
 	void saveState(SaveState &state) const;
 	void loadState(SaveState const &state, bool const ds);

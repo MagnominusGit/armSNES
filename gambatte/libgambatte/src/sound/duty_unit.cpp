@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "duty_unit.h"
 #include "psgdef.h"
 
@@ -48,9 +49,9 @@ DutyUnit::DutyUnit()
 {
 }
 
-void DutyUnit::updatePos(unsigned long const cc) {
+void DutyUnit::updatePos(gb_ulong const cc) {
 	if (cc >= nextPosUpdate_) {
-		unsigned long const inc = (cc - nextPosUpdate_) / period_ + 1;
+		gb_ulong const inc = (cc - nextPosUpdate_) / period_ + 1;
 		nextPosUpdate_ += period_ * inc;
 		pos_ = (pos_ + inc) % duty_pattern_len;
 		high_ = toOutState(duty_, pos_);
@@ -77,7 +78,7 @@ void DutyUnit::setCounter() {
 		counter_ = counter_disabled;
 }
 
-void DutyUnit::setFreq(unsigned newFreq, unsigned long cc) {
+void DutyUnit::setFreq(unsigned newFreq, gb_ulong cc) {
 	updatePos(cc);
 	period_ = toPeriod(newFreq);
 	setCounter();
@@ -96,28 +97,28 @@ void DutyUnit::event() {
 	inc_ = inc[duty_][high_];
 }
 
-bool DutyUnit::isHighState(unsigned long const cc) const {
+bool DutyUnit::isHighState(gb_ulong const cc) const {
 	bool high = high_;
 	if (cc >= nextPosUpdate_) {
-		unsigned long const inc = (cc - nextPosUpdate_) / period_ + 1;
+		gb_ulong const inc = (cc - nextPosUpdate_) / period_ + 1;
 		unsigned char const pos = (pos_ + inc) % duty_pattern_len;
 		high = toOutState(duty_, pos);
 	}
 	return high;
 }
 
-void DutyUnit::nr1Change(unsigned newNr1, unsigned long cc) {
+void DutyUnit::nr1Change(unsigned newNr1, gb_ulong cc) {
 	updatePos(cc);
 	duty_ = newNr1 >> 6;
 	setCounter();
 }
 
-void DutyUnit::nr3Change(unsigned newNr3, unsigned long cc) {
+void DutyUnit::nr3Change(unsigned newNr3, gb_ulong cc) {
 	setFreq((freq() & 0x700) | newNr3, cc);
 }
 
 // GSR NOTE: `master` is required to get 4 sound/ch1_init_pos* hwtests to pass; upstream passes them by happenstance
-void DutyUnit::nr4Change(unsigned const newNr4, unsigned long const cc, unsigned long const ref, bool const master) {
+void DutyUnit::nr4Change(unsigned const newNr4, gb_ulong const cc, gb_ulong const ref, bool const master) {
 	setFreq((newNr4 << 8 & 0x700) | (freq() & 0xFF), cc);
 
 	if (newNr4 & psg_nr4_init) {
@@ -133,7 +134,7 @@ void DutyUnit::reset() {
 	setCounter();
 }
 
-void DutyUnit::resetCc(unsigned long cc, unsigned long newCc) {
+void DutyUnit::resetCc(gb_ulong cc, gb_ulong newCc) {
 	if (nextPosUpdate_ == counter_disabled)
 		return;
 
@@ -142,28 +143,41 @@ void DutyUnit::resetCc(unsigned long cc, unsigned long newCc) {
 	setCounter();
 }
 
-void DutyUnit::saveState(SaveState::SPU::Duty &dstate, unsigned long const cc) {
+void DutyUnit::saveState(SaveState::SPU::Duty &dstate, gb_ulong const cc) {
 	updatePos(cc);
 	setCounter();
 	dstate.nextPosUpdate = nextPosUpdate_;
 	dstate.nr3 = freq() & 0xFF;
+	dstate.freqHigh = 0x08 | (freq() >> 8 & 7);
+	dstate.events = enableEvents_ ? 2 : 1;
 	dstate.pos = pos_;
 	dstate.high = high_;
 }
 
 void DutyUnit::loadState(SaveState::SPU::Duty const &dstate,
-		unsigned const nr1, unsigned const nr4, unsigned long const cc) {
-	nextPosUpdate_ = std::max(dstate.nextPosUpdate, cc);
+		unsigned const nr1, unsigned const nr4, gb_ulong const cc) {
+	// armGBA: as saved, even when past, as the machine had it
+	nextPosUpdate_ = dstate.nextPosUpdate;
 	pos_ = dstate.pos % duty_pattern_len;
 	high_ = dstate.high;
 	duty_ = nr1 >> 6;
-	period_ = toPeriod((nr4 << 8 & 0x700) | dstate.nr3);
+	unsigned const high = dstate.freqHigh & 0x08 ? dstate.freqHigh & 7 : nr4 & 7;
+	period_ = toPeriod(high << 8 | dstate.nr3);
 	enableEvents_ = true;
 	setCounter();
 }
 
-void DutyUnit::resetCounters(unsigned long cc) {
+void DutyUnit::resetCounters(gb_ulong cc) {
 	resetCc(cc, cc - counter_max);
+}
+
+// armGBA: whether the unit's events ran when saved, once the rest of the sound has loaded and tested
+// its output
+void DutyUnit::restoreEvents(unsigned char const events) {
+	if (events) {
+		enableEvents_ = events == 2;
+		setCounter();
+	}
 }
 
 void DutyUnit::killCounter() {
@@ -171,7 +185,7 @@ void DutyUnit::killCounter() {
 	setCounter();
 }
 
-void DutyUnit::reviveCounter(unsigned long const cc) {
+void DutyUnit::reviveCounter(gb_ulong const cc) {
 	updatePos(cc);
 	enableEvents_ = true;
 	setCounter();

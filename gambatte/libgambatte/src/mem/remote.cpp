@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "remote.h"
 
 namespace gambatte {
@@ -30,12 +31,15 @@ Remote::Remote()
 {
 }
 
-void Remote::update(unsigned long const cc) {
-	cyclesElapsed_ += (cc - lastUpdate_) >> ds_;
+void Remote::update(gb_ulong const cc) {
+	// armGBA: the count stops at its top, long after the signal has ended, and doesn't wrap round
+	// to send the signal again.
+	gb_ulong const passed = (cc - lastUpdate_) >> ds_;
+	cyclesElapsed_ = cyclesElapsed_ + passed < cyclesElapsed_ ? 0xFFFFFFFFu : cyclesElapsed_ + passed;
 	lastUpdate_ = cc;
 }
 
-bool Remote::getRemoteSignal(unsigned long const cc) {
+bool Remote::getRemoteSignal(gb_ulong const cc) {
 	if (lastUpdate_ == disabled_time) {
 		cyclesElapsed_ = 0;
 		lastUpdate_ = cc;
@@ -43,7 +47,8 @@ bool Remote::getRemoteSignal(unsigned long const cc) {
 
 	update(cc);
 	unsigned char modulation = (cyclesElapsed_ / 105) & 1; // 4194304 Hz CPU, 40000 Hz remote signal
-	unsigned long timeUs = cyclesElapsed_ * 36 / 151; // actually *1000000/4194304
+	// armGBA: in 64 bits; in 32 the product overflowed after 28 seconds and the signal came again.
+	unsigned long long timeUs = cyclesElapsed_ * 36ull / 151; // actually *1000000/4194304
 	// sony protocol
 	if (timeUs < 10000) // initialization allowance
 		return 0;
@@ -54,7 +59,7 @@ bool Remote::getRemoteSignal(unsigned long const cc) {
 	else { // send data
 		timeUs -= 13000;
 		unsigned data = (command_ << 13) | 0x1FFF; // write 20 bits (upper 7 bits are the command)
-		for (unsigned long mask = 1ul << (20 - 1); mask; mask >>= 1) {
+		for (gb_ulong mask = 1u << (20 - 1); mask; mask >>= 1) {
 			unsigned markTime = (data & mask) ? 1200 : 600;
 			if (timeUs < markTime)
 				return modulation;
@@ -70,14 +75,14 @@ bool Remote::getRemoteSignal(unsigned long const cc) {
 	}
 }
 
-void Remote::resetCc(unsigned long const oldCc, unsigned long const newCc) {
+void Remote::resetCc(gb_ulong const oldCc, gb_ulong const newCc) {
 	if (lastUpdate_ != disabled_time) {
 		update(oldCc);
 		lastUpdate_ -= oldCc - newCc;		
 	}
 }
 
-void Remote::speedChange(unsigned long const cc) {
+void Remote::speedChange(gb_ulong const cc) {
 	if (lastUpdate_ != disabled_time) {
 		update(cc);
 	}

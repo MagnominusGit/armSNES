@@ -81,6 +81,8 @@ public:
 	void setAddrBank(unsigned short addr, unsigned bank);
 
 	void setRomHooked(bool hooked) { romHooked_ = hooked; setOamDmaSrc(oamDmaSrc_); }
+	// armGBA: the cartridge answers reads and writes of A000-BFFF itself (see SramHook)
+	void setSramHooked(bool hooked) { sramHooked_ = hooked; setOamDmaSrc(oamDmaSrc_); }
 	void setRombank0(unsigned bank);
 	void setRombank(unsigned bank);
 	void setRambank(unsigned ramFlags, unsigned rambank);
@@ -103,6 +105,7 @@ private:
 	OamDmaSrc oamDmaSrc_;
 	// armGBA: ROM reads go the long way, for a cartridge that answers some of them itself
 	bool romHooked_ = false;
+	bool sramHooked_ = false;
 
 	int memchunk_len;
 	std::size_t memchunkSize_;

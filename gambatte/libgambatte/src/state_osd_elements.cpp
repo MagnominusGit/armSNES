@@ -40,11 +40,11 @@ static const std::size_t stateSavedWidth  = getWidth(stateSaved);
 class ShadedTextOsdElment : public OsdElement {
 	struct ShadeFill {
 		void operator()(uint_least32_t *dest, const std::ptrdiff_t pitch) const {
-			dest[2] = dest[1] = dest[0] = 0x000000ul;
+			dest[2] = dest[1] = dest[0] = 0x000000u;
 			dest += pitch;
-			dest[2] = dest[0] = 0x000000ul;
+			dest[2] = dest[0] = 0x000000u;
 			dest += pitch;
-			dest[2] = dest[1] = dest[0] = 0x000000ul;
+			dest[2] = dest[1] = dest[0] = 0x000000u;
 		}
 	};
 
@@ -74,7 +74,7 @@ ShadedTextOsdElment::ShadedTextOsdElment(unsigned width, const char *txt)
 	print(pixels + 1 * w() + 1, w(), 0xE0E0E0ul, txt);*/
 
 	bitmapfont::print(pixels.get()              , w(), ShadeFill(), txt);
-	bitmapfont::print(pixels.get() + 1 * w() + 1, w(), 0xE0E0E0ul , txt);
+	bitmapfont::print(pixels.get() + 1 * w() + 1, w(), 0xE0E0E0u , txt);
 }
 
 const uint_least32_t* ShadedTextOsdElment::update() {
@@ -134,7 +134,7 @@ SaveStateOsdElement::SaveStateOsdElement(const std::string &fileName, unsigned s
 		using namespace bitmapfont;
 		static const char txt[] = { E,m,p,t,bitmapfont::y,0 };
 		print(pixels + 3 + (StateSaver::ss_height / 2 - bitmapfont::HEIGHT / 2) * StateSaver::ss_width,
-		      StateSaver::ss_width, 0x808080ul, txt);
+		      StateSaver::ss_width, 0x808080u, txt);
 	}
 }
 

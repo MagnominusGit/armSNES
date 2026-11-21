@@ -19,6 +19,7 @@
 #ifndef SPRITE_MAPPER_H
 #define SPRITE_MAPPER_H
 
+#include "gbint.h"
 #include "ly_counter.h"
 #include "../savestate.h"
 #include "newstate.h"
@@ -33,15 +34,16 @@ public:
 	             LyCounter const &lyCounter,
 	             unsigned char const *oamram);
 	void reset(unsigned char const *oamram, bool cgb);
-	unsigned long doEvent(unsigned long time);
+	gb_ulong doEvent(gb_ulong time);
 	bool largeSprites(int spno) const { return oamReader_.largeSprites(spno); }
 	int numSprites(unsigned ly) const { return num_[ly] & ~(1u * need_sorting_flag); }
-	void oamChange(unsigned long cc) { oamReader_.change(cc); }
-	void oamChange(unsigned char const *oamram, unsigned long cc) { oamReader_.change(oamram, cc); }
+	void oamChange(gb_ulong cc) { oamReader_.change(cc); }
+	void oamChange(unsigned char const *oamram, gb_ulong cc) { oamReader_.change(oamram, cc); }
+	void setOam(unsigned char const *oamram) { oamReader_.setOam(oamram); }
 	unsigned char const * oamram() const { return oamReader_.oam(); }
 	unsigned char const * posbuf() const { return oamReader_.spritePosBuf(); }
 
-	void resetCycleCounter(unsigned long oldCc, unsigned long newCc) {
+	void resetCycleCounter(gb_ulong oldCc, gb_ulong newCc) {
 		oamReader_.update(oldCc);
 		oamReader_.resetCycleCounter(oldCc, newCc);
 	}
@@ -56,7 +58,7 @@ public:
 	}
 
 	void setStatePtrs(SaveState &state) { oamReader_.setStatePtrs(state); }
-	void enableDisplay(unsigned long cc) { oamReader_.enableDisplay(cc); }
+	void enableDisplay(gb_ulong cc) { oamReader_.enableDisplay(cc); }
 	void saveState(SaveState &state) const { oamReader_.saveState(state); }
 
 	void loadState(SaveState const &state, unsigned char const *oamram) {
@@ -64,11 +66,11 @@ public:
 		mapSprites();
 	}
 
-	bool inactivePeriodAfterDisplayEnable(unsigned long cc) const {
+	bool inactivePeriodAfterDisplayEnable(gb_ulong cc) const {
 		return oamReader_.inactivePeriodAfterDisplayEnable(cc);
 	}
 
-	static unsigned long schedule(LyCounter const &lyCounter, unsigned long cc) {
+	static gb_ulong schedule(LyCounter const &lyCounter, gb_ulong cc) {
 		return lyCounter.nextLineCycle(2 * lcd_num_oam_entries, cc);
 	}
 
@@ -79,20 +81,21 @@ private:
 	public:
 		OamReader(LyCounter const &lyCounter, unsigned char const *oamram);
 		void reset(unsigned char const *oamram, bool cgb);
-		void change(unsigned long cc);
-		void change(unsigned char const *oamram, unsigned long cc) { change(cc); oamram_ = oamram; }
+		void change(gb_ulong cc);
+		void change(unsigned char const *oamram, gb_ulong cc) { change(cc); oamram_ = oamram; }
+		void setOam(unsigned char const *oamram) { oamram_ = oamram; }
 		bool changed() const { return lastChange_ != 0xFF; }
 		bool largeSprites(int spno) const { return lsbuf_[spno]; }
 		unsigned char const * oam() const { return oamram_; }
-		void resetCycleCounter(unsigned long oldCc, unsigned long newCc) { lu_ -= oldCc - newCc; }
+		void resetCycleCounter(gb_ulong oldCc, gb_ulong newCc) { lu_ -= oldCc - newCc; }
 		void setLargeSpritesSrc(bool src) { largeSpritesSrc_ = src; }
-		void update(unsigned long cc);
+		void update(gb_ulong cc);
 		unsigned char const * spritePosBuf() const { return buf_; }
 		void setStatePtrs(SaveState &state);
-		void enableDisplay(unsigned long cc);
+		void enableDisplay(gb_ulong cc);
 		void saveState(SaveState &state) const { state.ppu.enableDisplayM0Time = lu_; }
 		void loadState(SaveState const &ss, unsigned char const *oamram);
-		bool inactivePeriodAfterDisplayEnable(unsigned long cc) const { return cc < lu_; }
+		bool inactivePeriodAfterDisplayEnable(gb_ulong cc) const { return cc < lu_; }
 		unsigned lineTime() const { return lyCounter_.lineTime(); }
 		template<bool isReader>void SyncState(NewState *ns);
 
@@ -101,7 +104,7 @@ private:
 		bool lsbuf_[lcd_num_oam_entries];
 		LyCounter const &lyCounter_;
 		unsigned char const *oamram_;
-		unsigned long lu_;
+		gb_ulong lu_;
 		unsigned char lastChange_;
 		bool largeSpritesSrc_;
 		bool cgb_;

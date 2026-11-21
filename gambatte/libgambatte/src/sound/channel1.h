@@ -35,19 +35,20 @@ class Channel1 {
 public:
 	Channel1();
 	void setNr0(unsigned data);
-	void setNr1(unsigned data, unsigned long cc);
-	void setNr2(unsigned data, unsigned long cc);
-	void setNr3(unsigned data, unsigned long cc);
-	void setNr4(unsigned data, unsigned long cc, unsigned long ref);
-	void setSo(unsigned long soMask, unsigned long cc);
+	void setNr1(unsigned data, gb_ulong cc);
+	void setNr2(unsigned data, gb_ulong cc);
+	void setNr3(unsigned data, gb_ulong cc);
+	void setNr4(unsigned data, gb_ulong cc, gb_ulong ref);
+	void setSo(gb_ulong soMask, gb_ulong cc);
 	unsigned char getVolume() const { return vol_; }
 	bool isActive() const { return master_; }
-	void update(uint_least32_t *buf, unsigned long soBaseVol, unsigned long cc, unsigned long end);
+	void update(uint_least32_t *buf, gb_ulong soBaseVol, gb_ulong cc, gb_ulong end);
 	void reset();
-	void resetCc(unsigned long cc, unsigned long ncc) { dutyUnit_.resetCc(cc, ncc); }
+	void resetCc(gb_ulong cc, gb_ulong ncc) { dutyUnit_.resetCc(cc, ncc); }
 	void init(bool cgb);
-	void saveState(SaveState &state, unsigned long cc);
+	void saveState(SaveState &state, gb_ulong cc);
 	void loadState(SaveState const &state);
+	void restoreEvents(SaveState const &state) { dutyUnit_.restoreEvents(state.spu.ch1.duty.events); }
 	template<bool isReader>void SyncState(NewState *ns);
 
 private:
@@ -56,7 +57,7 @@ private:
 		SweepUnit(MasterDisabler &disabler, DutyUnit &dutyUnit);
 		virtual void event();
 		void nr0Change(unsigned newNr0);
-		void nr4Init(unsigned long cycleCounter);
+		void nr4Init(gb_ulong cycleCounter);
 		void reset();
 		void init(bool cgb) { cgb_ = cgb; }
 		void saveState(SaveState &state) const;
@@ -83,8 +84,8 @@ private:
 	EnvelopeUnit envelopeUnit_;
 	SweepUnit sweepUnit_;
 	SoundUnit *nextEventUnit_;
-	unsigned long soMask_;
-	unsigned long prevOut_;
+	gb_ulong soMask_;
+	gb_ulong prevOut_;
 	unsigned char nr4_;
 	unsigned char vol_;
 	bool master_;

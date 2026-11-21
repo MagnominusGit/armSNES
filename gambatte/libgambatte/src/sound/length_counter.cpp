@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "length_counter.h"
 #include "master_disabler.h"
 #include "psgdef.h"
@@ -38,14 +39,14 @@ void LengthCounter::event() {
 	disableMaster_();
 }
 
-void LengthCounter::nr1Change(unsigned const newNr1, unsigned const nr4, unsigned long const cc) {
+void LengthCounter::nr1Change(unsigned const newNr1, unsigned const nr4, gb_ulong const cc) {
 	lengthCounter_ = (~newNr1 & lengthMask_) + 1;
 	counter_ = nr4 & psg_nr4_lcen
 		? ((cc >> 13) + lengthCounter_) << 13
 		: 1 * counter_disabled;
 }
 
-void LengthCounter::nr4Change(unsigned const oldNr4, unsigned const newNr4, unsigned long const cc) {
+void LengthCounter::nr4Change(unsigned const oldNr4, unsigned const newNr4, gb_ulong const cc) {
 	if (counter_ != counter_disabled)
 		lengthCounter_ = (counter_ >> 13) - (cc >> 13);
 
@@ -71,8 +72,9 @@ void LengthCounter::saveState(SaveState::SPU::LCounter &lstate) const {
 	lstate.lengthCounter = lengthCounter_;
 }
 
-void LengthCounter::loadState(SaveState::SPU::LCounter const &lstate, unsigned long const cc) {
-	counter_ = std::max(lstate.counter, cc);
+void LengthCounter::loadState(SaveState::SPU::LCounter const &lstate, gb_ulong const cc) {
+	// armGBA: as saved, even when past, as the machine had it
+	counter_ = lstate.counter;
 	lengthCounter_ = lstate.lengthCounter;
 }
 

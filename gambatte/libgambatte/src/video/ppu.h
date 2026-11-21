@@ -64,8 +64,8 @@ struct PPUState {
 };
 
 struct PPUPriv {
-	unsigned long bgPalette[max_num_palettes * num_palette_entries];
-	unsigned long spPalette[max_num_palettes * num_palette_entries];
+	gb_ulong bgPalette[max_num_palettes * num_palette_entries];
+	gb_ulong spPalette[max_num_palettes * num_palette_entries];
 	struct Sprite { unsigned char spx, oampos, line, attrib; } spriteList[lcd_max_num_sprites_per_line + 1];
 	unsigned short spwordList[lcd_max_num_sprites_per_line + 1];
 	unsigned char nextSprite;
@@ -76,9 +76,9 @@ struct PPUPriv {
 	unsigned char const *vram;
 	PPUState const *nextCallPtr;
 
-	unsigned long now;
-	unsigned long lastM0Time;
-	long cycles;
+	gb_ulong now;
+	gb_ulong lastM0Time;
+	gb_long cycles;
 
 	unsigned tileword;
 	unsigned ntileword;
@@ -128,33 +128,34 @@ public:
 	// armSNES
 	void setIcdLine(void (*line)(void *, unsigned, uint_least32_t const *), void *p) { p_.icdLine = line; p_.icdP = p; }
 
-	unsigned long * bgPalette() { return p_.bgPalette; }
+	gb_ulong * bgPalette() { return p_.bgPalette; }
 	bool cgb() const { return p_.cgb; }
 	bool agb() const { return p_.agb; }
 	bool cgbDmg() const { return p_.cgbDmg; }
 	void doLyCountEvent() { p_.lyCounter.doEvent(); }
-	unsigned long doSpriteMapEvent(unsigned long time) { return p_.spriteMapper.doEvent(time); }
+	gb_ulong doSpriteMapEvent(gb_ulong time) { return p_.spriteMapper.doEvent(time); }
 	PPUFrameBuf const & frameBuf() const { return p_.framebuf; }
 
-	bool inactivePeriodAfterDisplayEnable(unsigned long cc) const {
+	bool inactivePeriodAfterDisplayEnable(gb_ulong cc) const {
 		return p_.spriteMapper.inactivePeriodAfterDisplayEnable(cc);
 	}
 
-	unsigned long lastM0Time() const { return p_.lastM0Time; }
+	gb_ulong lastM0Time() const { return p_.lastM0Time; }
 	unsigned lcdc() const { return p_.lcdc; }
 	void loadState(SaveState const &state, unsigned char const *oamram);
 	LyCounter const & lyCounter() const { return p_.lyCounter; }
-	unsigned long now() const { return p_.now; }
-	void oamChange(unsigned long cc) { p_.spriteMapper.oamChange(cc); }
-	void oamChange(unsigned char const *oamram, unsigned long cc) { p_.spriteMapper.oamChange(oamram, cc); }
-	unsigned long predictedNextXposTime(unsigned xpos) const;
+	gb_ulong now() const { return p_.now; }
+	void oamChange(gb_ulong cc) { p_.spriteMapper.oamChange(cc); }
+	void oamChange(unsigned char const *oamram, gb_ulong cc) { p_.spriteMapper.oamChange(oamram, cc); }
+	void setOam(unsigned char const *oamram) { p_.spriteMapper.setOam(oamram); }
+	gb_ulong predictedNextXposTime(unsigned xpos) const;
 	void reset(unsigned char const *oamram, unsigned char const *vram, bool cgb, bool agb);
 	void setCgbDmg(bool enabled) { p_.cgbDmg = enabled; }
 	void setSpPriority(bool xSpPriority) { p_.spPriority = 2 | xSpPriority; }
-	void resetCc(unsigned long oldCc, unsigned long newCc);
+	void resetCc(gb_ulong oldCc, gb_ulong newCc);
 	void saveState(SaveState &ss) const;
 	void setFrameBuf(uint_least32_t *buf, std::ptrdiff_t pitch) { p_.framebuf.setBuf(buf, pitch); }
-	void setLcdc(unsigned lcdc, unsigned long cc);
+	void setLcdc(unsigned lcdc, gb_ulong cc);
 	void setScx(unsigned scx) { p_.scx = scx; }
 	void setScy(unsigned scy) { p_.scy = scy; }
 	void setStatePtrs(SaveState &ss) { p_.spriteMapper.setStatePtrs(ss); }
@@ -162,8 +163,8 @@ public:
 	void setWy(unsigned wy) { p_.wy = wy; }
 	void updateWy2() { p_.wy2 = p_.wy; }
 	void speedChange();
-	unsigned long * spPalette() { return p_.spPalette; }
-	void update(unsigned long cc);
+	gb_ulong * spPalette() { return p_.spPalette; }
+	void update(gb_ulong cc);
 	void setLayers(unsigned mask) { p_.layersMask = mask; }
 	void setSpeedupFlags(unsigned flags) { p_.speedupFlags = flags; }
 	template<bool isReader>void SyncState(NewState *ns);

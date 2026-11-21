@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "sprite_mapper.h"
 #include "counterdef.h"
 #include "next_m0_time.h"
@@ -39,7 +40,7 @@ private:
 	unsigned char const *const spxlut_;
 };
 
-unsigned toPosCycles(unsigned long const cc, LyCounter const &lyCounter) {
+unsigned toPosCycles(gb_ulong const cc, LyCounter const &lyCounter) {
 	unsigned lc = lyCounter.lineCycles(cc) + 1;
 	if (lc >= lcd_cycles_per_line)
 		lc -= lcd_cycles_per_line;
@@ -70,7 +71,7 @@ void SpriteMapper::OamReader::reset(unsigned char const *const oamram, bool cons
 	}
 }
 
-void SpriteMapper::OamReader::update(unsigned long const cc) {
+void SpriteMapper::OamReader::update(gb_ulong const cc) {
 	if (cc > lu_) {
 		if (changed()) {
 			unsigned const lulc = toPosCycles(lu_, lyCounter_);
@@ -112,7 +113,7 @@ void SpriteMapper::OamReader::update(unsigned long const cc) {
 	}
 }
 
-void SpriteMapper::OamReader::change(unsigned long cc) {
+void SpriteMapper::OamReader::change(gb_ulong cc) {
 	update(cc);
 	lastChange_ = std::min(toPosCycles(lu_, lyCounter_), 2u * lcd_num_oam_entries);
 }
@@ -139,7 +140,7 @@ SYNCFUNC(SpriteMapper::OamReader) {
 	NSS(cgb_);
 }
 
-void SpriteMapper::OamReader::enableDisplay(unsigned long cc) {
+void SpriteMapper::OamReader::enableDisplay(gb_ulong cc) {
 	std::fill_n(buf_, sizeof buf_ / sizeof *buf_, 0);
 	std::fill_n(lsbuf_, sizeof lsbuf_ / sizeof *lsbuf_, false);
 	lu_ = cc + (2 * lcd_num_oam_entries << lyCounter_.isDoubleSpeed()) + 1;
@@ -191,12 +192,12 @@ void SpriteMapper::sortLine(unsigned const ly) const {
 	              SpxLess(posbuf() + 1));
 }
 
-unsigned long SpriteMapper::doEvent(unsigned long const time) {
+gb_ulong SpriteMapper::doEvent(gb_ulong const time) {
 	oamReader_.update(time);
 	mapSprites();
 	return oamReader_.changed()
 	     ? time + oamReader_.lineTime()
-	     : static_cast<unsigned long>(disabled_time);
+	     : static_cast<gb_ulong>(disabled_time);
 }
 
 SYNCFUNC(SpriteMapper) {

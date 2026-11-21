@@ -28,16 +28,16 @@ public:
 	virtual ~SoundUnit() {}
 	virtual void event() = 0;
 
-	virtual void resetCounters(unsigned long /*oldCc*/) {
+	virtual void resetCounters(gb_ulong /*oldCc*/) {
 		if (counter_ != counter_disabled)
 			counter_ -= counter_max;
 	}
 
-	unsigned long counter() const { return counter_; }
+	gb_ulong counter() const { return counter_; }
 
 protected:
 	SoundUnit() : counter_(counter_disabled) {}
-	unsigned long counter_;
+	gb_ulong counter_;
 };
 
 }

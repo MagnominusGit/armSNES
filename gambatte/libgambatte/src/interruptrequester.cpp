@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "interruptrequester.h"
 #include "savestate.h"
 
@@ -43,17 +44,17 @@ void InterruptRequester::loadState(SaveState const &state) {
 
 	eventTimes_.setValue<intevent_interrupts>(intFlags_.imeOrHalted() && pendingIrqs()
 		? minIntTime_
-		: static_cast<unsigned long>(disabled_time));
+		: static_cast<gb_ulong>(disabled_time));
 }
 
-void InterruptRequester::resetCc(unsigned long oldCc, unsigned long newCc) {
+void InterruptRequester::resetCc(gb_ulong oldCc, gb_ulong newCc) {
 	minIntTime_ = minIntTime_ < oldCc ? 0 : minIntTime_ - (oldCc - newCc);
 
 	if (eventTimes_.value(intevent_interrupts) != disabled_time)
 		eventTimes_.setValue<intevent_interrupts>(minIntTime_);
 }
 
-void InterruptRequester::ei(unsigned long cc) {
+void InterruptRequester::ei(gb_ulong cc) {
 	intFlags_.setIme();
 	minIntTime_ = cc + 1;
 
@@ -89,7 +90,7 @@ void InterruptRequester::flagIrq(unsigned bit) {
 		eventTimes_.setValue<intevent_interrupts>(minIntTime_);
 }
 
-void InterruptRequester::flagIrq(unsigned bit, unsigned long cc) {
+void InterruptRequester::flagIrq(unsigned bit, gb_ulong cc) {
 	unsigned const prevPending = pendingIrqs();
 	ifreg_ |= bit;
 
@@ -105,7 +106,7 @@ void InterruptRequester::setIereg(unsigned iereg) {
 	if (intFlags_.imeOrHalted()) {
 		eventTimes_.setValue<intevent_interrupts>(pendingIrqs()
 			? minIntTime_
-			: static_cast<unsigned long>(disabled_time));
+			: static_cast<gb_ulong>(disabled_time));
 	}
 }
 
@@ -115,11 +116,11 @@ void InterruptRequester::setIfreg(unsigned ifreg) {
 	if (intFlags_.imeOrHalted()) {
 		eventTimes_.setValue<intevent_interrupts>(pendingIrqs()
 			? minIntTime_
-			: static_cast<unsigned long>(disabled_time));
+			: static_cast<gb_ulong>(disabled_time));
 	}
 }
 
-void InterruptRequester::setMinIntTime(unsigned long cc) {
+void InterruptRequester::setMinIntTime(gb_ulong cc) {
 	minIntTime_ = cc;
 
 	if (eventTimes_.value(intevent_interrupts) < minIntTime_)

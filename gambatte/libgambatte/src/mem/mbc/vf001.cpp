@@ -11,6 +11,7 @@
 //   GNU General Public License version 2 for more details.
 //
 
+#include "gbint.h"
 #include "mbc.h"
 
 namespace gambatte {
@@ -104,7 +105,7 @@ unsigned Vf001::romRead(unsigned const p) {
 	return memptrs_.romdata(p >> 14)[p];
 }
 
-void Vf001::romWrite(unsigned const p, unsigned const data, unsigned long const /*cc*/) {
+void Vf001::romWrite(unsigned const p, unsigned const data, gb_ulong const /*cc*/) {
 	if (p >= 0x6000) {
 		unsigned const reg = p & 0xF00F;
 		if (reg == 0x7000 && data == 0x96) {
@@ -157,10 +158,10 @@ void Vf001::saveState(SaveState::Mem &ss) const {
 	ss.rombank = rombank_;
 	ss.rambank = rambank_;
 	ss.enableRam = enableRam_;
-	ss.mbcExtra = running_ | reg6000_ << 8 | left_ << 16 | 1ul * config_ << 24 | 1ul * decided_ << 25;
-	ss.mbcExtra2 = reg700x_[0] | reg700x_[1] << 8 | reg700x_[2] << 16 | 1ul * reg700x_[3] << 24;
-	ss.mbcExtra3 = reg700x_[4] | reg700x_[5] << 8 | reg700x_[6] << 16 | 1ul * reg700x_[7] << 24;
-	ss.mbcExtra4 = reg700x_[8] | reg700x_[9] << 8 | reg700x_[10] << 16 | 1ul * (start_ | dataMode_ | opened_ << 5) << 24;
+	ss.mbcExtra = running_ | reg6000_ << 8 | left_ << 16 | 1u * config_ << 24 | 1u * decided_ << 25;
+	ss.mbcExtra2 = reg700x_[0] | reg700x_[1] << 8 | reg700x_[2] << 16 | 1u * reg700x_[3] << 24;
+	ss.mbcExtra3 = reg700x_[4] | reg700x_[5] << 8 | reg700x_[6] << 16 | 1u * reg700x_[7] << 24;
+	ss.mbcExtra4 = reg700x_[8] | reg700x_[9] << 8 | reg700x_[10] << 16 | 1u * (start_ | dataMode_ | opened_ << 5) << 24;
 }
 
 void Vf001::loadState(SaveState::Mem const &ss) {
@@ -172,7 +173,7 @@ void Vf001::loadState(SaveState::Mem const &ss) {
 	left_ = ss.mbcExtra >> 16 & 0xFF;
 	config_ = ss.mbcExtra >> 24 & 1;
 	decided_ = ss.mbcExtra >> 25 & 1;
-	unsigned long const words[3] = { ss.mbcExtra2, ss.mbcExtra3, ss.mbcExtra4 };
+	gb_ulong const words[3] = { ss.mbcExtra2, ss.mbcExtra3, ss.mbcExtra4 };
 	for (unsigned i = 0; i < sizeof reg700x_; ++i)
 		reg700x_[i] = words[i / 4] >> i % 4 * 8 & 0xFF;
 	start_ = ss.mbcExtra4 >> 24 & 0x10;
@@ -194,6 +195,9 @@ void Vf001::SyncState(NewState *ns, bool isReader) {
 	NSS(decided_);
 	NSS(opened_);
 	NSS(dataMode_);
+	// The spare bank the switchable area reads from isn't in the state.
+	if (isReader)
+		setBanks();
 }
 
 void Vf001::setBanks() const {

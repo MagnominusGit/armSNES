@@ -3,7 +3,7 @@
 
 namespace gambatte {
 
-enum { disabled_time = 0xfffffffful };
+enum { disabled_time = 0xffffffffu };
 
 }
 

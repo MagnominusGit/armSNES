@@ -11,6 +11,7 @@
 //   GNU General Public License version 2 for more details.
 //
 
+#include "gbint.h"
 #include "mbc.h"
 
 namespace gambatte {
@@ -29,7 +30,7 @@ bool Pkjd::disabledRam() const {
 	return !enableRam_;
 }
 
-void Pkjd::romWrite(unsigned const p, unsigned const data, unsigned long const /*cc*/) {
+void Pkjd::romWrite(unsigned const p, unsigned const data, gb_ulong const /*cc*/) {
 	switch (p >> 13 & 3) {
 	case 0:
 		enableRam_ = (data & 0xF) == 0xA;
@@ -46,11 +47,11 @@ void Pkjd::romWrite(unsigned const p, unsigned const data, unsigned long const /
 	setBanks();
 }
 
-unsigned Pkjd::read(unsigned, unsigned long) const {
+unsigned Pkjd::read(unsigned, gb_ulong) const {
 	return select_ == 0xD || select_ == 0xE ? counters_[select_ - 0xD] : 0;
 }
 
-void Pkjd::write(unsigned, unsigned const data, unsigned long) {
+void Pkjd::write(unsigned, unsigned const data, gb_ulong) {
 	if (select_ == 0xD || select_ == 0xE) {
 		counters_[select_ - 0xD] = data;
 	} else if (select_ == 0xF) {

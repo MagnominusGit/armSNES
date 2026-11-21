@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "tima.h"
 #include "savestate.h"
 
@@ -44,29 +45,30 @@ void Tima::saveState(SaveState &state) const {
 }
 
 void Tima::loadState(SaveState const &state, TimaInterruptRequester timaIrq) {
-	divLastUpdate_ = state.mem.divLastUpdate - 0x100l * state.mem.ioamhram.get()[0x104];
-	lastUpdate_ = std::min(state.mem.timaLastUpdate, state.cpu.cycleCounter);
+	divLastUpdate_ = state.mem.divLastUpdate - 0x100 * state.mem.ioamhram.get()[0x104];
 	tmatime_ = state.mem.tmatime;
 	tima_ = state.mem.ioamhram.get()[0x105];
 	tma_  = state.mem.ioamhram.get()[0x106];
 	tac_  = state.mem.ioamhram.get()[0x107];
+	// armGBA: a stopped timer's last update isn't used until it starts again, and comes back as saved
+	lastUpdate_ = tac_ & 4 ? std::min(state.mem.timaLastUpdate, state.cpu.cycleCounter) : state.mem.timaLastUpdate;
 
-	unsigned long nextIrqEventTime = disabled_time;
+	gb_ulong nextIrqEventTime = disabled_time;
 	if (tac_ & 4) {
 		nextIrqEventTime = tmatime_ != disabled_time && tmatime_ > state.cpu.cycleCounter
 			? tmatime_
-			: lastUpdate_ + ((256l - tima_) << timaClock[tac_ & 3]) + 3;
+			: lastUpdate_ + ((256 - tima_) << timaClock[tac_ & 3]) + 3;
 	}
 
 	timaIrq.setNextIrqEventTime(nextIrqEventTime);
 }
 
-void Tima::resetCc(unsigned long const oldCc, unsigned long const newCc, TimaInterruptRequester timaIrq) {
+void Tima::resetCc(gb_ulong const oldCc, gb_ulong const newCc, TimaInterruptRequester timaIrq) {
 	if (tac_ & 0x04) {
 		updateIrq(oldCc, timaIrq);
 		updateTima(oldCc);
 
-		unsigned long const dec = oldCc - newCc;
+		gb_ulong const dec = oldCc - newCc;
 		lastUpdate_ -= dec;
 		timaIrq.setNextIrqEventTime(timaIrq.nextIrqEventTime() - dec);
 
@@ -75,8 +77,8 @@ void Tima::resetCc(unsigned long const oldCc, unsigned long const newCc, TimaInt
 	}
 }
 
-void Tima::updateTima(unsigned long const cc) {
-	unsigned long const ticks = (cc - lastUpdate_) >> timaClock[tac_ & 3];
+void Tima::updateTima(gb_ulong const cc) {
+	gb_ulong const ticks = (cc - lastUpdate_) >> timaClock[tac_ & 3];
 	lastUpdate_ += ticks << timaClock[tac_ & 3];
 
 	if (cc >= tmatime_) {
@@ -86,7 +88,7 @@ void Tima::updateTima(unsigned long const cc) {
 		tima_ = tma_;
 	}
 
-	unsigned long tmp = tima_ + ticks;
+	gb_ulong tmp = tima_ + ticks;
 	if (tmp > 0x100) {
 		unsigned const diff = 0x100 - tma_;
 		tmp -= diff * (tmp / diff - 0x100 / diff);
@@ -108,7 +110,7 @@ void Tima::updateTima(unsigned long const cc) {
 	tima_ = tmp;
 }
 
-void Tima::setTima(unsigned const data, unsigned long const cc, TimaInterruptRequester timaIrq) {
+void Tima::setTima(unsigned const data, gb_ulong const cc, TimaInterruptRequester timaIrq) {
 	if (tac_ & 0x04) {
 		updateIrq(cc, timaIrq);
 		updateTima(cc);
@@ -116,13 +118,13 @@ void Tima::setTima(unsigned const data, unsigned long const cc, TimaInterruptReq
 		if (tmatime_ - cc < 4)
 			tmatime_ = disabled_time;
 
-		timaIrq.setNextIrqEventTime(lastUpdate_ + ((256l - data) << timaClock[tac_ & 3]) + 3);
+		timaIrq.setNextIrqEventTime(lastUpdate_ + ((256 - data) << timaClock[tac_ & 3]) + 3);
 	}
 
 	tima_ = data;
 }
 
-void Tima::setTma(unsigned const data, unsigned long const cc, TimaInterruptRequester timaIrq) {
+void Tima::setTma(unsigned const data, gb_ulong const cc, TimaInterruptRequester timaIrq) {
 	if (tac_ & 0x04) {
 		updateIrq(cc, timaIrq);
 		updateTima(cc);
@@ -131,9 +133,9 @@ void Tima::setTma(unsigned const data, unsigned long const cc, TimaInterruptRequ
 	tma_ = data;
 }
 
-void Tima::setTac(unsigned const data, unsigned long const cc, TimaInterruptRequester timaIrq, bool agbFlag) {
+void Tima::setTac(unsigned const data, gb_ulong const cc, TimaInterruptRequester timaIrq, bool agbFlag) {
 	if (tac_ ^ data) {
-		unsigned long nextIrqEventTime = timaIrq.nextIrqEventTime();
+		gb_ulong nextIrqEventTime = timaIrq.nextIrqEventTime();
 
 		if (tac_ & 0x04) {
 			unsigned const inc = ~(data >> 2 & (cc - divLastUpdate_) >> (timaClock[data & 3] - 1)) & 1;
@@ -150,13 +152,13 @@ void Tima::setTac(unsigned const data, unsigned long const cc, TimaInterruptRequ
 		if (data & 4) {
 			// GSR NOTE: "timer quirk" (commit 144e4e9, since r649)
 			if (agbFlag) {
-				unsigned long diff = cc - divLastUpdate_;
+				gb_ulong diff = cc - divLastUpdate_;
 				if (((diff >> (timaClock[tac_ & 3] - 1)) & 1) == 1 && ((diff >> (timaClock[data & 3] - 1)) & 1) == 0)
 					tima_++;
 			}
 
 			lastUpdate_ = cc - ((cc - divLastUpdate_) & ((1u << timaClock[data & 3]) - 1));
-			nextIrqEventTime = lastUpdate_ + ((256l - tima_) << timaClock[data & 3]) + 3;
+			nextIrqEventTime = lastUpdate_ + ((256 - tima_) << timaClock[data & 3]) + 3;
 		}
 
 		timaIrq.setNextIrqEventTime(nextIrqEventTime);
@@ -165,9 +167,9 @@ void Tima::setTac(unsigned const data, unsigned long const cc, TimaInterruptRequ
 	tac_ = data;
 }
 
-void Tima::divReset(unsigned long cc, TimaInterruptRequester timaIrq) {
+void Tima::divReset(gb_ulong cc, TimaInterruptRequester timaIrq) {
 	if (tac_ & 0x04) {
-		unsigned long nextIrqEventTime = timaIrq.nextIrqEventTime();
+		gb_ulong nextIrqEventTime = timaIrq.nextIrqEventTime();
 		lastUpdate_ -= (1u << (timaClock[tac_ & 3] - 1)) + 3;
 		nextIrqEventTime -= (1u << (timaClock[tac_ & 3] - 1)) + 3;
 		if (cc >= nextIrqEventTime)
@@ -175,7 +177,7 @@ void Tima::divReset(unsigned long cc, TimaInterruptRequester timaIrq) {
 
 		updateTima(cc);
 		lastUpdate_ = cc;
-		timaIrq.setNextIrqEventTime(lastUpdate_ + ((256l - tima_) << timaClock[tac_ & 3]) + 3);
+		timaIrq.setNextIrqEventTime(lastUpdate_ + ((256 - tima_) << timaClock[tac_ & 3]) + 3);
 	}
 
 	divLastUpdate_ = cc;
@@ -188,7 +190,7 @@ void Tima::speedChange(TimaInterruptRequester timaIrq) {
 	}
 }
 
-unsigned Tima::tima(unsigned long cc) {
+unsigned Tima::tima(gb_ulong cc) {
 	if (tac_ & 0x04)
 		updateTima(cc);
 
@@ -198,7 +200,7 @@ unsigned Tima::tima(unsigned long cc) {
 void Tima::doIrqEvent(TimaInterruptRequester timaIrq) {
 	timaIrq.flagIrq(timaIrq.nextIrqEventTime());
 	timaIrq.setNextIrqEventTime(timaIrq.nextIrqEventTime()
-		+ ((256l - tma_) << timaClock[tac_ & 3]));
+		+ ((256 - tma_) << timaClock[tac_ & 3]));
 }
 
 SYNCFUNC(Tima) {

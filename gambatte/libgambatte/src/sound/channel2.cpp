@@ -16,6 +16,7 @@
 //   51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA.
 //
 
+#include "gbint.h"
 #include "channel2.h"
 #include "psgdef.h"
 #include "../savestate.h"
@@ -44,13 +45,13 @@ void Channel2::setEvent() {
 		nextEventUnit = &lengthCounter_;
 }
 
-void Channel2::setNr1(unsigned data, unsigned long cc) {
+void Channel2::setNr1(unsigned data, gb_ulong cc) {
 	lengthCounter_.nr1Change(data, nr4_, cc);
 	dutyUnit_.nr1Change(data, cc);
 	setEvent();
 }
 
-void Channel2::setNr2(unsigned data, unsigned long cc) {
+void Channel2::setNr2(unsigned data, gb_ulong cc) {
 	envelopeUnit_.nr2Change(data, cc, master_);
 	if (!(data & (psg_nr2_initvol | psg_nr2_inc)))
 		disableMaster_();
@@ -60,12 +61,12 @@ void Channel2::setNr2(unsigned data, unsigned long cc) {
 	setEvent();
 }
 
-void Channel2::setNr3(unsigned data, unsigned long cc) {
+void Channel2::setNr3(unsigned data, gb_ulong cc) {
 	dutyUnit_.nr3Change(data, cc);
 	setEvent();
 }
 
-void Channel2::setNr4(unsigned data, unsigned long cc, unsigned long ref) {
+void Channel2::setNr4(unsigned data, gb_ulong cc, gb_ulong ref) {
 	lengthCounter_.nr4Change(nr4_, data, cc);
 	// armGBA: whether the channel was playing before this trigger, as channel 1 passes it
 	dutyUnit_.nr4Change(data, cc, ref, master_);
@@ -80,7 +81,7 @@ void Channel2::setNr4(unsigned data, unsigned long cc, unsigned long ref) {
 	setEvent();
 }
 
-void Channel2::setSo(unsigned long soMask, unsigned long cc) {
+void Channel2::setSo(gb_ulong soMask, gb_ulong cc) {
 	soMask_ = soMask;
 	staticOutputTest_(cc);
 	setEvent();
@@ -92,7 +93,8 @@ void Channel2::reset() {
 	setEvent();
 }
 
-void Channel2::saveState(SaveState &state, unsigned long cc) {
+void Channel2::saveState(SaveState &state, gb_ulong cc) {
+	state.spu.prevOut2 = prevOut_;
 	dutyUnit_.saveState(state.spu.ch2.duty, cc);
 	envelopeUnit_.saveState(state.spu.ch2.env);
 	lengthCounter_.saveState(state.spu.ch2.lcounter);
@@ -102,6 +104,7 @@ void Channel2::saveState(SaveState &state, unsigned long cc) {
 }
 
 void Channel2::loadState(SaveState const &state) {
+	prevOut_ = state.spu.prevOut2;
 	dutyUnit_.loadState(state.spu.ch2.duty, state.mem.ioamhram.get()[0x116],
 		state.spu.ch2.nr4, state.spu.cycleCounter);
 	envelopeUnit_.loadState(state.spu.ch2.env, state.mem.ioamhram.get()[0x117],
@@ -112,16 +115,16 @@ void Channel2::loadState(SaveState const &state) {
 	master_ = state.spu.ch2.master;
 }
 
-void Channel2::update(uint_least32_t *buf, unsigned long const soBaseVol, unsigned long cc, unsigned long const end) {
-	unsigned long const outBase = envelopeUnit_.dacIsOn() ? soBaseVol & soMask_ : 0;
-	unsigned long const outLow = outBase * -15;
+void Channel2::update(uint_least32_t *buf, gb_ulong const soBaseVol, gb_ulong cc, gb_ulong const end) {
+	gb_ulong const outBase = envelopeUnit_.dacIsOn() ? soBaseVol & soMask_ : 0;
+	gb_ulong const outLow = outBase * -15;
 
 	while (cc < end) {
-		unsigned long const outHigh = master_
-			? outBase * (envelopeUnit_.getVolume() * 2l - 15)
+		gb_ulong const outHigh = master_
+			? outBase * (envelopeUnit_.getVolume() * 2 - 15)
 			: outLow;
-		unsigned long const nextMajorEvent = std::min(nextEventUnit->counter(), end);
-		unsigned long out = dutyUnit_.isHighState() ? outHigh : outLow;
+		gb_ulong const nextMajorEvent = std::min(nextEventUnit->counter(), end);
+		gb_ulong out = dutyUnit_.isHighState() ? outHigh : outLow;
 
 		while (dutyUnit_.counter() <= nextMajorEvent) {
 			*buf += out - prevOut_;

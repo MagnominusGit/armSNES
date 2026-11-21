@@ -35,20 +35,20 @@ public:
 	bool isActive() const { return master_; }
 	bool isCgb() const { return cgb_; }
 	void reset();
-	void resetCc(unsigned long cc, unsigned long newCc);
+	void resetCc(gb_ulong cc, gb_ulong newCc);
 	void init(bool cgb, bool agb);
 	void setStatePtrs(SaveState &state);
 	void saveState(SaveState &state) const;
 	void loadState(SaveState const &state);
-	void setNr0(unsigned data, unsigned long cc, unsigned short pc);
-	void setNr1(unsigned data, unsigned long cc) { lengthCounter_.nr1Change(data, nr4_, cc); }
+	void setNr0(unsigned data, gb_ulong cc, unsigned short pc);
+	void setNr1(unsigned data, gb_ulong cc) { lengthCounter_.nr1Change(data, nr4_, cc); }
 	void setNr2(unsigned data);
 	void setNr3(unsigned data) { nr3_ = data; }
-	void setNr4(unsigned data, unsigned long cc);
-	void setSo(unsigned long soMask);
-	void update(uint_least32_t *buf, unsigned long soBaseVol, unsigned long cc, unsigned long end);
+	void setNr4(unsigned data, gb_ulong cc);
+	void setSo(gb_ulong soMask);
+	void update(uint_least32_t *buf, gb_ulong soBaseVol, gb_ulong cc, gb_ulong end);
 
-	unsigned waveRamRead(unsigned index, unsigned long cc) const {
+	unsigned waveRamRead(unsigned index, gb_ulong cc) const {
 		if (master_) {
 			if (agb_ || (!cgb_ && cc != lastReadTime_))
 				return 0xFF;
@@ -59,7 +59,7 @@ public:
 		return waveRam_[index];
 	}
 
-	void waveRamWrite(unsigned index, unsigned data, unsigned long cc) {
+	void waveRamWrite(unsigned index, unsigned data, gb_ulong cc) {
 		if (master_) {
 			if (agb_ || (!cgb_ && cc != lastReadTime_))
 				return;
@@ -75,7 +75,7 @@ public:
 private:
 	class Ch3MasterDisabler : public MasterDisabler {
 	public:
-		Ch3MasterDisabler(bool &m, unsigned long &wC) : MasterDisabler(m), waveCounter_(wC) {}
+		Ch3MasterDisabler(bool &m, gb_ulong &wC) : MasterDisabler(m), waveCounter_(wC) {}
 
 		virtual void operator()() {
 			MasterDisabler::operator()();
@@ -83,16 +83,16 @@ private:
 		}
 
 	private:
-		unsigned long &waveCounter_;
+		gb_ulong &waveCounter_;
 	};
 
 	unsigned char waveRam_[0x10];
 	Ch3MasterDisabler disableMaster_;
 	LengthCounter lengthCounter_;
-	unsigned long soMask_;
-	unsigned long prevOut_;
-	unsigned long waveCounter_;
-	unsigned long lastReadTime_;
+	gb_ulong soMask_;
+	gb_ulong prevOut_;
+	gb_ulong waveCounter_;
+	gb_ulong lastReadTime_;
 	unsigned char nr0_;
 	unsigned char nr3_;
 	unsigned char nr4_;
@@ -104,7 +104,7 @@ private:
 	bool cgb_;
 	bool agb_;
 
-	void updateWaveCounter(unsigned long cc);
+	void updateWaveCounter(gb_ulong cc);
 
 	inline unsigned char waveSample(unsigned pos, unsigned char s, unsigned char rsh) const {
 		return (pos % 2 ? s & 0xF : s >> 4) >> rsh;

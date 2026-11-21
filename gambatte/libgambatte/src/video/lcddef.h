@@ -29,7 +29,7 @@ enum {
 	lcd_cycles_per_line = 456,
 	lcd_force_signed_enum1 = -1 };
 enum {
-	lcd_cycles_per_frame = 1l * lcd_lines_per_frame * lcd_cycles_per_line,
+	lcd_cycles_per_frame = 1 * lcd_lines_per_frame * lcd_cycles_per_line,
 	lcd_force_signed_enum2 = -1 };
 
 }

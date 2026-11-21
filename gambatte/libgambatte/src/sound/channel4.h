@@ -33,18 +33,19 @@ struct SaveState;
 class Channel4 {
 public:
 	Channel4();
-	void setNr1(unsigned data, unsigned long cc);
-	void setNr2(unsigned data, unsigned long cc);
-	void setNr3(unsigned data, unsigned long cc) { lfsr_.nr3Change(data, cc); }
-	void setNr4(unsigned data, unsigned long cc);
-	void setSo(unsigned long soMask, unsigned long cc);
+	void setNr1(unsigned data, gb_ulong cc);
+	void setNr2(unsigned data, gb_ulong cc);
+	void setNr3(unsigned data, gb_ulong cc) { lfsr_.nr3Change(data, cc); }
+	void setNr4(unsigned data, gb_ulong cc);
+	void setSo(gb_ulong soMask, gb_ulong cc);
 	unsigned char getVolume() const { return vol_; }
 	bool isActive() const { return master_; }
-	void update(uint_least32_t *buf, unsigned long soBaseVol, unsigned long cc, unsigned long end);
-	void reset(unsigned long cc);
-	void resetCc(unsigned long cc, unsigned long newCc) { lfsr_.resetCc(cc, newCc); }
-	void saveState(SaveState &state, unsigned long cc);
+	void update(uint_least32_t *buf, gb_ulong soBaseVol, gb_ulong cc, gb_ulong end);
+	void reset(gb_ulong cc);
+	void resetCc(gb_ulong cc, gb_ulong newCc) { lfsr_.resetCc(cc, newCc); }
+	void saveState(SaveState &state, gb_ulong cc);
 	void loadState(SaveState const &state);
+	void restoreCounting(SaveState const &state) { lfsr_.restoreCounting(state.spu.ch4.lfsr.counting); }
 	template<bool isReader>void SyncState(NewState *ns);
 
 private:
@@ -52,27 +53,28 @@ private:
 	public:
 		Lfsr();
 		virtual void event();
-		virtual void resetCounters(unsigned long oldCc);
+		virtual void resetCounters(gb_ulong oldCc);
 		bool isHighState() const { return ~reg_ & 1; }
-		bool isHighState(unsigned long cc);
-		void nr3Change(unsigned newNr3, unsigned long cc);
-		void nr4Init(unsigned long cc);
-		void reset(unsigned long cc);
-		void resetCc(unsigned long cc, unsigned long newCc);
-		void saveState(SaveState &state, unsigned long cc);
+		bool isHighState(gb_ulong cc);
+		void nr3Change(unsigned newNr3, gb_ulong cc);
+		void nr4Init(gb_ulong cc);
+		void reset(gb_ulong cc);
+		void resetCc(gb_ulong cc, gb_ulong newCc);
+		void saveState(SaveState &state, gb_ulong cc);
 		void loadState(SaveState const &state);
 		void disableMaster() { killCounter(); master_ = false; reg_ = 0x7FFF; }
 		void killCounter() { counter_ = counter_disabled; }
-		void reviveCounter(unsigned long cc);
+		void restoreCounting(unsigned char counting);
+		void reviveCounter(gb_ulong cc);
 		template<bool isReader>void SyncState(NewState *ns);
 
 	private:
-		unsigned long backupCounter_;
+		gb_ulong backupCounter_;
 		unsigned short reg_;
 		unsigned char nr3_;
 		bool master_;
 
-		void updateBackupCounter(unsigned long cc);
+		void updateBackupCounter(gb_ulong cc);
 	};
 
 	class Ch4MasterDisabler : public MasterDisabler {
@@ -92,8 +94,8 @@ private:
 	EnvelopeUnit envelopeUnit_;
 	Lfsr lfsr_;
 	SoundUnit *nextEventUnit_;
-	unsigned long soMask_;
-	unsigned long prevOut_;
+	gb_ulong soMask_;
+	gb_ulong prevOut_;
 	unsigned char nr4_;
 	unsigned char vol_;
 	bool master_;

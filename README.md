@@ -78,7 +78,9 @@ with Layer Selection or Channel Selection on.
 | | Super Game Boy Border | Shown, Hidden |
 | | Deep Black Boost | Off, On |
 | | Hi-Res Blending | Off, On, Merge |
-| | HD Mode 7 (Fast) | Off, 2x, 3x, 4x |
+| | NTSC/PAL Filter | Off, Composite, S-Video |
+| | Scanlines (with the filter) | Off, Light, Medium, Dark |
+| | HD Mode 7 (Fast, without the filter) | Off, 2x, 3x, 4x |
 | | Widescreen (Fast and Balanced) | Off, 16:10, 16:9, 2:1, 21:9 |
 | | Widescreen Layers | Mode 7 only, All |
 | | Widescreen Sprites | Hidden, Shown |
@@ -109,6 +111,10 @@ Widescreen adds columns on each side, drawn from the game's own layers past the 
 default only on Mode 7 lines, the others keeping black sides, or on every line for games patched for
 widescreen. A background one screen wide that isn't scrolled, usually the status bar, stays in the
 middle. HD Mode 7 draws Mode 7 lines at two to four times the resolution.
+
+The NTSC/PAL Filter is armNES's: the picture as a TV decoded the console's composite or S-Video
+signal, three pixels to each of the console's, with its color fringes, blended dithering and blurred
+hi-res. Each line is given twice, the second darkened by the Scanlines option.
 
 Layer Selection and Channel Selection, at the end of Video and Audio, hide parts of the picture or
 switch off sound channels, to see or hear one on its own: for ripping graphics or music, or a closer

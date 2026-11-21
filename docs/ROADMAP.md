@@ -164,6 +164,10 @@ together as usual and then again without them for the picture, so the game runs 
 hidden. Channel Selection shows a switch for each voice, the Game Boy and the MSU-1, which keeps the
 volume set above for when it's back on.
 
+The NTSC/PAL filter and scanlines are armNES's. The SNES encodes RGB, so the filter's tables are per
+red, green and blue value instead of per palette entry, and a hires pixel is half a column; the
+carrier steps by the same samples a pixel and a line as on the NES.
+
 The standalone app is Armulators' (the `armulators` submodule), as armGBA, armNES and armN64 have it,
 with armSNES's names, systems and achievement hook. Without a controller menu of its own, it plugs
 controllers in through the Port 1 and Port 2 Device options, which a frontend's own choice overrides.

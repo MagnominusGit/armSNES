@@ -4,6 +4,7 @@
 #include "libretro.h"
 #include "snes.h"
 #include "fastppu.h"
+#include "composite.h"
 #include "options.h"
 #include "chips/gb.h"
 
@@ -334,6 +335,40 @@ static bool movedWide[OUTPUT_HEIGHT];
 
 static bool overscanShown;
 
+// The NTSC/PAL filter, and how much of a line's brightness the scanline below it keeps, in 256ths.
+static int filter;
+static u32 scanlines = 256;
+static bool frameField;
+static u16 filtered[COMPOSITE_SCALE * WIDE_COLUMNS * OUTPUT_HEIGHT];
+
+// The frame's picture as a TV decoded it, three pixels to a column: each line twice, the second dimmed
+// as the scanline, or an interlaced picture's lines once, each field on its own.
+static void filterFrame(void) {
+	u32 width = frameColumns * COMPOSITE_SCALE;
+	bool hires = outputWidth == 2 * frameColumns, interlace = frameScaleY == 2;
+	u32 fields = interlace ? 2 : 1, lines = outputHeight / fields;
+	for (u32 field = 0; field < fields; ++field) {
+		for (u32 n = 0; n < lines; ++n) {
+			u32 row = n * fields + field;
+			u16* to = &filtered[(interlace ? row : 2 * n) * width];
+			u32 shift = interlace || sys.pal ? field : frameField;
+			compositeLine(filter, sys.pal, n, shift, &framePicture[row * framePitch], frameColumns, hires, to);
+			if (interlace) {
+				continue;
+			}
+			for (u32 x = 0; x < width; ++x) {
+				u32 p = to[x];
+				to[width + x] = (u16) (((p >> 11) * scanlines >> 8) << 11 | (((p >> 5) & 63) * scanlines >> 8) << 5 | (p & 31) * scanlines >> 8);
+			}
+		}
+	}
+	framePicture = filtered;
+	framePitch = width;
+	frameScaleY = 2;
+	outputWidth = width;
+	outputHeight = lines * 2;
+}
+
 static void blendRow(u16* row) {
 	for (u32 n = 0; n < OUTPUT_WIDTH / 2; ++n) {
 		u16 a = row[2 * n], b = row[2 * n + 1];
@@ -420,6 +455,7 @@ void videoFrame(const u32* canvas) {
 	frameScaleY = yScale;
 	frameColumns = 256;
 	frameExtension = 0;
+	frameField = ppu.counter.field;
 	if (sameCrop && !interlace) {
 		hdFrame(y, h);
 	}
@@ -1093,6 +1129,14 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"The two halves of each hi-res pixel averaged, as a TV blended them: some games draw see-through "
 		"effects that way. Merge also makes the picture 256 pixels wide, for small screens.",
 		NULL, "video", { { "Off", NULL }, { "On", NULL }, { "Merge", NULL }, { NULL, NULL } }, "Off" },
+	{ "armsnes_filter", "NTSC/PAL Filter", NULL,
+		"The picture as a TV decoded the console's video signal: Composite, with its color fringes and blended "
+		"dithering, or the sharper S-Video. Takes more CPU time; HD Mode 7 is off with it.",
+		NULL, "video", { { "Off", NULL }, { "Composite", NULL }, { "S-Video", NULL }, { NULL, NULL } }, "Off" },
+	{ "armsnes_scanlines", "Scanlines", NULL,
+		"Dark rows between the filtered picture's lines, as a CRT's beam left them. Best with integer scaling "
+		"or a smooth filter in the frontend.",
+		NULL, "video", { { "Off", NULL }, { "Light", NULL }, { "Medium", NULL }, { "Dark", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_hd_mode7", "HD Mode 7", NULL,
 		"Mode 7's rotated and scaled layer drawn 2 to 4 times finer each way, the rest of the picture as it "
 		"is. Each step takes much more time. Fast mode only.",
@@ -1208,7 +1252,7 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 
 static struct retro_core_option_v2_category categories[] = {
 	{ "system", "System", "The core's mode, threads and frame skip, the console's region, its memory at power-on and its chips' speeds." },
-	{ "video", "Video", "The picture's shape, edges and colors, and which layers it shows." },
+	{ "video", "Video", "The picture's shape, edges and colors, the TV filter, and which layers it shows." },
 	{ "audio", "Audio", "The sound chip's interpolation, each voice's volume and the cartridge's own sound, and which channels play." },
 	{ "input", "Input", "Turbo, the D-pad and rumble." },
 	{ "aim", "Light Guns and Mouse",
@@ -1236,7 +1280,9 @@ static bool showOptions(void) {
 	} shown[] = {
 		{ "armsnes_threads", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_frame_skip", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
-		{ "armsnes_hd_mode7", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
+		{ "armsnes_hd_mode7", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") &&
+		                          optionIs(environment, "armsnes_filter", "Off") },
+		{ "armsnes_scanlines", !optionIs(environment, "armsnes_filter", "Off") },
 		{ "armsnes_sprite_limit", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_widescreen", !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_widescreen_layers", wide },
@@ -1424,7 +1470,7 @@ static float aspectOf(u32 width, u32 lines) {
 }
 
 static unsigned maxWidth(void) {
-	unsigned hd = wideColumns * (hdScale > 2 ? hdScale : 2);
+	unsigned hd = wideColumns * (filter ? COMPOSITE_SCALE : hdScale > 2 ? hdScale : 2);
 	return hd > OUTPUT_WIDTH ? hd : OUTPUT_WIDTH;
 }
 
@@ -1654,6 +1700,9 @@ void retro_run(void) {
 	systemRunFrame();
 
 	if (outputReady) {
+		if (filter) {
+			filterFrame();
+		}
 		if (inputGuns && crosshair) {
 			drawCrosshairs();
 		}
@@ -1799,7 +1848,11 @@ static void readOptions(void) {
 	}
 	static const struct OptionChoice hdScales[] = { { "2x", 2 }, { "3x", 3 }, { "4x", 4 } };
 	unsigned largest = maxWidth() * maxHeight();
-	hdScale = ppuHdScale = (u8) optionChoice(environment, "armsnes_hd_mode7", hdScales, 3, 0);
+	static const struct OptionChoice filters[] = { { "Composite", COMPOSITE }, { "S-Video", COMPOSITE_SVIDEO } };
+	filter = optionChoice(environment, "armsnes_filter", filters, 2, COMPOSITE_OFF);
+	static const struct OptionChoice darkness[] = { { "Light", 192 }, { "Medium", 128 }, { "Dark", 64 } };
+	scanlines = (u32) optionChoice(environment, "armsnes_scanlines", darkness, 3, 256);
+	hdScale = ppuHdScale = filter ? 0 : (u8) optionChoice(environment, "armsnes_hd_mode7", hdScales, 3, 0);
 	// Widescreen: the columns each side that make the picture that wide, by the pixels' shape, rounded to
 	// 16.
 	static const struct OptionChoice ratios[] = { { "16:10", 1600 }, { "16:9", 1778 }, { "2:1", 2000 }, { "21:9", 2333 } };

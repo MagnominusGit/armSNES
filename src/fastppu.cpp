@@ -112,7 +112,7 @@ FastPpuLine Scratch;
 void Draw(const FastPpuLine* l, unsigned id)
 {
  const bool block = HdSink && l->out && (l->hdScale > 1 || l->wide);
- if(!block || !l->wide)
+ if(!block || (!l->wide && !l->blockOnly))
  {
   const uint32* pixels = LineFor[Avx2][id](l, Sink != NULL);
   if(Sink && l->out)

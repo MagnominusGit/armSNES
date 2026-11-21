@@ -3810,7 +3810,7 @@ static void fetchWideSprites(void) {
 }
 
 // Fast mode: a whole line by snes_faust's renderer, from the registers as they are now. With sides, only
-// widescreen's sides are wanted from it: the S-PPU draws the line.
+// widescreen's sides or HD mode 7's finer line are wanted from it: the S-PPU draws the line.
 static void fastWholeLine(bool sides) {
 	if (ppuSkipPicture) {
 		moreSpritesReady = false;
@@ -3911,10 +3911,11 @@ static void fastWholeLine(bool sides) {
 	}
 	// The first column's sub screen pixel of a line twice as wide is black.
 	line->hiresFirstBlack = !line->blank && (ppu.io.bgMode == 5 || ppu.io.pseudoHires);
-	line->hdScale = systemFast && ppuHdScale > 1 && ppu.io.bgMode == 7 && !line->blank && !ppu.io.interlace ? ppuHdScale : 0;
+	line->hdScale = ppuHdScale > 1 && ppu.io.bgMode == 7 && !line->blank && !ppu.io.interlace ? ppuHdScale : 0;
 	line->wide = ppu.io.interlace ? 0 : ppuWide;
 	line->wideLayers = ppuWideAll || ppu.io.bgMode == 7;
 	line->wideSprites = ppuWideSprites;
+	line->blockOnly = sides;
 	fastPpuSubmit(line);
 }
 
@@ -3946,8 +3947,10 @@ static void renderSpan(u32 start, u32 end) {
 			}
 		}
 	}
-	// Balanced with widescreen: the line renderer draws the sides, from the registers as the line starts.
-	if (systemBalanced && ppuWide && start == 0 && VCOUNTER != 0 && !ppu.io.interlace && (ppuWideAll || ppu.io.bgMode == 7)) {
+	// Balanced with widescreen or HD mode 7: the line renderer draws the sides or the finer mode 7 line,
+	// from the registers as the line starts.
+	bool hd = !systemFast && ppuHdScale > 1 && ppu.io.bgMode == 7;
+	if (systemBalanced && start == 0 && VCOUNTER != 0 && !ppu.io.interlace && ((ppuWide && (ppuWideAll || ppu.io.bgMode == 7)) || hd)) {
 		fastWholeLine(true);
 	}
 

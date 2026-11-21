@@ -55,6 +55,7 @@ struct FastPpuLine {
 	uint8_t wide;           // widescreen: columns added each side, a multiple of 16, or 0
 	bool wideLayers;        // the added columns drawn, else black
 	bool wideSprites;       // sprites drawn in them, else only in the console's 256
+	bool blockOnly;         // only the HD sink's block: the S-PPU draws the line (Balanced)
 
 	uint32_t spriteCount;
 	// 34 as the S-PPU fetches them, more when its limits are lifted (ppuNoSpriteLimit).

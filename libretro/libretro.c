@@ -211,7 +211,7 @@ static void lineDrawn(u32* at, const u32* pixels) {
 enum { BLEND_OFF, BLEND_ON, BLEND_MERGE };
 static int hiresBlend;
 
-// HD mode 7 and widescreen (Fast mode): a frame with mode 7 lines is given hdScale times larger each
+// HD mode 7 and widescreen (Fast and Balanced modes): a frame with mode 7 lines is given hdScale times larger each
 // way, those lines drawn finer (fastPpuSetHdSink) and the others' pixels made larger; a widescreen
 // frame is given with its columns more each side. Two pictures, as with outputs.
 enum { WIDE_COLUMNS = 256 + 2 * FAST_PPU_WIDE_MOST, HD_WIDTH = WIDE_COLUMNS * 4, HD_HEIGHT = 239 * 4 };
@@ -1158,7 +1158,8 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		NULL, "video", { { "Off", NULL }, { "Light", NULL }, { "Medium", NULL }, { "Dark", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_hd_mode7", "HD Mode 7", NULL,
 		"Mode 7's rotated and scaled layer drawn 2 to 4 times finer each way, the rest of the picture as it "
-		"is. Each step takes much more time. Fast mode only.",
+		"is. Each step takes much more time. Fast and Balanced modes (Balanced draws mode 7 lines with Fast "
+		"mode's renderer, from each line's registers as it starts).",
 		NULL, "video", { { "Off", NULL }, { "2x", NULL }, { "3x", NULL }, { "4x", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_widescreen", "Widescreen", NULL,
 		"Columns added each side to fill a wider screen, of the ratio picked with the Aspect Ratio option's "
@@ -1303,8 +1304,7 @@ static bool showOptions(void) {
 	} shown[] = {
 		{ "armsnes_threads", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_frame_skip", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
-		{ "armsnes_hd_mode7", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") &&
-		                          optionIs(environment, "armsnes_filter", "Off") },
+		{ "armsnes_hd_mode7", !optionIs(environment, "armsnes_mode", "Exact") && optionIs(environment, "armsnes_filter", "Off") },
 		{ "armsnes_scanlines", !optionIs(environment, "armsnes_filter", "Off") },
 		{ "armsnes_sprite_limit", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_widescreen", !optionIs(environment, "armsnes_mode", "Exact") },

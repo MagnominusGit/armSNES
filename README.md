@@ -45,7 +45,7 @@ the others, and states are the same on ARM and x86, so run-ahead and netplay wor
 | A, B, X, Y, L, R, Select, Start, D-pad | The controller's own |
 | R2 | Fast-forward while held, outside netplay |
 | L2 | Fast-forward too; fine aim while a light gun or the mouse aims with the right stick |
-| L3, R3 | L and R with turbo, at the L and R Turbo Period |
+| L3, R3 | L and R with turbo, at the Turbo L and R Period |
 | Right stick | A, B, X and Y with turbo, pushed toward where each sits on the pad: up X, right A, down B, left Y |
 | Left stick | The D-pad too, unless Left Stick as D-Pad is off |
 
@@ -96,8 +96,8 @@ with Layer Selection or Channel Selection on.
 | | Channel Selection | Off, On (shows the switches below; Off plays everything) |
 | | Game Boy, MSU-1, Voice 1 to 8 | On, Off (a channel keeps its volume for when it's back on) |
 | Input | Turbo Buttons | Off, A, B, X, Y, A and B, X and Y, all four |
-| | Turbo Period (A, B, X, Y) | 4 frames, 2 to 60 frames |
-| | L and R Turbo Period (L3, R3) | 4 frames, 2 to 60 frames |
+| | Turbo Button Period (A, B, X, Y) | 4 frames, 2 to 60 frames |
+| | Turbo L and R Period (L3, R3) | 4 frames, 2 to 60 frames |
 | | Allow Opposing Directions | Off, On |
 | | Left Stick as D-Pad | On, Off |
 | | Port 1 Device, Port 2 Device (where the frontend has no controller menu) | SNES Controller, SNES Mouse, Super Multitap, NTT Data Keypad, Twin Tap, None; Super Scope, Justifier, Two Justifiers in port 2 |

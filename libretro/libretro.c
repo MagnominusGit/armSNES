@@ -1532,13 +1532,19 @@ static float aspectOf(u32 width, u32 lines) {
 	return (float) (width * pixel / lines);
 }
 
-// Room for every HD scale up to hdMost, widescreen and the filter, so none of them needs new AV info.
+// The console's picture, until the options make one larger: then room for every HD scale up to hdMost,
+// widescreen and the filter at once, so the frontend's buffers grow only once in a game.
+static bool pictureFits(void) {
+	return wideColumns * (filter ? COMPOSITE_SCALE : hdScale > 2 ? hdScale : 2) <= OUTPUT_WIDTH &&
+	       (hdScale > 2 ? 239u * hdScale : OUTPUT_HEIGHT) <= OUTPUT_HEIGHT;
+}
+
 static unsigned maxWidth(void) {
-	return WIDE_COLUMNS * hdMost;
+	return pictureFits() ? OUTPUT_WIDTH : WIDE_COLUMNS * hdMost;
 }
 
 static unsigned maxHeight(void) {
-	return 239u * hdMost;
+	return pictureFits() ? OUTPUT_HEIGHT : 239u * hdMost;
 }
 
 // The part of the output shown: the crops, or the Game Boy's screen without the Super Game Boy's border.

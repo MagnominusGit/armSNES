@@ -1126,40 +1126,37 @@ static void drawCrosshairs(void) {
 
 static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armsnes_mode", "Mode", NULL,
-		"Exact runs as ares does, clock for clock. Balanced gives the same results with coarser timing, "
-		"faster. Fast draws the picture with its own renderer, fastest; its timing differences are too small "
-		"to see. Saved states load in any mode.",
+		"Exact: clock for clock, as ares. Balanced: same results, faster. Fast: its own renderer, fastest; "
+		"differences too small to see. States load in any mode.",
 		NULL, "system", { { "Fast", NULL }, { "Balanced", NULL }, { "Exact", NULL }, { NULL, NULL } }, "Fast" },
 	{ "armsnes_threads", "Fast Mode Threads", NULL,
-		"Fast mode's sound and picture on threads of their own, as the device's cores allow. Picture Only "
-		"keeps the sound on the main thread, Off keeps both there, for devices whose cores are busy.",
+		"Fast mode's sound and picture on threads of their own. Picture Only keeps sound on the main thread; "
+		"Off keeps both there, for busy devices.",
 		NULL, "system", { { "All", NULL }, { "Picture Only", NULL }, { "Off", NULL }, { NULL, NULL } }, "All" },
 	{ "armsnes_frame_skip", "Frame Skip", NULL,
-		"Skips drawing frames to keep up: Auto when the sound is about to run short, or this many after each "
-		"frame shown. Fast mode only, not in netplay.",
+		"Skips drawing frames to keep up: Auto when sound runs short, or this many after each frame shown. "
+		"Fast mode only; not in netplay.",
 		NULL, "system", { { "Off", NULL }, { "Auto", NULL }, { "1", NULL }, { "2", NULL }, { "3", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_region", "Region", NULL,
-		"The console's region: NTSC at 60 frames a second, PAL at 50. Auto follows the game's header. Changing "
-		"it restarts the game.",
+		"NTSC (60 fps) or PAL (50 fps). Auto follows the game's header. Changing it restarts the game.",
 		NULL, "system", { { "Auto", NULL }, { "NTSC", NULL }, { "PAL", NULL }, { NULL, NULL } }, "Auto" },
 	{ "armsnes_power_on_ram", "Power-On RAM", NULL,
-		"The work RAM as the console is switched on: all zero, which some unlicensed games and prototypes "
-		"need, or ares's stripes of two values.",
+		"Work RAM at power-on: all zero (some unlicensed games and prototypes need it), or ares's stripes.",
 		NULL, "system", { { "Cleared", NULL }, { "Patterned", NULL }, { NULL, NULL } }, "Cleared" },
 	{ "armsnes_cpu_clock", "CPU Clock", NULL,
-		"The console's CPU speed. Above 100% less slowdown; above 200% some games don't start.",
+		"Above 100%: less slowdown. Above 200%: some games don't start.",
 		NULL, "system", CLOCK_VALUES, "100%" },
 	{ "armsnes_superfx_clock", "Super FX Clock", NULL,
-		"The Super FX chip's speed, for its games: above 100% a smoother frame rate.",
+		"Above 100%: smoother frame rate in Super FX games.",
 		NULL, "system", CLOCK_VALUES, "100%" },
 	{ "armsnes_sa1_clock", "SA-1 Clock", NULL,
-		"The SA-1 chip's speed, for its games: above 100% less slowdown.",
+		"Above 100%: less slowdown in SA-1 games.",
 		NULL, "system", CLOCK_VALUES, "100%" },
 	{ "armsnes_aspect", "Aspect Ratio", NULL,
-		"The console's own pixel shape (8:7, about 11:8 on PAL), 4:3 as a TV showed it, or square pixels.",
+		"The console's pixel shape (8:7, about 11:8 on PAL), 4:3 as on a TV, or square.",
 		NULL, "video", { { "8:7 PAR", "Console pixels (8:7)" }, { "4:3", NULL }, { "1:1", "Square pixels" }, { NULL, NULL } }, "8:7 PAR" },
 	{ "armsnes_overscan", "Overscan Lines", NULL,
-		"The 15 lines more a game in overscan mode draws, which an NTSC TV hid. PAL shows them always.",
+		"The 15 extra lines overscan games draw, hidden on NTSC TVs. Always shown on PAL.",
 		NULL, "video", { { "Hidden", NULL }, { "Shown", NULL }, { NULL, NULL } }, "Hidden" },
 	{ "armsnes_crop_vertical", "Crop Top and Bottom", NULL,
 		"Pixels hidden at the top and bottom.",
@@ -1168,61 +1165,55 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"Pixels hidden at the left and right edges.",
 		NULL, "video", { { "0", NULL }, { "4", NULL }, { "8", NULL }, { "12", NULL }, { "16", NULL }, { NULL, NULL } }, "0" },
 	{ "armsnes_sgb_border", "Super Game Boy Border", NULL,
-		"The border round a Game Boy game, or the Game Boy's screen alone.",
+		"The border around a Game Boy game, or the Game Boy screen alone.",
 		NULL, "video", { { "Shown", NULL }, { "Hidden", NULL }, { NULL, NULL } }, "Shown" },
 	{ "armsnes_deep_black_boost", "Deep Black Boost", NULL,
-		"Dark colors darker, as a TV's gamma showed them (ares's option of the name).",
+		"Darker dark colors, as a TV's gamma showed them (ares's option).",
 		NULL, "video", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_hires_blend", "Hi-Res Blending", NULL,
-		"The two halves of each hi-res pixel averaged, as a TV blended them: some games draw see-through "
-		"effects that way. Merge also makes the picture 256 pixels wide, for small screens.",
+		"Averages each hi-res pixel pair, as a TV did; some see-through effects need it. Merge also makes the "
+		"picture 256 wide, for small screens.",
 		NULL, "video", { { "Off", NULL }, { "On", NULL }, { "Merge", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_filter", "NTSC/PAL Filter", NULL,
-		"The picture as a TV decoded the console's video signal: Composite, with its color fringes and blended "
-		"dithering, or the sharper S-Video. Takes more CPU time; HD Mode 7 is off with it.",
+		"The picture as a TV decoded it: Composite (color fringes, blended dithering) or sharper S-Video. "
+		"Uses more CPU; turns HD Mode 7 off.",
 		NULL, "video", { { "Off", NULL }, { "Composite", NULL }, { "S-Video", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_scanlines", "Scanlines", NULL,
-		"Dark rows between the filtered picture's lines, as a CRT's beam left them. Best with integer scaling "
-		"or a smooth filter in the frontend.",
+		"Dark rows between the filtered picture's lines, like a CRT. Best with integer scaling or a smooth "
+		"frontend filter.",
 		NULL, "video", { { "Off", NULL }, { "Light", NULL }, { "Medium", NULL }, { "Dark", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_hd_mode7", "HD Mode 7", NULL,
-		"Mode 7's rotated and scaled layer drawn 2 to 8 times finer each way, the rest of the picture as it "
-		"is. Each step takes much more time. 5x to 8x need Enable HD Scales, and are 4x without it. Fast and "
-		"Balanced modes (Balanced draws mode 7 lines with Fast mode's renderer, from each line's registers as "
-		"it starts).",
+		"Draws Mode 7's rotated, scaled layer 2x to 8x finer. Each step costs much more time. 5x to 8x need "
+		"Enable HD Scales. Fast and Balanced modes.",
 		NULL, "video", { { "Off", NULL }, { "2x", NULL }, { "3x", NULL }, { "4x", NULL }, { "5x", NULL }, { "6x", NULL }, { "7x", NULL },
 		  { "8x", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_hd_scales", "Enable HD Scales", NULL,
-		"Makes room for HD Mode 7 at 5x to 8x, about four times the memory of 4x. Takes effect when a game is "
-		"next started.",
+		"Room for HD Mode 7 at 5x to 8x, about four times 4x's memory. Applies when a game next starts.",
 		NULL, "video", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_hd_mode7_perspective", "HD Mode 7 Perspective Correction", NULL,
-		"Smooths the slopes and horizon of a tilted mode 7 plane, as in racing games, by carrying each line's "
-		"change on through its HD rows. Off if a game looks wrong with it.",
+		"Smooths the slopes and horizon of tilted Mode 7 planes, as in racing games. Turn off if a game looks "
+		"wrong.",
 		NULL, "video", { { "On", NULL }, { "Off", NULL }, { NULL, NULL } }, "On" },
 	{ "armsnes_widescreen", "Widescreen", NULL,
-		"Columns added each side to fill a wider screen, of the ratio picked with the Aspect Ratio option's "
-		"pixel shape. The console draws 256: past them, a layer shows what the game left in video memory, "
-		"which looks right on mode 7's plane, often wrong elsewhere unless the game is patched for it. "
-		"Fast and Balanced modes (Balanced draws the sides with Fast mode's renderer, from each line's "
-		"registers as it starts); not with the Super Game Boy or interlaced pictures.",
+		"Adds columns each side to fill a wider screen. Past the console's 256, layers show leftover video "
+		"memory: right on Mode 7 planes, often wrong elsewhere unless the game is patched. Fast and Balanced "
+		"modes; not with the Super Game Boy or interlaced pictures.",
 		NULL, "video", { { "Off", NULL }, { "16:10", NULL }, { "16:9", NULL }, { "2:1", NULL }, { "21:9", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_widescreen_layers", "Widescreen Layers", NULL,
-		"Mode 7 only keeps other lines (and status bars) at the console's width, with black at the sides. All "
-		"widens every line, for games patched for widescreen.",
+		"Mode 7 only keeps other lines and status bars at console width, black at the sides. All widens every "
+		"line, for widescreen-patched games.",
 		NULL, "video", { { "Mode 7 only", NULL }, { "All", NULL }, { NULL, NULL } }, "Mode 7 only" },
 	{ "armsnes_widescreen_sprites", "Widescreen Sprites", NULL,
-		"Sprites past the console's 256 columns: hidden, as the console has them, or shown. Games often leave "
-		"sprites there they don't expect to be seen.",
+		"Sprites past the console's 256 columns: hidden as on the console, or shown. Games often park sprites "
+		"there.",
 		NULL, "video", { { "Hidden", NULL }, { "Shown", NULL }, { NULL, NULL } }, "Hidden" },
 	{ "armsnes_sprite_limit", "Sprite Limit", NULL,
-		"The console shows 32 sprites and 34 sprite tiles on a line, which games turn into flicker or gaps. "
-		"No limit shows them all; games still see the console's limit. Fast mode only.",
+		"The console shows 32 sprites (34 tiles) a line, causing flicker or gaps. No limit shows them all; "
+		"games still see the limit. Fast mode only.",
 		NULL, "video", { { "32 per line", NULL }, { "No limit", NULL }, { NULL, NULL } }, "32 per line" },
 	{ "armsnes_layer_selection", "Layer Selection", NULL,
-		"Shows switches below that hide the backgrounds, the sprites or color math, to see one on its own: for "
-		"ripping graphics or a closer look. Only the picture changes; the game plays on the same, so run-ahead "
-		"and states aren't affected. Off shows everything.",
+		"Shows switches to hide backgrounds, sprites or color math, for ripping graphics. Only the picture "
+		"changes; run-ahead and states aren't affected.",
 		NULL, "video", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	LAYER_OPTION("bg1", "Background 1", "Which background is the playfield, the scenery or the status bar differs from game to game."),
 	LAYER_OPTION("bg2", "Background 2", NULL),
@@ -1231,26 +1222,24 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	LAYER_OPTION("sprites", "Sprites", "Characters, enemies and shots."),
 	LAYER_OPTION("color_math", "Color Math", "Transparency and the other blends of the two screens. Hidden shows the main screen alone."),
 	{ "armsnes_interpolation", "Interpolation", NULL,
-		"How the sound chip smooths its samples: Gaussian as the console does, or sharper. Only what is heard "
-		"changes; the echo keeps the console's.",
+		"How the sound chip smooths samples: Gaussian as on the console, or sharper. The echo keeps the "
+		"console's.",
 		NULL, "audio", { { "Gaussian", NULL }, { "Cubic", NULL }, { "Linear", NULL }, { "None", NULL }, { NULL, NULL } }, "Gaussian" },
 	{ "armsnes_volume_gameboy", "Game Boy Volume", NULL, "The Super Game Boy's Game Boy sound.", NULL, "audio", VOLUME_VALUES, "100%" },
 	{ "armsnes_volume_msu1", "MSU-1 Volume", NULL, "An MSU-1 game's music and sound tracks.", NULL, "audio", VOLUME_VALUES, "100%" },
 	VOICE_OPTION(1), VOICE_OPTION(2), VOICE_OPTION(3), VOICE_OPTION(4),
 	VOICE_OPTION(5), VOICE_OPTION(6), VOICE_OPTION(7), VOICE_OPTION(8),
 	{ "armsnes_channel_selection", "Channel Selection", NULL,
-		"Shows a switch below for each voice and sound source, to hear one or a few on their own: for ripping "
-		"music or a closer listen. A channel switched off keeps its volume for when it's back on, and a voice's "
-		"echo still plays, as the game's memory holds it. Only the sound changes; the game plays on the same, "
-		"so netplay, run-ahead and states aren't affected. Off plays everything.",
+		"Shows a switch per voice and sound source, for ripping music. A voice's echo still plays. Only the "
+		"sound changes; netplay, run-ahead and states aren't affected.",
 		NULL, "audio", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	CHANNEL_OPTION("gameboy", "Game Boy"), CHANNEL_OPTION("msu1", "MSU-1"),
 	CHANNEL_OPTION("voice1", "Voice 1"), CHANNEL_OPTION("voice2", "Voice 2"), CHANNEL_OPTION("voice3", "Voice 3"),
 	CHANNEL_OPTION("voice4", "Voice 4"), CHANNEL_OPTION("voice5", "Voice 5"), CHANNEL_OPTION("voice6", "Voice 6"),
 	CHANNEL_OPTION("voice7", "Voice 7"), CHANNEL_OPTION("voice8", "Voice 8"),
 	{ "armsnes_turbo_buttons", "Turbo Buttons", NULL,
-		"Buttons that press and release over and over while held. L3 and R3 are turbo L and R as well, and "
-		"the right stick turbo A, B, X and Y (Right Stick Turbo).",
+		"Buttons that repeat while held. L3 and R3 are turbo L and R, and the right stick turbo A, B, X and Y "
+		"(Right Stick Turbo).",
 		NULL, "input", { { "Off", NULL }, { "A", NULL }, { "B", NULL }, { "X", NULL }, { "Y", NULL }, { "A and B", NULL },
 		{ "X and Y", NULL }, { "A, B, X and Y", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_turbo_period", "Turbo Button Period", NULL,
@@ -1260,11 +1249,11 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"Frames per press while L3 or R3 is held.",
 		NULL, "input", { { NULL, NULL } }, "4" },
 	{ "armsnes_turbo_stick", "Right Stick Turbo", NULL,
-		"The right stick as turbo A, B, X and Y, each pushed toward where it sits on the pad. Off if brushing "
-		"the stick presses buttons. Not while the stick aims a gun or the mouse.",
+		"The right stick as turbo A, B, X and Y, each in its pad direction. Turn off if brushing the stick "
+		"presses buttons. Not while aiming a gun or the mouse.",
 		NULL, "input", { { "On", NULL }, { "Off", NULL }, { NULL, NULL } }, "On" },
 	{ "armsnes_opposing", "Allow Opposing Directions", NULL,
-		"Left and right (or up and down) held together, which a real pad can't do. Some games glitch.",
+		"Left and right, or up and down, at once, which a real pad can't do. Some games glitch.",
 		NULL, "input", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_left_stick_dpad", "Left Stick as D-Pad", NULL, "The left stick presses the D-pad too. Off: the game ignores the left stick.",
 		NULL, "input", { { "On", NULL }, { "Off", NULL }, { NULL, NULL } }, "On" },
@@ -1272,46 +1261,41 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	PORT_OPTION("2", "SNES Controller", "SNES Mouse", "Super Multitap", "NTT Data Keypad", "Twin Tap", "None", "Super Scope",
 		"Justifier", "Two Justifiers"),
 	{ "armsnes_rumble", "Rumble", NULL,
-		"The pads' rumble, for homebrew that sends it: no Super Nintendo pad had any.",
+		"Pad rumble for homebrew that uses it; no SNES pad had rumble.",
 		NULL, "input", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_gun_aim", "Light Gun Aim", "Aim",
-		"Right stick: the stick moves the crosshair, or points it where the stick points; R fires, L is the "
-		"Super Scope's Cursor button or the Justifier's shot off the screen, Select the Super Scope's Turbo "
-		"switch, Start pauses, R3 centers. Light gun: a light gun or the mouse pointer aims. Mouse: the mouse "
-		"moves the crosshair, its buttons fire, press the other button and pause. Touching the screen always "
-		"aims and fires.",
+		"Right stick: moves or points the crosshair; R fires, L is the Super Scope's Cursor or the "
+		"Justifier's off-screen shot, Select is Turbo, Start pauses, R3 centers. Light gun: a light gun or "
+		"the mouse pointer aims. Mouse: the mouse moves it, its buttons fire. Touch always aims and fires.",
 		NULL, "aim", { { "Right stick (pan)", "Right stick (moves)" }, { "Right stick (absolute)", "Right stick (points)" },
 		{ "Light gun", NULL }, { "Mouse", NULL }, { NULL, NULL } }, "Right stick (pan)" },
 	{ "armsnes_crosshair", "Light Gun Crosshair", "Crosshair",
 		"A cross where the Super Scope or Justifier points.",
 		NULL, "aim", { { "On", NULL }, { "Off", NULL }, { NULL, NULL } }, "On" },
 	{ "armsnes_aim_sensitivity", "Aim Sensitivity", "Sensitivity",
-		"How fast the stick, the mouse and touch drags move the crosshair or the SNES Mouse. Holding L2 aims "
-		"finer the further it's pulled.",
+		"How fast the stick, mouse and touch drags move the crosshair or SNES Mouse. Hold L2 for finer aim.",
 		NULL, "aim", { { "25%", NULL }, { "50%", NULL }, { "75%", NULL }, { "100%", NULL }, { "150%", NULL },
 		{ "200%", NULL }, { "300%", NULL }, { NULL, NULL } }, "100%" },
 	{ "armsnes_stick_invert", "Aim Stick Invert", "Stick Invert",
-		"Turns the right stick's aim around, side to side, up and down, or both.",
+		"Inverts the right stick's aim: side to side, up and down, or both.",
 		NULL, "aim", { { "Off", NULL }, { "Horizontal", NULL }, { "Vertical", NULL }, { "Both", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_motion_sensor", "Light Gun Motion", "Motion",
-		"The device's motion moves the crosshair from where the right stick aims it: turning it with the "
-		"gyroscope, or tilting it with the accelerometer. R3 takes how the device is held as the middle.",
+		"Device motion moves the crosshair from where the stick aims: gyroscope (turning) or accelerometer "
+		"(tilting). R3 sets how you hold it as the middle.",
 		NULL, "aim", { { "Off", NULL }, { "Gyroscope", NULL }, { "Accelerometer", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_motion_range", "Light Gun Motion Range", "Motion Range",
-		"How far the motion moves the crosshair: the whole screen, to aim by motion alone, or a quarter of it "
-		"either way, for fine aim on top of the stick.",
+		"Whole screen, to aim by motion alone, or a quarter either way, for fine aim on top of the stick.",
 		NULL, "aim", { { "Whole screen", NULL }, { "Fine", NULL }, { NULL, NULL } }, "Whole screen" },
 	{ "armsnes_motion_sensitivity", "Light Gun Motion Sensitivity", "Motion Sensitivity",
-		"How far the device turns or tilts to move the crosshair all the way: about 20 degrees at 100%, less "
-		"the higher it is.",
+		"How far to turn or tilt for a full sweep: about 20 degrees at 100%, less above.",
 		NULL, "aim", { { "25%", NULL }, { "50%", NULL }, { "75%", NULL }, { "100%", NULL }, { "150%", NULL },
 		{ "200%", NULL }, { "300%", NULL }, { NULL, NULL } }, "100%" },
 	{ "armsnes_motion_invert", "Light Gun Motion Invert", "Motion Invert",
-		"Turns the motion's aim around, side to side, up and down, or both.",
+		"Inverts the motion's aim: side to side, up and down, or both.",
 		NULL, "aim", { { "Off", NULL }, { "Horizontal", NULL }, { "Vertical", NULL }, { "Both", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_motion_rotation", "Light Gun Motion Sensor Rotation", "Motion Sensor Rotation",
-		"Turns the motion sensor to match the screen if aiming goes the wrong way. Usually 0 degrees in the "
-		"standalone app, often 90 in RetroArch.",
+		"Rotates the sensor to match the screen if aim goes the wrong way. Usually 0 degrees in the app, "
+		"often 90 in RetroArch.",
 		NULL, "aim", { { "0", "0 degrees" }, { "90", "90 degrees" }, { "180", "180 degrees" }, { "270", "270 degrees" },
 		{ NULL, NULL } }, "0" },
 	{ NULL, NULL, NULL, NULL, NULL, NULL, { { NULL, NULL } }, NULL },

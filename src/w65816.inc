@@ -37,6 +37,10 @@
 #ifndef idleJump
 #define idleJump()
 #endif
+// How an instruction's own bytes are read: as any other byte, unless the includer reads them its own way.
+#ifndef fetchRead
+#define fetchRead(address) read(address)
+#endif
 
 typedef u8 (*Alu8)(u8);
 typedef u16 (*Alu16)(u16);
@@ -111,7 +115,7 @@ static inline void idle6(u16 address) {
 static inline __attribute__((always_inline)) u8 fetch(void) {
 	u32 address = PC.b << 16 | PC.w;
 	PC.w++;
-	return read(address);
+	return fetchRead(address);
 }
 
 static inline u8 pull(void) {

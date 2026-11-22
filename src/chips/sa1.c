@@ -305,7 +305,12 @@ static const u8* romPageCPU(u32 target) {
 // sa1ReadRomCPU): 0-3 for 00-3f,80-bf:8000-ffff, 4-7 for c0-ff.
 static u32 romBlocksSA1[8];
 
+// Fast mode: the page of the ROM the SA-1 last fetched instruction bytes from (~0: none).
+static u32 fetchPage = ~0u;
+static const u8* fetchBytes;
+
 static void romPagesCPU(void) {
+	fetchPage = ~0u;
 	busFastMap(sa1ReadRomCPU, romPageCPU);
 	for (u32 block = 0; block < 8; ++block) {
 		u32 address = romAddressCPU(block < 4 ? block << 20 : 0x400000 | (block - 4) << 20);
@@ -1351,6 +1356,40 @@ u8 sa1FastRead(u32 address) {
 	R.ad = address & 0xffffff;
 	fastRead();
 	return R.dr;
+}
+
+// Fast mode: an instruction's bytes from the ROM page they're in, as fastRead reads them (the S-CPU
+// doesn't move while the SA-1 runs, so neither does romConflict). Pages that read otherwise (a memory
+// pack, the S-CPU's vectors) go the plain way.
+static bool fetchPageFind(u32 address) {
+	if ((address & 0x408000) != 0x008000 && (address & 0xc00000) != 0xc00000) {
+		return false;
+	}
+	u32 at = address & 0xffff00;
+	if ((at & 0x408000) == 0x008000) {
+		at = (at & 0x800000) >> 2 | (at & 0x3f0000) >> 1 | (at & 0x007f00);
+	}
+	u32 block = at < 0x400000 ? at >> 20 : 4 + (at >> 20 & 3);
+	if (romBlocksSA1[block] == ~0u || (at & 0xffff00) == 0x007f00) {
+		return false;
+	}
+	u32 first = busMirror(romBlocksSA1[block] | (at & 0x0fff00), cart.romSize);
+	if (busMirror(romBlocksSA1[block] | (at & 0x0fff00) | 0xff, cart.romSize) != first + 0xff) {
+		return false;
+	}
+	fetchPage = address >> 8;
+	fetchBytes = &cart.rom[first];
+	return true;
+}
+
+u8 sa1FastFetch(u32 address) {
+	address &= 0xffffff;
+	if (address >> 8 != fetchPage && !fetchPageFind(address)) {
+		return sa1FastRead(address);
+	}
+	R.ad = R.mar = address;
+	fastSteps(1 + romConflict());
+	return R.dr = R.mdr = fetchBytes[address & 0xff];
 }
 
 // Fast mode: the SA-1 run ahead of the S-CPU, which waits in a loop reading the bytes watch says

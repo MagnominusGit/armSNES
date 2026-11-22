@@ -20,6 +20,8 @@ static inline u8 read(u32 address) {
 	return sa1FastRead(address);
 }
 
+#define fetchRead(address) sa1FastFetch(address)
+
 static inline void write(u32 address, u8 data) {
 	sa1FastWrite(address, data);
 }

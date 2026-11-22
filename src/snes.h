@@ -1047,6 +1047,7 @@ void sdd1Loaded(void);
 // Fast mode: the SA-1's next instruction, through the plain 65816 (sa1fast.c), and the accesses it makes.
 void sa1FastInstruction(void);
 u8 sa1FastRead(u32 address);
+u8 sa1FastFetch(u32 address);
 void sa1FastWrite(u32 address, u8 data);
 void sa1FastIdle(void);
 void sa1FastIdleJump(void);

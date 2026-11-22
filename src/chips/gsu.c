@@ -868,9 +868,13 @@ static void lineRun(u64 until) {
 		lineStop = stoppedAt;
 	}
 	// Stopped, the GSU only waited after: its clock goes back to where it stopped, so a start the
-	// S-CPU makes before the end of the line isn't late.
+	// S-CPU makes before the end of the line isn't late. A ROM read or RAM write still in its buffer is
+	// finished now, as the S-CPU can see the stop, and take the RAM back, before the clock gets to it.
 	if (stoppedAt != ~0ull && !FLAG(SFR_G)) {
 		gsu.th.clock = stoppedAt;
+		if (gsu.romcl | gsu.ramcl) {
+			stepBuffers(gsu.romcl > gsu.ramcl ? gsu.romcl : gsu.ramcl);
+		}
 	}
 }
 

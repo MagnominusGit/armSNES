@@ -1266,7 +1266,7 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armsnes_opposing", "Allow Opposing Directions", NULL,
 		"Left and right (or up and down) held together, which a real pad can't do. Some games glitch.",
 		NULL, "input", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armsnes_left_stick_dpad", "Left Stick as D-Pad", NULL, "The left stick presses the D-pad too.",
+	{ "armsnes_left_stick_dpad", "Left Stick as D-Pad", NULL, "The left stick presses the D-pad too. Off: the game ignores the left stick.",
 		NULL, "input", { { "On", NULL }, { "Off", NULL }, { NULL, NULL } }, "On" },
 	PORT_OPTION("1", "SNES Controller", "SNES Mouse", "Super Multitap", "NTT Data Keypad", "Twin Tap", "None", NULL, NULL, NULL),
 	PORT_OPTION("2", "SNES Controller", "SNES Mouse", "Super Multitap", "NTT Data Keypad", "Twin Tap", "None", "Super Scope",

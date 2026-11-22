@@ -57,18 +57,8 @@ void icdPower(bool reset) {
 
 // --- The Game Boy's side ---
 
-static void ppuWrite(u8 color) {
-	u8 x = I.hcounter++;
-	u8 y = I.vcounter & 7;
-	if (x >= 160) {
-		return;
-	}
-	u16 address = (I.writeBank & 3) * 512 + y * 2 + x / 8 * 16;
-	I.output[address + 0] = I.output[address + 0] << 1 | (color & 1);
-	I.output[address + 1] = I.output[address + 1] << 1 | (color >> 1 & 1);
-}
-
-// Each line comes as its pixels are done; line 0 starts a frame.
+// Each line comes as its pixels are done; line 0 starts a frame. Each eight pixels make a tile row's two
+// bytes, a bit of each colour index a pixel.
 void icdLine(unsigned ly, const uint32_t* pixels) {
 	if (ly >= 144) {
 		return;
@@ -77,8 +67,16 @@ void icdLine(unsigned ly, const uint32_t* pixels) {
 		I.hcounter = 0;
 		I.vcounter = 0;
 	}
-	for (int x = 0; x < 160; x++) {
-		ppuWrite(3 - (pixels[x] >> 4 & 3));
+	u8* row = &I.output[(I.writeBank & 3) * 512 + (I.vcounter & 7) * 2];
+	for (int tile = 0; tile < 20; tile++) {
+		u8 low = 0, high = 0;
+		for (int x = 0; x < 8; x++) {
+			u8 color = 3 - (pixels[tile * 8 + x] >> 4 & 3);
+			low = low << 1 | (color & 1);
+			high = high << 1 | (color >> 1 & 1);
+		}
+		row[tile * 16 + 0] = low;
+		row[tile * 16 + 1] = high;
 	}
 	I.hcounter = 0;
 	I.vcounter++;

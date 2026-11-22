@@ -995,9 +995,11 @@ static inline u32 dmaRoom(u32 remaining) {
 	return room < remaining ? room : remaining;
 }
 
-// Fast mode (whose DMA runs on the plain path, fastNow off): bytes to $2118/$2119 from plain memory or
-// the Super FX's RAM, while neither the CPU nor the PPU has anything to do before the last of them is
-// written, go in one pass. Each takes its eight clocks as transfer() would; with nothing pending, the
+// Fast mode (whose DMA runs on the plain path, fastNow off): bytes to $2118/$2119 from plain memory, the
+// Super FX's RAM or the Super Game Boy's VRAM port (its BIOS copies the Game Boy's picture so every
+// frame), while neither the CPU nor the PPU has anything to do before the last of them is written, go
+// in one pass. The port is read as transfer() reads it; the Game Boy only catches up once a line
+// (cartSync), which the pass doesn't reach. Each takes its eight clocks as transfer() would; with nothing pending, the
 // dmaEdge after each does nothing. Whether the channel is done.
 static bool dmaToVram(struct DmaChannel* channel, u8* index) {
 	enum { MOST = 512 };
@@ -1037,7 +1039,8 @@ static bool dmaToVram(struct DmaChannel* channel, u8* index) {
 		address = channel->sourceBank << 16 | source;
 		u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
 		if (at >> 8 != page) {
-			if (!busFastPages[at >> 8] && !(cart.gsu && (address & 0xfe0000) == 0x700000)) {
+			if (!busFastPages[at >> 8] && !(cart.gsu && (address & 0xfe0000) == 0x700000) &&
+			    !(cart.icd && !(address & 0x400000) && (address & 0xf800) == 0x7800)) {
 				break;
 			}
 			page = at >> 8;

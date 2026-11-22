@@ -14,7 +14,7 @@ check_ipo_supported(RESULT ARMSNES_IPO OUTPUT ARMSNES_IPO_ERROR)
 if(ARMSNES_IPO AND ARMSNES_LTO)
 	set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 endif()
-add_compile_options(-Wall -Wextra -Wno-unused-parameter -fwrapv)
+add_compile_options(-O3 -Wall -Wextra -Wno-unused-parameter -fwrapv)
 
 # The Super Game Boy's Game Boy: Gambatte-Speedrun's core (gambatte/, GPL-2.0), as armGBA has it.
 file(GLOB_RECURSE GAMBATTE_SOURCES gambatte/libgambatte/src/*.cpp)

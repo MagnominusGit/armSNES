@@ -1083,7 +1083,8 @@ static bool dmaToVram(struct DmaChannel* channel, u8* index) {
 	return count == remaining;
 }
 
-// The same for bytes to $2180, the WRAM port, from memory that isn't WRAM: they go straight into WRAM.
+// The same for bytes to $2180, the WRAM port, from memory that isn't WRAM or from the Super Game Boy's
+// VRAM port: they go straight into WRAM.
 static bool dmaToWram(struct DmaChannel* channel, u8* index) {
 	if (transferAddressB(channel, *index & 3) != 0x80) {
 		return false;
@@ -1107,7 +1108,8 @@ static bool dmaToWram(struct DmaChannel* channel, u8* index) {
 		address = channel->sourceBank << 16 | source;
 		u32 at = address & 0x40e000 ? address : 0x7e0000 | (address & 0x1fff);
 		if (ports[count & 3] != 0x80 || (at & 0xfe0000) == 0x7e0000 ||
-		    (!busFastPages[at >> 8] && !(cart.gsu && (address & 0xfe0000) == 0x700000))) {
+		    (!busFastPages[at >> 8] && !(cart.gsu && (address & 0xfe0000) == 0x700000) &&
+		     !(cart.icd && !(address & 0x400000) && (address & 0xf800) == 0x7800))) {
 			break;
 		}
 		// Forward from plain memory to $2180 alone: the rest of the page in one copy.

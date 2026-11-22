@@ -46,7 +46,7 @@ the others, and states are the same on ARM and x86, so run-ahead and netplay wor
 | R2 | Fast-forward while held, outside netplay |
 | L2 | Fast-forward too; fine aim while a light gun or the mouse aims with the right stick |
 | L3, R3 | L and R with turbo, at the Turbo L and R Period |
-| Right stick | A, B, X and Y with turbo, pushed toward where each sits on the pad: up X, right A, down B, left Y |
+| Right stick | A, B, X and Y with turbo, pushed toward where each sits on the pad: up X, right A, down B, left Y (Right Stick Turbo) |
 | Left stick | The D-pad too, unless Left Stick as D-Pad is off |
 
 With a light gun or the mouse plugged in, the right stick aims instead, and R3 centers the crosshair (with
@@ -100,6 +100,7 @@ with Layer Selection or Channel Selection on.
 | Input | Turbo Buttons | Off, A, B, X, Y, A and B, X and Y, all four |
 | | Turbo Button Period (A, B, X, Y) | 4 frames, 2 to 60 frames |
 | | Turbo L and R Period (L3, R3) | 4 frames, 2 to 60 frames |
+| | Right Stick Turbo | On, Off |
 | | Allow Opposing Directions | Off, On |
 | | Left Stick as D-Pad | On, Off |
 | | Port 1 Device, Port 2 Device (where the frontend has no controller menu) | SNES Controller, SNES Mouse, Super Multitap, NTT Data Keypad, Twin Tap, None; Super Scope, Justifier, Two Justifiers in port 2 |

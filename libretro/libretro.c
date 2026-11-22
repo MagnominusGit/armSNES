@@ -698,6 +698,7 @@ static void setFastForward(bool on) {
 
 static u16 turboButtons;
 static u32 turboPeriod = 4, turboPeriodLR = 4;
+static bool turboStick = true;
 static bool allowOpposing;
 static bool leftStickDpad = true;
 
@@ -997,13 +998,14 @@ static bool aiming(void) {
 	return inputGuns || inputDevice[0] == DEVICE_MOUSE || inputDevice[1] == DEVICE_MOUSE;
 }
 
-// L3 and R3 are L and R with turbo, and the right stick A, B, X and Y with turbo, each pushed toward
-// where it sits on the pad, unless the stick aims a gun or the mouse.
+// L3 and R3 are L and R with turbo, and the right stick (Right Stick Turbo) A, B, X and Y with turbo,
+// each pushed toward where it sits on the pad, unless the stick aims a gun or the mouse.
 static u16 turboHeld(unsigned player) {
 	if (aiming()) {
 		return 0;
 	}
-	int x = rightStick(player, RETRO_DEVICE_ID_ANALOG_X), y = rightStick(player, RETRO_DEVICE_ID_ANALOG_Y);
+	int x = turboStick ? rightStick(player, RETRO_DEVICE_ID_ANALOG_X) : 0;
+	int y = turboStick ? rightStick(player, RETRO_DEVICE_ID_ANALOG_Y) : 0;
 	return (u16) (padHeld(player, RETRO_DEVICE_ID_JOYPAD_L3) << RETRO_DEVICE_ID_JOYPAD_L |
 	              padHeld(player, RETRO_DEVICE_ID_JOYPAD_R3) << RETRO_DEVICE_ID_JOYPAD_R |
 	              (y < -0x4000) << RETRO_DEVICE_ID_JOYPAD_X | (x > 0x4000) << RETRO_DEVICE_ID_JOYPAD_A |
@@ -1247,8 +1249,8 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	CHANNEL_OPTION("voice4", "Voice 4"), CHANNEL_OPTION("voice5", "Voice 5"), CHANNEL_OPTION("voice6", "Voice 6"),
 	CHANNEL_OPTION("voice7", "Voice 7"), CHANNEL_OPTION("voice8", "Voice 8"),
 	{ "armsnes_turbo_buttons", "Turbo Buttons", NULL,
-		"Buttons that press and release over and over while held. L3, R3 and the right stick are turbo L, R "
-		"and A, B, X and Y as well.",
+		"Buttons that press and release over and over while held. L3 and R3 are turbo L and R as well, and "
+		"the right stick turbo A, B, X and Y (Right Stick Turbo).",
 		NULL, "input", { { "Off", NULL }, { "A", NULL }, { "B", NULL }, { "X", NULL }, { "Y", NULL }, { "A and B", NULL },
 		{ "X and Y", NULL }, { "A, B, X and Y", NULL }, { NULL, NULL } }, "Off" },
 	{ "armsnes_turbo_period", "Turbo Button Period", NULL,
@@ -1257,6 +1259,10 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armsnes_turbo_period_lr", "Turbo L and R Period", NULL,
 		"Frames per press while L3 or R3 is held.",
 		NULL, "input", { { NULL, NULL } }, "4" },
+	{ "armsnes_turbo_stick", "Right Stick Turbo", NULL,
+		"The right stick as turbo A, B, X and Y, each pushed toward where it sits on the pad. Off if brushing "
+		"the stick presses buttons. Not while the stick aims a gun or the mouse.",
+		NULL, "input", { { "On", NULL }, { "Off", NULL }, { NULL, NULL } }, "On" },
 	{ "armsnes_opposing", "Allow Opposing Directions", NULL,
 		"Left and right (or up and down) held together, which a real pad can't do. Some games glitch.",
 		NULL, "input", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
@@ -1621,14 +1627,30 @@ static void giveDescriptors(void) {
 	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "R" }, \
 	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Select" }, \
 	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Start" }
-#define LIST(l2) \
-	{ PAD(0), { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, l2 }, \
+#define TURBO(port) \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "Turbo L" }, \
+	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3, "Turbo R" }
+#define STICK(port) \
+	{ port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Turbo Y (Left) / Turbo A (Right)" }, \
+	{ port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Turbo X (Up) / Turbo B (Down)" }
+#define LIST(l2, more) \
+	{ PAD(0) more(0), { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, l2 }, \
 	  { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Fast-Forward" }, \
-	  PAD(1), PAD(2), PAD(3), PAD(4), PAD(5), PAD(6), PAD(7), { 0, 0, 0, 0, NULL } }
-	static const struct retro_input_descriptor plain[] = LIST("Fast-Forward"), aimed[] = LIST("Fine Aim");
+	  PAD(1) more(1), PAD(2) more(2), PAD(3) more(3), PAD(4) more(4), PAD(5) more(5), PAD(6) more(6), PAD(7) more(7), \
+	  { 0, 0, 0, 0, NULL } }
+#define NONE(port)
+#define LR(port) , TURBO(port)
+#define BOTH(port) , TURBO(port), STICK(port)
+	static const struct retro_input_descriptor plain[] = LIST("Fast-Forward", BOTH), noStick[] = LIST("Fast-Forward", LR),
+	                                           aimed[] = LIST("Fine Aim", NONE);
+#undef BOTH
+#undef LR
+#undef NONE
 #undef LIST
+#undef STICK
+#undef TURBO
 #undef PAD
-	environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void*) (aiming() ? aimed : plain));
+	environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void*) (aiming() ? aimed : turboStick ? plain : noStick));
 }
 
 
@@ -1901,6 +1923,13 @@ static void readOptions(void) {
 	turboButtons = (u16) optionChoice(environment, "armsnes_turbo_buttons", turbo, sizeof(turbo) / sizeof(*turbo), 0);
 	turboPeriod = periodOption("armsnes_turbo_period");
 	turboPeriodLR = periodOption("armsnes_turbo_period_lr");
+	bool stick = !optionIs(environment, "armsnes_turbo_stick", "Off");
+	if (stick != turboStick) {
+		turboStick = stick;
+		if (loaded) {
+			giveDescriptors();
+		}
+	}
 	if (loaded && regionPal() != sys.pal) {
 		stopThreads();
 		systemLoad(regionPal());

@@ -496,7 +496,7 @@ static void echo27(bool listen) {
 		outr = 0;
 	}
 	if (cart.icd) {
-		mixerOutput(&icd.sound, &outl, &outr, dspGameBoyVolume);
+		mixerOutputUpTo(&icd.sound, &outl, &outr, dspGameBoyVolume, apuOnThread ? apuGameBoyWrite : icd.sound.write);
 	}
 	if (cart.msu1) {
 		mixerOutput(&msu1.sound, &outl, &outr, dspMsu1Volume);

@@ -1220,7 +1220,10 @@ static struct ApuCommand {
 	u64 clock;
 	bool write, toPortWrite;
 	u8 port, data;
+	u32 gameBoyWrite;
 } apuRing[APU_RING];
+_Thread_local bool apuOnThread;
+u32 apuGameBoyWrite;
 // On cache lines of their own, as each is written by one thread and read by the other.
 static _Alignas(64) u32 apuHead;  // written by the CPU's thread
 static _Alignas(64) u32 apuTail;  // by the APU's
@@ -1281,10 +1284,12 @@ static inline void apuRelax(void) {
 
 static void* apuMain(void* unused) {
 	(void) unused;
+	apuOnThread = true;
 	for (;;) {
 		u32 tail = apuTail;
 		while (tail != __atomic_load_n(&apuHead, __ATOMIC_ACQUIRE)) {
 			const struct ApuCommand* c = &apuRing[tail & (APU_RING - 1)];
+			apuGameBoyWrite = c->gameBoyWrite;
 			if (c->toPortWrite) {
 				smpRunToPortWriteHere(c->clock);
 			} else {
@@ -1343,6 +1348,7 @@ bool smpRunToPortWrite(u64 clock, struct SmpPortWrite* write) {
 }
 
 static void apuPost(struct ApuCommand command) {
+	command.gameBoyWrite = cart.icd ? icd.sound.write : 0;
 	u64 clock = command.clock;
 	bool write = command.write;
 	u32 port = command.port;

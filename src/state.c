@@ -238,6 +238,7 @@ bool stateLoad(const void* data, size_t size) {
 	GET(mcc);
 	GET(bsmemory);
 	GET(icd);
+	mixerLoaded(&icd.sound);
 	GET(msu1);
 	GET(competition);
 	GET(pirate);

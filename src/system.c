@@ -253,8 +253,9 @@ void systemRunFrame(void) {
 	if (cart.st018) {
 		st018FrameStart();
 	}
-	// The MSU-1 looks at the DSP as it plays, and it and the Super Game Boy hand it their sound.
-	smpThreaded = smpThreadable = systemFast && systemSoundThread && !cart.msu1 && !cart.icd && smpCanThread();
+	// The MSU-1 looks at the DSP as it plays. The Super Game Boy hands it its sound too, which the thread
+	// mixes as far as it had come when each command was given (apuGameBoyWrite), as on this thread.
+	smpThreaded = smpThreadable = systemFast && systemSoundThread && !cart.msu1 && smpCanThread();
 	sys.frameEvent = false;
 	if (systemFast && !inputGuns) {
 		cpuRunFast();

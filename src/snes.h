@@ -181,6 +181,12 @@ extern u64 smpLimit;
 // smpCanThread allows. Post has it run up to clock, then take a write to a port if write is set;
 // Drain waits for all it was given to be done; Stop ends the thread.
 extern bool smpThreaded;
+// On the SMP's thread: true, and the Super Game Boy's sound samples there were (its mixer's write) as
+// the command it runs was given.
+#ifndef __cplusplus
+extern _Thread_local bool apuOnThread;
+#endif
+extern u32 apuGameBoyWrite;
 // Whether the frame may have the thread (smpThreaded can be put off for a while within it).
 extern bool smpThreadable;
 bool smpCanThread(void);
@@ -1516,6 +1522,11 @@ struct Mixer {
 void mixerInput(struct Mixer* m, s16 left, s16 right, u32 step, u32 rate);
 // Adds the next sample, if there is one, to a DSP sample, at volume percent.
 void mixerOutput(struct Mixer* m, s32* left, s32* right, u32 volume);
+// The same, of the samples up to write: as many as had been put in when the SMP's thread was told to
+// run (the input goes on on the CPU's thread meanwhile).
+void mixerOutputUpTo(struct Mixer* m, s32* left, s32* right, u32 volume, u32 write);
+// After a state is loaded: what the mixer keeps besides its state (the Super Game Boy's longer ring).
+void mixerLoaded(struct Mixer* m);
 
 // --- The Super Game Boy's ICD2 ---
 

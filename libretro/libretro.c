@@ -1614,43 +1614,46 @@ void retro_get_system_av_info(struct retro_system_av_info* info) {
 
 // The pads' buttons, and L2 as fast-forward or, with a gun or a mouse plugged in, fine aim.
 static void giveDescriptors(void) {
-#define PAD(port) \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "D-Pad Left" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "D-Pad Up" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "D-Pad Down" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "D-Pad Right" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B, "B" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "A" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X, "X" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Y" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "L" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "R" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Select" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Start" }
-#define TURBO(port) \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "Turbo L" }, \
-	{ port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3, "Turbo R" }
-#define STICK(port) \
-	{ port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Turbo Y (Left) / Turbo A (Right)" }, \
-	{ port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Turbo X (Up) / Turbo B (Down)" }
-#define LIST(l2, more) \
-	{ PAD(0) more(0), { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, l2 }, \
-	  { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Fast-Forward" }, \
-	  PAD(1) more(1), PAD(2) more(2), PAD(3) more(3), PAD(4) more(4), PAD(5) more(5), PAD(6) more(6), PAD(7) more(7), \
-	  { 0, 0, 0, 0, NULL } }
-#define NONE(port)
-#define LR(port) , TURBO(port)
-#define BOTH(port) , TURBO(port), STICK(port)
-	static const struct retro_input_descriptor plain[] = LIST("Fast-Forward", BOTH), noStick[] = LIST("Fast-Forward", LR),
-	                                           aimed[] = LIST("Fine Aim", NONE);
-#undef BOTH
-#undef LR
-#undef NONE
-#undef LIST
-#undef STICK
-#undef TURBO
-#undef PAD
-	environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void*) (aiming() ? aimed : turboStick ? plain : noStick));
+	static const struct {
+		unsigned id;
+		const char* name;
+	} buttons[] = {
+		{ RETRO_DEVICE_ID_JOYPAD_LEFT, "D-Pad Left" }, { RETRO_DEVICE_ID_JOYPAD_UP, "D-Pad Up" },
+		{ RETRO_DEVICE_ID_JOYPAD_DOWN, "D-Pad Down" }, { RETRO_DEVICE_ID_JOYPAD_RIGHT, "D-Pad Right" },
+		{ RETRO_DEVICE_ID_JOYPAD_B, "B" }, { RETRO_DEVICE_ID_JOYPAD_A, "A" }, { RETRO_DEVICE_ID_JOYPAD_X, "X" },
+		{ RETRO_DEVICE_ID_JOYPAD_Y, "Y" }, { RETRO_DEVICE_ID_JOYPAD_L, "L" }, { RETRO_DEVICE_ID_JOYPAD_R, "R" },
+		{ RETRO_DEVICE_ID_JOYPAD_SELECT, "Select" }, { RETRO_DEVICE_ID_JOYPAD_START, "Start" },
+	};
+	enum { EACH = sizeof(buttons) / sizeof(*buttons) + 6 };
+	static struct retro_input_descriptor list[PLAYERS * EACH + 3];
+	bool aimed = aiming();
+	unsigned n = 0;
+#define ADD(port, device, index, id, name) list[n++] = (struct retro_input_descriptor) { port, device, index, id, name }
+	for (unsigned port = 0; port < PLAYERS; ++port) {
+		for (unsigned i = 0; i < sizeof(buttons) / sizeof(*buttons); ++i) {
+			ADD(port, RETRO_DEVICE_JOYPAD, 0, buttons[i].id, buttons[i].name);
+		}
+		if (port == 0) {
+			ADD(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, aimed ? "Fine Aim" : "Fast-Forward");
+			ADD(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Fast-Forward");
+		}
+		if (leftStickDpad) {
+			ADD(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, "D-Pad Left / D-Pad Right");
+			ADD(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, "D-Pad Up / D-Pad Down");
+		}
+		if (aimed) {
+			continue;
+		}
+		ADD(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "Turbo L");
+		ADD(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3, "Turbo R");
+		if (turboStick) {
+			ADD(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Turbo Y (Left) / Turbo A (Right)");
+			ADD(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Turbo X (Up) / Turbo B (Down)");
+		}
+	}
+#undef ADD
+	list[n] = (struct retro_input_descriptor) { 0, 0, 0, 0, NULL };
+	environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, list);
 }
 
 
@@ -2013,7 +2016,13 @@ static void readOptions(void) {
 	dspMsu1Volume = volumeOption("armsnes_volume_msu1", "msu1");
 	dspListenUpdate();
 	allowOpposing = optionIs(environment, "armsnes_opposing", "On");
-	leftStickDpad = !optionIs(environment, "armsnes_left_stick_dpad", "Off");
+	bool leftStick = !optionIs(environment, "armsnes_left_stick_dpad", "Off");
+	if (leftStick != leftStickDpad) {
+		leftStickDpad = leftStick;
+		if (loaded) {
+			giveDescriptors();
+		}
+	}
 	readPortOptions();
 	bool rumbleOn = optionIs(environment, "armsnes_rumble", "On");
 	if (inputRumbleOn && !rumbleOn) {

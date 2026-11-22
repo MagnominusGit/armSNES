@@ -1532,15 +1532,16 @@ static float aspectOf(u32 width, u32 lines) {
 	return (float) (width * pixel / lines);
 }
 
-// The console's picture, until the options make one larger: then room for every HD scale up to hdMost,
-// widescreen and the filter at once, so the frontend's buffers grow only once in a game.
+// The console's picture, until the options make one larger: then room for every HD scale up to hdMost
+// and the filter at once, and widescreen's columns when it is on, so the frontend's buffers grow at
+// most twice in a game.
 static bool pictureFits(void) {
 	return wideColumns * (filter ? COMPOSITE_SCALE : hdScale > 2 ? hdScale : 2) <= OUTPUT_WIDTH &&
 	       (hdScale > 2 ? 239u * hdScale : OUTPUT_HEIGHT) <= OUTPUT_HEIGHT;
 }
 
 static unsigned maxWidth(void) {
-	return pictureFits() ? OUTPUT_WIDTH : WIDE_COLUMNS * hdMost;
+	return pictureFits() ? OUTPUT_WIDTH : (wideColumns > 256 ? WIDE_COLUMNS : 256) * hdMost;
 }
 
 static unsigned maxHeight(void) {
@@ -1573,22 +1574,22 @@ static struct Area shownArea(void) {
 	                       (int) (part.height / yScale) };
 }
 
+// The largest picture the frontend was told of while a game is loaded: it never shrinks, as a frontend
+// remaking its buffers for a smaller one may still copy the last, larger picture into them.
+static unsigned toldWidth, toldHeight;
+
 static struct retro_game_geometry given;
 
 // The frontend is told when the picture's shape changes, in the console's pixels and lines.
 static void giveGeometry(const struct Shown* part) {
 	u32 xScale = outputWidth / frameColumns, yScale = frameScaleY;
 	u32 width = part->width / xScale, lines = part->height / yScale;
-	struct retro_game_geometry geometry = { width, lines, maxWidth(), maxHeight(), aspectOf(width, lines) };
+	struct retro_game_geometry geometry = { width, lines, toldWidth, toldHeight, aspectOf(width, lines) };
 	if (geometry.base_width != given.base_width || geometry.base_height != given.base_height || geometry.aspect_ratio != given.aspect_ratio) {
 		given = geometry;
 		environment(RETRO_ENVIRONMENT_SET_GEOMETRY, &given);
 	}
 }
-
-// The largest picture the frontend was told of while a game is loaded: it never shrinks, as a frontend
-// remaking its buffers for a smaller one may still copy the last, larger picture into them.
-static unsigned toldWidth, toldHeight;
 
 void retro_get_system_av_info(struct retro_system_av_info* info) {
 	memset(info, 0, sizeof(*info));

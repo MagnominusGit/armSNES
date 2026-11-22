@@ -1522,20 +1522,47 @@ static float aspectOf(u32 width, u32 lines) {
 	return (float) (width * pixel / lines);
 }
 
-// The console's picture, until the options make one larger: then room for every HD scale up to hdMost
-// and the filter at once, and widescreen's columns when it is on, so the frontend's buffers grow at
-// most twice in a game.
-static bool pictureFits(void) {
-	return wideColumns * (filter ? COMPOSITE_SCALE : hdScale > 2 ? hdScale : 2) <= OUTPUT_WIDTH &&
-	       (hdScale > 2 ? 239u * hdScale : OUTPUT_HEIGHT) <= OUTPUT_HEIGHT;
+// Whether the frontend takes a larger picture during a game as it comes: the standalone app, whose
+// start hook sets it. RetroArch makes its video again for one, which the compositor of ROCKNIX's
+// handhelds refuses mid-game (RetroArch quits), so there a larger picture than the room told when the
+// game was loaded waits for the game to be started again.
+bool libretroAnySize;
+
+// The picture the options make, in pixels.
+static unsigned pictureWidth(void) {
+	return wideColumns * (filter ? COMPOSITE_SCALE : hdScale > 2 ? hdScale : 2);
 }
 
+static unsigned pictureHeight(void) {
+	return hdScale > 2 ? 239u * hdScale : OUTPUT_HEIGHT;
+}
+
+#if defined(__arm__)
+static bool pictureFits(void) {
+	return pictureWidth() <= OUTPUT_WIDTH && pictureHeight() <= OUTPUT_HEIGHT;
+}
+#endif
+
+// The room told when the game is loaded: for every HD scale up to hdMost (4x, or 8x with Enable HD
+// Scales) and the filter at once, and widescreen's columns when it is on, so they change during the
+// game as geometry alone. That costs RetroArch about 15 MB more than the console's picture; on 32-bit
+// ARM, whose devices are short of memory, the console's picture unless the options need more then.
 static unsigned maxWidth(void) {
-	return pictureFits() ? OUTPUT_WIDTH : (wideColumns > 256 ? WIDE_COLUMNS : 256) * hdMost;
+#if defined(__arm__)
+	if (pictureFits()) {
+		return OUTPUT_WIDTH;
+	}
+#endif
+	return (wideColumns > 256 ? WIDE_COLUMNS : 256) * hdMost;
 }
 
 static unsigned maxHeight(void) {
-	return pictureFits() ? OUTPUT_HEIGHT : 239u * hdMost;
+#if defined(__arm__)
+	if (pictureFits()) {
+		return OUTPUT_HEIGHT;
+	}
+#endif
+	return 239u * hdMost;
 }
 
 // The part of the output shown: the crops, or the Game Boy's screen without the Super Game Boy's border.
@@ -1967,13 +1994,45 @@ static void readOptions(void) {
 	ppuWideSprites = optionIs(environment, "armsnes_widescreen_sprites", "Shown");
 	wideColumns = columns;
 	ppuWide = (u8) ((columns - 256) / 2);
-	hdPitch = wideColumns * (hdScale > 2 ? hdScale : 2);
-	// A larger picture than the frontend was told of needs a new AV info.
-	if (loaded && (maxWidth() > toldWidth || maxHeight() > toldHeight)) {
+	// A larger picture than the room told: in RetroArch, as large as fits (HD Mode 7's scale lowered,
+	// then the filter or widescreen left off), with a message, and the rest when the game is started
+	// again. The standalone app takes it as it comes.
+	if (loaded && !libretroAnySize && (pictureWidth() > toldWidth || pictureHeight() > toldHeight)) {
+		u8 const wantedHd = hdScale;
+		bool const wantedFilter = filter != COMPOSITE_OFF, wantedWide = wideColumns > 256;
+		while (hdScale > 2 && (pictureWidth() > toldWidth || pictureHeight() > toldHeight)) {
+			--hdScale;
+		}
+		ppuHdScale = hdScale;
+		if (filter && (pictureWidth() > toldWidth || pictureHeight() > toldHeight)) {
+			filter = COMPOSITE_OFF;
+		}
+		if (wideColumns > 256 && (pictureWidth() > toldWidth || pictureHeight() > toldHeight)) {
+			wideColumns = 256;
+			ppuWide = 0;
+		}
+		char waiting[96] = "";
+		if (hdScale < wantedHd) {
+			snprintf(waiting, sizeof(waiting), "HD Mode 7 %ux", wantedHd);
+		} else if (wantedFilter && !filter) {
+			snprintf(waiting, sizeof(waiting), "The video filter");
+		} else if (wantedWide && wideColumns == 256) {
+			snprintf(waiting, sizeof(waiting), "Widescreen");
+		}
+		static char told[96];
+		if (waiting[0] && strcmp(waiting, told)) {
+			snprintf(told, sizeof(told), "%s", waiting);
+			char text[160];
+			snprintf(text, sizeof(text), "%s: from the next time the game is started", waiting);
+			struct retro_message message = { text, 300 };
+			environment(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+		}
+	} else if (loaded && (maxWidth() > toldWidth || maxHeight() > toldHeight)) {
 		struct retro_system_av_info av;
 		retro_get_system_av_info(&av);
 		environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av);
 	}
+	hdPitch = wideColumns * (hdScale > 2 ? hdScale : 2);
 	static const struct OptionChoice skips[] = { { "Auto", -1 }, { "1", 1 }, { "2", 2 }, { "3", 3 } };
 	frameSkip = optionChoice(environment, "armsnes_frame_skip", skips, 4, 0);
 	struct retro_audio_buffer_status_callback status = { frameSkip < 0 ? soundBufferStatus : NULL };

@@ -16,6 +16,14 @@ static uint32_t cheevosConsole(const uint8_t* data, size_t size) {
 	return gameBoy ? RC_CONSOLE_UNKNOWN : RC_CONSOLE_SUPER_NINTENDO;
 }
 
+// The core's: the app takes a larger picture during a game as it comes (see libretro.c).
+extern bool libretroAnySize;
+
+static void start(void) {
+	libretroAnySize = true;
+}
+
 const struct AppHooks appHooks = {
+	.start = start,
 	.cheevosConsole = cheevosConsole,
 };

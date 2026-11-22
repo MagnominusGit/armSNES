@@ -7,10 +7,11 @@ if(NOT CMAKE_BUILD_TYPE)
 	set(CMAKE_BUILD_TYPE Release)
 endif()
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-# The whole program optimized together, where the compiler can.
+# The whole program optimized together, where the compiler can. Off for quicker test builds.
+option(ARMSNES_LTO "Link-time optimization" ON)
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ARMSNES_IPO OUTPUT ARMSNES_IPO_ERROR)
-if(ARMSNES_IPO)
+if(ARMSNES_IPO AND ARMSNES_LTO)
 	set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 endif()
 add_compile_options(-Wall -Wextra -Wno-unused-parameter -fwrapv)

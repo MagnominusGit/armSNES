@@ -6,25 +6,97 @@
 #include "../snes.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 // The MSU-1: a data file the game reads a byte at a time, and 44.1 kHz audio tracks it plays, from
-// files beside the game (game.msu, game-1.pcm and on).
+// files beside the game (game.msu, game-1.pcm and on), or in the zip the game came from.
 
 struct Msu1 msu1;
 
 #define M msu1
 
+struct Msu1Archive msu1Archive;
+
+// A file the MSU-1 reads: beside the game, or in the zip.
+struct Source {
+	FILE* file;
+	void* zipped;
+	size_t size, at;
+};
+
 static char base[4096];
-static FILE* dataFile;
-static FILE* audioFile;
+// The zip and the name in it without the extension, when the game came from one.
+static char archive[4096], inside[4096];
+static struct Source dataSource, audioSource;
+// The track audioSource holds from the zip: one opened is kept (as far as it was inflated) until
+// another is played.
+static u32 audioHeld = ~0u;
 static u32 audioSize;
 
 enum { REVISION = 0x02 };
 
+static void sourceClose(struct Source* s) {
+	if (s->file) {
+		fclose(s->file);
+	}
+	if (s->zipped) {
+		msu1Archive.close(s->zipped);
+	}
+	*s = (struct Source) { 0 };
+}
+
+static bool sourceOpen(struct Source* s, const char* suffix) {
+	sourceClose(s);
+	char name[4200];
+	if (archive[0]) {
+		snprintf(name, sizeof(name), "%s%s", inside, suffix);
+		s->zipped = msu1Archive.open(archive, name, &s->size);
+		return s->zipped != NULL;
+	}
+	snprintf(name, sizeof(name), "%s%s", base, suffix);
+	s->file = fopen(name, "rb");
+	if (s->file) {
+		fseek(s->file, 0, SEEK_END);
+		s->size = ftell(s->file);
+		fseek(s->file, 0, SEEK_SET);
+	}
+	return s->file != NULL;
+}
+
+static bool sourceOpened(const struct Source* s) {
+	return s->file || s->zipped;
+}
+
+static void sourceSeek(struct Source* s, u32 offset) {
+	if (s->file) {
+		fseek(s->file, offset, SEEK_SET);
+	}
+	s->at = offset;
+}
+
+static size_t sourceRead(struct Source* s, u8* to, size_t bytes) {
+	if (s->file) {
+		size_t done = fread(to, 1, bytes, s->file);
+		s->at += done;
+		return done;
+	}
+	size_t done = msu1Archive.read(s->zipped, s->at, to, bytes);
+	s->at += done;
+	return done;
+}
+
 bool msu1Load(const char* path) {
 	msu1Unload();
 	snprintf(base, sizeof(base), "%s", path);
+	// "archive.zip#name": the game was in the zip, and the MSU-1's files are beside it there.
+	const char* mark = msu1Archive.open ? strchr(path, '#') : NULL;
+	if (mark) {
+		snprintf(archive, sizeof(archive), "%.*s", (int) (mark - path), path);
+		snprintf(inside, sizeof(inside), "%s", mark + 1);
+		// The data file is opened once, and kept.
+		return sourceOpen(&dataSource, ".msu");
+	}
 	char name[4200];
 	snprintf(name, sizeof(name), "%s.msu", base);
 	FILE* file = fopen(name, "rb");
@@ -36,58 +108,50 @@ bool msu1Load(const char* path) {
 }
 
 void msu1Unload(void) {
-	if (dataFile) {
-		fclose(dataFile);
-	}
-	if (audioFile) {
-		fclose(audioFile);
-	}
-	dataFile = audioFile = NULL;
+	sourceClose(&dataSource);
+	sourceClose(&audioSource);
+	archive[0] = inside[0] = 0;
+	audioHeld = ~0u;
 }
 
 static void dataOpen(void) {
-	if (dataFile) {
-		fclose(dataFile);
+	if (!archive[0] || !sourceOpened(&dataSource)) {
+		sourceOpen(&dataSource, ".msu");
 	}
-	char name[4200];
-	snprintf(name, sizeof(name), "%s.msu", base);
-	dataFile = fopen(name, "rb");
-	if (dataFile) {
-		fseek(dataFile, M.dataReadOffset, SEEK_SET);
+	if (sourceOpened(&dataSource)) {
+		sourceSeek(&dataSource, M.dataReadOffset);
 	}
 }
 
-static u32 readLittle(FILE* file, int bytes) {
+static u32 readLittle(struct Source* s, int bytes) {
 	u8 data[4] = { 0 };
-	if (fread(data, 1, bytes, file) != (size_t) bytes) {
+	if (sourceRead(s, data, bytes) != (size_t) bytes) {
 		return 0;
 	}
 	return data[0] | data[1] << 8 | data[2] << 16 | (u32) data[3] << 24;
 }
 
 static void audioOpen(void) {
-	if (audioFile) {
-		fclose(audioFile);
+	if (!archive[0] || audioHeld != M.audioTrack) {
+		char suffix[16];
+		snprintf(suffix, sizeof(suffix), "-%u.pcm", M.audioTrack);
+		audioHeld = sourceOpen(&audioSource, suffix) && archive[0] ? M.audioTrack : ~0u;
 	}
-	char name[4200];
-	snprintf(name, sizeof(name), "%s-%u.pcm", base, M.audioTrack);
-	audioFile = fopen(name, "rb");
-	if (audioFile) {
-		fseek(audioFile, 0, SEEK_END);
-		audioSize = ftell(audioFile);
-		fseek(audioFile, 0, SEEK_SET);
+	if (sourceOpened(&audioSource)) {
+		audioSize = audioSource.size;
+		sourceSeek(&audioSource, 0);
 		u8 header[4];
-		if (audioSize >= 8 && fread(header, 1, 4, audioFile) == 4 && !memcmp(header, "MSU1", 4)) {
-			M.audioLoopOffset = 8 + readLittle(audioFile, 4) * 4;
+		if (audioSize >= 8 && sourceRead(&audioSource, header, 4) == 4 && !memcmp(header, "MSU1", 4)) {
+			M.audioLoopOffset = 8 + readLittle(&audioSource, 4) * 4;
 			if (M.audioLoopOffset > audioSize) {
 				M.audioLoopOffset = 8;
 			}
 			M.audioError = false;
-			fseek(audioFile, M.audioPlayOffset, SEEK_SET);
+			sourceSeek(&audioSource, M.audioPlayOffset);
 			return;
 		}
-		fclose(audioFile);
-		audioFile = NULL;
+		sourceClose(&audioSource);
+		audioHeld = ~0u;
 	}
 	M.audioError = true;
 }
@@ -122,7 +186,7 @@ void msu1Reopen(void) {
 static void sample(void) {
 	s16 left = 0, right = 0;
 	if (M.audioPlay) {
-		if (audioFile) {
+		if (sourceOpened(&audioSource)) {
 			if (M.audioPlayOffset >= audioSize) {
 				if (!M.audioRepeat) {
 					M.audioPlay = false;
@@ -130,11 +194,11 @@ static void sample(void) {
 				} else {
 					M.audioPlayOffset = M.audioLoopOffset;
 				}
-				fseek(audioFile, M.audioPlayOffset, SEEK_SET);
+				sourceSeek(&audioSource, M.audioPlayOffset);
 			} else {
 				M.audioPlayOffset += 4;
-				left = (s16) readLittle(audioFile, 2) * M.audioVolume / 255;
-				right = (s16) readLittle(audioFile, 2) * M.audioVolume / 255;
+				left = (s16) readLittle(&audioSource, 2) * M.audioVolume / 255;
+				right = (s16) readLittle(&audioSource, 2) * M.audioVolume / 255;
 				if (dsp.mainvol.mute) {
 					left = right = 0;
 				}
@@ -166,11 +230,8 @@ u8 msu1Read(u32 address, u8 data) {
 		return REVISION | M.audioError << 3 | M.audioPlay << 4 | M.audioRepeat << 5 | M.audioBusy << 6 |
 		       M.dataBusy << 7;
 	case 1: {
-		if (M.dataBusy || !dataFile) {
-			return 0x00;
-		}
-		int byte = fgetc(dataFile);
-		if (byte == EOF) {
+		u8 byte;
+		if (M.dataBusy || !sourceOpened(&dataSource) || sourceRead(&dataSource, &byte, 1) != 1) {
 			return 0x00;
 		}
 		M.dataReadOffset++;
@@ -195,8 +256,8 @@ void msu1Write(u32 address, u8 data) {
 	case 3:
 		M.dataSeekOffset = (M.dataSeekOffset & 0x00ffffff) | (u32) data << 24;
 		M.dataReadOffset = M.dataSeekOffset;
-		if (dataFile) {
-			fseek(dataFile, M.dataReadOffset, SEEK_SET);
+		if (sourceOpened(&dataSource)) {
+			sourceSeek(&dataSource, M.dataReadOffset);
 		}
 		break;
 	case 4: M.audioTrack = (M.audioTrack & 0xff00) | data; break;

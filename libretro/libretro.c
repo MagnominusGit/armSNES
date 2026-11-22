@@ -7,6 +7,7 @@
 #include "composite.h"
 #include "options.h"
 #include "chips/gb.h"
+#include "zip.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -2114,16 +2115,32 @@ static void setMemoryMaps(void) {
 	environment(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
 }
 
+// An MSU-1 game's files in the zip it came in (zip.c).
+static void* msuZipOpen(const char* archive, const char* name, size_t* size) {
+	return zipOpen(archive, name, size);
+}
+
+static size_t msuZipRead(void* file, size_t offset, u8* to, size_t bytes) {
+	return zipRead(file, offset, to, bytes);
+}
+
+static void msuZipClose(void* file) {
+	zipClose(file);
+}
+
 // What every load ends with, once the cartridge and what is in its slots are in.
 static bool loadFinish(const char* gamePath) {
-	// The MSU-1's files sit beside the game: game.msu, game-1.pcm and on.
+	// The MSU-1's files sit beside the game: game.msu, game-1.pcm and on; or, for a game the frontend took
+	// from a zip ("game.zip#game.sfc"), in the zip, which is read from as they're needed.
 	if (gamePath) {
 		char path[4096];
 		snprintf(path, sizeof(path), "%s", gamePath);
+		char* mark = strchr(path, '#');
 		char* dot = strrchr(path, '.');
-		if (dot) {
+		if (dot && (!mark || dot > mark)) {
 			*dot = 0;
 		}
+		msu1Archive = (struct Msu1Archive) { msuZipOpen, msuZipRead, msuZipClose };
 		cartLoadMsu1(path);
 	}
 

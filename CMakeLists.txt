@@ -73,9 +73,11 @@ target_link_libraries(snesrun-dot armsnes-dot)
 
 # The libretro core, with the Armulators pieces it uses (libretro.h, core options) copied into shared/
 # so it builds without the submodule.
-add_library(armsnes_libretro SHARED libretro/libretro.c libretro/composite.c shared/libretro/options.c)
+# zlib: an MSU-1 game's files read from the zip it came in.
+find_package(ZLIB REQUIRED)
+add_library(armsnes_libretro SHARED libretro/libretro.c libretro/composite.c libretro/zip.c shared/libretro/options.c)
 target_include_directories(armsnes_libretro PRIVATE src shared/libretro)
-target_link_libraries(armsnes_libretro armsnes)
+target_link_libraries(armsnes_libretro armsnes ZLIB::ZLIB)
 set_target_properties(armsnes_libretro PROPERTIES PREFIX "" C_VISIBILITY_PRESET hidden)
 if(NOT APPLE AND NOT WIN32)
 	target_link_options(armsnes_libretro PRIVATE -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/shared/libretro/link.T -Wl,--no-undefined)
@@ -87,8 +89,8 @@ option(ARMSNES_APP "Build armsnes, the standalone SDL2 app" OFF)
 if(ARMSNES_APP)
 	add_subdirectory(armulators)
 	armulators_app(armsnes-app DESCRIPTOR ${CMAKE_CURRENT_SOURCE_DIR}/app.cmake
-		SOURCES libretro/libretro.c libretro/composite.c app/hooks.c INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/src
-		LIBS armsnes armulators-libretro)
+		SOURCES libretro/libretro.c libretro/composite.c libretro/zip.c app/hooks.c INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/src
+		LIBS armsnes armulators-libretro ZLIB::ZLIB)
 endif()
 
 add_executable(coretest tests/coretest.c)

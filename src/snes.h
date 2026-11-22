@@ -1630,8 +1630,15 @@ struct Msu1 {
 };
 extern struct Msu1 msu1;
 
-// Whether path.msu is there; its tracks are path-1.pcm and on.
+// Whether path.msu is there; its tracks are path-1.pcm and on. A path "archive#name" names them in a zip,
+// read through the frontend side's msu1Archive (a file in it opened, read at an offset, and closed).
 bool msu1Load(const char* path);
+struct Msu1Archive {
+	void* (*open)(const char* archive, const char* name, size_t* size);
+	size_t (*read)(void* file, size_t offset, u8* to, size_t bytes);
+	void (*close)(void* file);
+};
+extern struct Msu1Archive msu1Archive;
 void msu1Unload(void);
 void msu1Power(void);
 void msu1Reopen(void);

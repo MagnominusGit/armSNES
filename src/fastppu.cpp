@@ -214,6 +214,18 @@ void Publish(void)
  WakeIfSleeping();
 }
 
+// The same, but sleeping threads woken only every WAKE_LINES lines: a line comes about every 60
+// microseconds, and woken for each, the threads slept again between them, so the CPU's thread made a
+// system call a line to wake them, and they spun waiting. Threads still awake take each line at once.
+enum { WAKE_LINES = 8 };
+
+void PublishLine(void)
+{
+ __atomic_store_n(&RingHead, HeadLocal, __ATOMIC_SEQ_CST);
+ if(!(LinesGiven % WAKE_LINES))
+  WakeIfSleeping();
+}
+
 // VRAM and CGRAM writes are given to the threads only with the line or fence that always follows them.
 inline void Push(uint64 c)
 {
@@ -285,7 +297,10 @@ extern "C" FastPpuLine* fastPpuNext(bool threaded)
   return &Scratch;
 
  while(LinesBehind() >= POOL)
+ {
+  Publish();
   sched_yield();
+ }
 
  return &Pool[LinesGiven & (POOL - 1)];
 }
@@ -299,7 +314,7 @@ extern "C" void fastPpuSubmit(FastPpuLine* l)
  }
 
  Push((uint64)CMD_LINE << 56 | (LinesGiven++ & (POOL - 1)));
- Publish();
+ PublishLine();
 }
 
 extern "C" void fastPpuVram(uint32_t address, uint16_t data)

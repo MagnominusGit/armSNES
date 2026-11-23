@@ -1751,7 +1751,7 @@ static struct Block* blockFind(void) {
 
 // Whether a block can go on: nothing sa1Run sees to between instructions, the timer off, and nothing
 // lastCycle would raise an interrupt for.
-static bool blockGoOn(void) {
+static inline bool blockGoOn(void) {
 	if ((ahead.on && ahead.at != ~0ull) || R.wai || R.stp || sa1.io.sa1_rdyb || sa1.io.sa1_resb ||
 	    sa1.status.interruptPending || (sa1.io.hen | sa1.io.ven) || sa1.io.hvselb) {
 		return false;

@@ -89,6 +89,8 @@ extern bool systemClearPowerOn;
 extern bool systemBalanced;
 // Fast mode: Balanced, with whole lines drawn by snes_faust's renderer (fastppu.cpp).
 extern bool systemFast;
+// Fast mode's SA-1 recompiler, where there is one (x86-64, AArch64): the same results either way.
+extern bool systemRecompiler;
 // Fast mode: a line's sprites past the 32 and tiles past the 34 the S-PPU takes are drawn anyway. What
 // the game reads (the range and time over flags) is the same.
 extern bool ppuNoSpriteLimit;
@@ -1046,6 +1048,8 @@ void sa1Loaded(void);
 void sdd1Loaded(void);
 // Fast mode: the SA-1's next instruction, through the plain 65816 (sa1fast.c), and the accesses it makes.
 void sa1FastInstruction(void);
+// The same for an instruction whose bytes a block of sa1.c's kept, with its fetches' steps already taken.
+void sa1BlockInstruction(const u8* bytes);
 u8 sa1FastRead(u32 address);
 u8 sa1FastFetch(u32 address);
 void sa1FastWrite(u32 address, u8 data);

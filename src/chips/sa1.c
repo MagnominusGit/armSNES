@@ -305,12 +305,16 @@ static const u8* romPageCPU(u32 target) {
 // sa1ReadRomCPU): 0-3 for 00-3f,80-bf:8000-ffff, 4-7 for c0-ff.
 static u32 romBlocksSA1[8];
 
+// Blocks of an older generation are gone: the SA-1's ROM banks changed (see sa1Run's blocks).
+static u32 blockGeneration = 1;
+
 // Fast mode: the page of the ROM the SA-1 last fetched instruction bytes from (~0: none).
 static u32 fetchPage = ~0u;
 static const u8* fetchBytes;
 
 static void romPagesCPU(void) {
 	fetchPage = ~0u;
+	blockGeneration++;
 	busFastMap(sa1ReadRomCPU, romPageCPU);
 	for (u32 block = 0; block < 8; ++block) {
 		u32 address = romAddressCPU(block < 4 ? block << 20 : 0x400000 | (block - 4) << 20);
@@ -1618,6 +1622,184 @@ static void idleSkip(void) {
 	}
 }
 
+// Fast mode: runs of the SA-1's instructions from the ROM, decoded once and kept, each with its bytes
+// and the steps its fetches take (one each, and one more while the S-CPU's last access was to the ROM,
+// which can't change while the SA-1 runs). An instruction's fetches all come before its other accesses,
+// so its steps are taken at once, and it then runs through the plain 65816 from the kept bytes
+// (sa1block.c). With the timer on, a step could raise its IRQ before lastCycle looks, so blocks run
+// only with it off. A block ends after an instruction that jumps or changes M, X or E, and before one
+// that fetches after another access (JSL, JSR (a,x)) or waits or stops.
+enum { BLOCK_OPS = 32, BLOCK_SETS = 1 << 12 };
+
+struct BlockOp {
+	u32 pc;
+	u8 steps;
+	u8 bytes[4];
+};
+
+static struct Block {
+	u32 key;  // PC, and M, X, the ROM and I-RAM conflicts and E in bits 24-28
+	u32 generation;
+	u8 count;
+	struct BlockOp ops[BLOCK_OPS];
+} blocks[BLOCK_SETS];
+// Each opcode's length with an 8-bit A and index registers; +M and +X ones are a byte longer with a
+// 16-bit A or index registers.
+static const u8 opLength[256] = {
+	2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 4, 2, 2, 2, 2, 2, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 4,
+	3, 2, 4, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 4, 2, 2, 2, 2, 2, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 4,
+	1, 2, 2, 2, 3, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 4, 2, 2, 2, 2, 3, 2, 2, 2, 1, 3, 1, 1, 4, 3, 3, 4,
+	1, 2, 3, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 4, 2, 2, 2, 2, 2, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 4,
+	2, 2, 3, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 4, 2, 2, 2, 2, 2, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 4,
+	2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 4, 2, 2, 2, 2, 2, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 4,
+	2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 4, 2, 2, 2, 2, 2, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 4,
+	2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 4, 2, 2, 2, 2, 3, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 4,
+};
+
+static bool longerWithM(u8 op) {
+	return op == 0x09 || op == 0x29 || op == 0x49 || op == 0x69 || op == 0x89 || op == 0xa9 || op == 0xc9 || op == 0xe9;
+}
+
+static bool longerWithX(u8 op) {
+	return op == 0xa0 || op == 0xa2 || op == 0xc0 || op == 0xe0;
+}
+
+// Ends a block: BRA, BRL, jumps, calls, returns, BRK, COP, the block moves, and REP, SEP, PLP and XCE. A
+// block goes on past a conditional branch, and leaves it where the branch is taken.
+static bool endsBlock(u8 op) {
+	switch (op) {
+	case 0x80: case 0x82:
+	case 0x4c: case 0x5c: case 0x6c: case 0x7c: case 0xdc: case 0x20: case 0x60: case 0x6b: case 0x40:
+	case 0x00: case 0x02: case 0x44: case 0x54: case 0xc2: case 0xe2: case 0x28: case 0xfb: case 0x22:
+		return true;
+	}
+	return false;
+}
+
+// Left to sa1FastInstruction: JSL (but in a block for host code) and JSR (a,x) fetch after pushing, WAI
+// and STP stop the SA-1.
+static bool leftOut(u8 op, bool host) {
+	// The recompiler's host code takes JSL's fetches in order.
+	if (op == 0x22 && host && !EF) {
+		return false;
+	}
+	return op == 0x22 || op == 0xfc || op == 0xcb || op == 0xdb;
+}
+
+// A byte of the ROM the SA-1 reads as it is, wherever it's mapped (not a memory pack or the S-CPU's
+// vectors, which can be replaced).
+static bool romPlain(u32 address, u8* data) {
+	if ((address & 0x408000) != 0x008000 && (address & 0xc00000) != 0xc00000) {
+		return false;
+	}
+	u32 at = address;
+	if ((at & 0x408000) == 0x008000) {
+		at = (at & 0x800000) >> 2 | (at & 0x3f0000) >> 1 | (at & 0x007fff);
+	}
+	u32 block = at < 0x400000 ? at >> 20 : 4 + (at >> 20 & 3);
+	if (romBlocksSA1[block] == ~0u || (at & 0xffffe0) == 0x007fe0) {
+		return false;
+	}
+	*data = cart.rom[busMirror(romBlocksSA1[block] | (at & 0x0fffff), cart.romSize)];
+	return true;
+}
+
+// The block at PC; with host, one for the recompiler.
+static struct Block* blockMake(struct Block* b, u32 key, bool host) {
+	b->key = key;
+	b->generation = blockGeneration;
+	b->count = 0;
+	u32 pc = PC.d, cost = 1 + romConflict();
+	while (b->count < BLOCK_OPS) {
+		struct BlockOp* o = &b->ops[b->count];
+		u8 op;
+		if (!romPlain(pc, &op) || leftOut(op, host)) {
+			break;
+		}
+		u32 length = opLength[op] + (longerWithM(op) && !MF) + (longerWithX(op) && !XF);
+		bool plain = true;
+		for (u32 n = 0; n < length && plain; ++n) {
+			plain = romPlain((pc & 0xff0000) | (u16) (pc + n), &o->bytes[n]);
+		}
+		if (!plain) {
+			break;
+		}
+		o->pc = pc;
+		o->steps = length * cost;
+		b->count++;
+		if (endsBlock(op)) {
+			break;
+		}
+		pc = (pc & 0xff0000) | (u16) (pc + length);
+	}
+	return b->count ? b : NULL;
+}
+
+// What a block is made for: PC, M, X, the ROM and I-RAM conflicts, E and the BW-RAM conflict.
+static u32 blockKey(void) {
+	return PC.d | MF << 24 | XF << 25 | romConflict() << 26 | iramConflict() << 27 | EF << 28 | bwramConflict() << 29;
+}
+
+static struct Block* blockFind(void) {
+	u32 key = blockKey();
+	struct Block* b = &blocks[(key ^ key >> 12 ^ key >> 24) & (BLOCK_SETS - 1)];
+	if (b->key == key && b->generation == blockGeneration && b->count) {
+		return b;
+	}
+	return blockMake(b, key, false);
+}
+
+// Whether a block can go on: nothing sa1Run sees to between instructions, the timer off, and nothing
+// lastCycle would raise an interrupt for.
+static bool blockGoOn(void) {
+	if ((ahead.on && ahead.at != ~0ull) || R.wai || R.stp || sa1.io.sa1_rdyb || sa1.io.sa1_resb ||
+	    sa1.status.interruptPending || (sa1.io.hen | sa1.io.ven) || sa1.io.hvselb) {
+		return false;
+	}
+	if (sa1.io.sa1_nmi && !sa1.io.sa1_nmicl) {
+		return false;
+	}
+	return R.i || !((sa1.io.timer_irqen && !sa1.io.timer_irqcl) || (sa1.io.dma_irqen && !sa1.io.dma_irqcl) ||
+	                (sa1.io.sa1_irq && !sa1.io.sa1_irqcl));
+}
+
+#include "sa1_jit.inc"
+
+// The instructions of the block at PC, as sa1Run would run them one by one: false if there is none.
+static bool blockRun(void) {
+	if (sa1.io.hen | sa1.io.ven) {
+		return false;
+	}
+#ifdef SA1_JIT
+	if (!blockGoOn()) {
+		return false;
+	}
+	void* code = systemRecompiler ? jitFind() : NULL;
+	if (code) {
+		((void (*)(void)) code)();
+		return true;
+	}
+#endif
+	struct Block* b = blockFind();
+	if (!b) {
+		return false;
+	}
+	for (u32 n = 0; n < b->count; ++n) {
+		const struct BlockOp* o = &b->ops[n];
+		if (n) {
+			// What sa1Run looks at between instructions; the PC only moves on in a block.
+			if (cpu.th.clock < sa1.th.clock || (ahead.on && ahead.at != ~0ull) || R.wai || R.stp || sa1.io.sa1_rdyb ||
+			    sa1.io.sa1_resb || sa1.status.interruptPending || (sa1.io.hen | sa1.io.ven) || PC.d != o->pc) {
+				return true;
+			}
+			loop.last = PC.d;
+		}
+		fastSteps(o->steps);
+		sa1BlockInstruction(o->bytes);
+	}
+	return true;
+}
+
 void sa1Run(void) {
 	// The S-CPU has run since: whatever was known of a loop is gone. In Fast mode it is kept unless the
 	// S-CPU wrote what the SA-1 sees; only the stalls its accesses cause the SA-1 can change.
@@ -1698,9 +1880,11 @@ dispatch:
 			loop.r = R;
 		}
 		loop.last = PC.d;
-		// Fast mode: the instruction at once, through the plain 65816.
+		// Fast mode: the instruction at once, through the plain 65816, from a block if it's in one.
 		if (systemFast) {
-			sa1FastInstruction();
+			if (!blockRun()) {
+				sa1FastInstruction();
+			}
 			goto main;
 		}
 		FETCH(R.op);

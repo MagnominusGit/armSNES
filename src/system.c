@@ -12,6 +12,7 @@ struct System sys;
 bool systemClearPowerOn;
 bool systemBalanced;
 bool systemFast;
+bool systemRecompiler = true;
 bool systemSoundThread;
 bool systemPictureThread;
 bool systemFrameAtTop;

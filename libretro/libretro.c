@@ -1138,6 +1138,12 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"Skips drawing frames to keep up: Auto when sound runs short, or this many after each frame shown. "
 		"Fast mode only; not in netplay.",
 		NULL, "system", { { "Off", NULL }, { "Auto", NULL }, { "1", NULL }, { "2", NULL }, { "3", NULL }, { NULL, NULL } }, "Off" },
+#if defined(__x86_64__) || defined(__aarch64__)
+	{ "armsnes_sa1_recompiler", "SA-1 Recompiler", NULL,
+		"Fast mode runs the SA-1's busiest code as host code: same results, usually faster. Off runs it the "
+		"plain way.",
+		NULL, "system", { { "On", NULL }, { "Off", NULL }, { NULL, NULL } }, "On" },
+#endif
 	{ "armsnes_region", "Region", NULL,
 		"NTSC (60 fps) or PAL (50 fps). Auto follows the game's header. Changing it restarts the game.",
 		NULL, "system", { { "Auto", NULL }, { "NTSC", NULL }, { "PAL", NULL }, { NULL, NULL } }, "Auto" },
@@ -1332,6 +1338,7 @@ static bool showOptions(void) {
 	} shown[] = {
 		{ "armsnes_threads", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_frame_skip", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
+		{ "armsnes_sa1_recompiler", !optionIs(environment, "armsnes_mode", "Balanced") && !optionIs(environment, "armsnes_mode", "Exact") },
 		{ "armsnes_hd_mode7", !optionIs(environment, "armsnes_mode", "Exact") && optionIs(environment, "armsnes_filter", "Off") },
 		{ "armsnes_hd_scales", !optionIs(environment, "armsnes_mode", "Exact") && optionIs(environment, "armsnes_filter", "Off") },
 		{ "armsnes_hd_mode7_perspective", !optionIs(environment, "armsnes_mode", "Exact") && optionIs(environment, "armsnes_filter", "Off") &&
@@ -1914,6 +1921,7 @@ static void readOptions(void) {
 	}
 	// Fast mode's threads: the sound's and the picture's, the picture's only, or none, for devices whose
 	// cores are busy.
+	systemRecompiler = !optionIs(environment, "armsnes_sa1_recompiler", "Off");
 	struct retro_variable threads = { "armsnes_threads", NULL };
 	const char* threading = environment(RETRO_ENVIRONMENT_GET_VARIABLE, &threads) && threads.value ? threads.value : "All";
 	// All: as many as the cores the frontend gives the core allow, the sound's with three or more.

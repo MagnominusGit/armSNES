@@ -42,6 +42,7 @@ add_library(armsnes STATIC
 	src/chips/necdsp.c
 	src/chips/sa1.c
 	src/chips/sa1fast.c
+	src/chips/sa1block.c
 	src/chips/gsu.c
 	src/chips/cx4.c
 	src/chips/spc7110.c

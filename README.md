@@ -73,6 +73,7 @@ with Layer Selection or Channel Selection on.
 | System | Mode | Fast, Balanced, Exact |
 | | Fast Mode Threads | All, Picture Only, Off |
 | | Frame Skip (Fast) | Off, Auto, 1 to 3 |
+| | SA-1 Recompiler (Fast, x86-64 and AArch64) | On, Off |
 | | Region (restarts the game) | Auto (from the header), NTSC, PAL |
 | | Power-On RAM | Cleared, Patterned |
 | | CPU Clock, Super FX Clock, SA-1 Clock | 100%, 25% to 400% |

@@ -1597,6 +1597,27 @@ static bool countersSkip(u64 steps) {
 	return true;
 }
 
+// Fast mode: an SA-1 that waits for an interrupt or sleeps, with its H/V timer off and no interrupt
+// to find, stays so until the S-CPU runs again: the steps that end by the S-CPU's clock, taken in one.
+static void idleSkip(void) {
+	if (!systemFast || (sa1.io.hen | sa1.io.ven) || (sa1.io.sa1_nmi && !sa1.io.sa1_nmicl)) {
+		return;
+	}
+	if (R.wai && !R.i &&
+	    ((sa1.io.timer_irqen && !sa1.io.timer_irqcl) || (sa1.io.dma_irqen && !sa1.io.dma_irqcl) ||
+	     (sa1.io.sa1_irq && !sa1.io.sa1_irqcl))) {
+		return;
+	}
+	u64 step = sa1.th.scalar * 2;
+	if (sa1.th.clock + step > cpu.th.clock) {
+		return;
+	}
+	u64 steps = (cpu.th.clock - sa1.th.clock) / step;
+	if (countersSkip(steps)) {
+		sa1.th.clock += steps * step;
+	}
+}
+
 void sa1Run(void) {
 	// The S-CPU has run since: whatever was known of a loop is gone. In Fast mode it is kept unless the
 	// S-CPU wrote what the SA-1 sees; only the stalls its accesses cause the SA-1 can change.
@@ -1620,6 +1641,7 @@ dispatch:
 		// A waiting SA-1 idles until an interrupt is looked for and found, then idles once more: a step
 		// at a time, so that Balanced mode, which stops only here, can leave it for the S-CPU.
 		if (R.wai) {
+			idleSkip();
 			lastCycle();
 			IDLE();
 			if (!R.wai) {
@@ -1634,6 +1656,7 @@ dispatch:
 		}
 		if (sa1.io.sa1_rdyb || sa1.io.sa1_resb) {
 			// Asleep
+			idleSkip();
 			STEP();
 			goto done;
 		}

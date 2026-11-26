@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  * Ported from ares (ISC); see LICENSES/ISC-ares.txt. */
 #include "../snes.h"
-#include "gb.h"
+#include "sgb.h"
 
 #include <string.h>
 
@@ -40,6 +40,7 @@ void icdPower(bool reset) {
 	I.bitData = 0;
 	I.bitOffset = 0;
 	I.previousP15 = false;
+	I.joypInput = 0xf;
 	memset(I.output, 0xff, sizeof(I.output));
 	I.readBank = 0;
 	I.readAddress = 0;
@@ -50,16 +51,16 @@ void icdPower(bool reset) {
 	I.mltReq = 0;
 	I.hcounter = 0;
 	I.vcounter = 0;
-	if (gbLoaded()) {
-		gbReset();
+	if (sgbLoaded()) {
+		sgbReset();
 	}
 }
 
 // --- The Game Boy's side ---
 
 // Each line comes as its pixels are done; line 0 starts a frame. Each eight pixels make a tile row's two
-// bytes, a bit of each colour index a pixel.
-void icdLine(unsigned ly, const uint32_t* pixels) {
+// bytes, a bit of each shade a pixel.
+void icdLine(unsigned ly, const uint16_t* shades) {
 	if (ly >= 144) {
 		return;
 	}
@@ -71,7 +72,7 @@ void icdLine(unsigned ly, const uint32_t* pixels) {
 	for (int tile = 0; tile < 20; tile++) {
 		u8 low = 0, high = 0;
 		for (int x = 0; x < 8; x++) {
-			u8 color = 3 - (pixels[tile * 8 + x] >> 4 & 3);
+			u8 color = shades[tile * 8 + x] & 3;
 			low = low << 1 | (color & 1);
 			high = high << 1 | (color >> 1 & 1);
 		}
@@ -111,6 +112,8 @@ unsigned icdJoypWrite(unsigned p14, unsigned p15) {
 	if (!p15) {
 		input &= joypad >> 4;
 	}
+
+	I.joypInput = input;
 
 	// The packets.
 	if (!p14 && !p15) {
@@ -165,9 +168,13 @@ unsigned icdJoypWrite(unsigned p14, unsigned p15) {
 	return input;
 }
 
-// Its sound comes a sample every two clocks.
+unsigned icdJoypRead(void) {
+	return I.joypInput;
+}
+
+// Its sound comes a sample every 128 clocks.
 static void soundSample(s16 left, s16 right) {
-	mixerInput(&I.sound, left, right, 32040 * 2, I.clockFrequency);
+	mixerInput(&I.sound, left, right, 32040 * 128, I.clockFrequency);
 }
 
 // --- Running ---
@@ -175,17 +182,17 @@ static void soundSample(s16 left, s16 right) {
 void icdRun(void) {
 	do {
 		// Without a game in the slot the Game Boy stays halted.
-		if ((I.r6003 & 0x80) && gbLoaded()) {
+		if ((I.r6003 & 0x80) && sgbLoaded()) {
 			unsigned samples;
-			const unsigned* audio;
-			u32 dots = gbRun(ICD_SLICE, &samples, &audio);
+			const int16_t* audio;
+			u32 dots = sgbRun(ICD_SLICE, &samples, &audio);
 			for (unsigned n = 0; n < samples; n++) {
-				soundSample((s16) (audio[n] & 0xffff), (s16) (audio[n] >> 16));
+				soundSample(audio[2 * n], audio[2 * n + 1]);
 			}
 			threadStep(&I.th, dots);
 		} else {
-			// Halted: silence, two clocks to a sample.
-			for (int n = 0; n < ICD_SLICE / 2; n++) {
+			// Halted: silence, 128 clocks to a sample.
+			for (int n = 0; n < ICD_SLICE / 128; n++) {
 				soundSample(0, 0);
 			}
 			threadStep(&I.th, ICD_SLICE);

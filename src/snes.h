@@ -1558,6 +1558,8 @@ struct Icd {
 	u8 r7000[16];
 	u8 mltReq;
 	u8 hcounter, vcounter;
+	// The four input bits JOYP reads, as its last write left them.
+	u8 joypInput;
 	struct Mixer sound;
 };
 extern struct Icd icd;

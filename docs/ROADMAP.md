@@ -86,9 +86,9 @@ Phase 3: the board database is generated from ares's (`tools/boards.py`). Chips 
   the system folder), and its save RAM is the game's save. Slot B maps its own save RAM where ares
   maps the slot's ROM; with that one difference copied, two cartridges match ares. The Sufami Turbo
   subsystem puts one in slot B;
-- the Super Game Boy's ICD2, with Gambatte as its Game Boy. A `.gb` or `.gbc` game loads with
-  `SGB1.sfc` and `sgb1.boot.rom` from the system folder, and the game's save RAM is the save.
-  Gambatte tells the ICD2 of each line as its pixels are done and of each JOYP write. Next to ares
+- the Super Game Boy's ICD2, with armGB (armGBA's Game Boy core) as its Game Boy. A `.gb` or `.gbc`
+  game loads with `SGB1.sfc` and `sgb1.boot.rom` from the system folder, and the game's save RAM is
+  the save. armGB tells the ICD2 of each line as its pixels are done and of each JOYP write. Next to ares
   the picture is the same until the two Game Boys' timing parts, a few hundred frames in, and looks
   the same after. The Game Boy's sound is averaged down to the DSP's rate and added to it. The SGB2
   runs on its own oscillator; a cartridge's clock (MBC3, HuC3) is kept as armGBA's .rtc file. The

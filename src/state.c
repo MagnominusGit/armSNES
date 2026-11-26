@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "snes.h"
 #include "fastppu.h"
-#include "chips/gb.h"
+#include "chips/sgb.h"
 
 // A saved state is the machine and nothing else: the processors' structs as they are, the cartridge's
 // RAM, the part of the next frame already drawn, and a header that says which build's layout they are
@@ -61,7 +61,7 @@ static u32 extraSize(void) {
 	bsData(&pack);
 	sufamiRam(0, &a);
 	sufamiRam(1, &b);
-	return psram + pack + a + b + gbStateSize();
+	return psram + pack + a + b + sgbStateSize();
 }
 
 static u8* putExtra(u8* out) {
@@ -80,9 +80,9 @@ static u8* putExtra(u8* out) {
 		memcpy(out, data, size);
 		out += size;
 	}
-	if (gbStateSize()) {
-		gbStateSave(out);
-		out += gbStateSize();
+	if (sgbStateSize()) {
+		sgbStateSave(out);
+		out += sgbStateSize();
 	}
 	return out;
 }
@@ -103,9 +103,9 @@ static const u8* getExtra(const u8* in) {
 		memcpy(data, in, size);
 		in += size;
 	}
-	if (gbStateSize()) {
-		gbStateLoad(in, gbStateSize());
-		in += gbStateSize();
+	if (sgbStateSize()) {
+		sgbStateLoad(in, sgbStateSize());
+		in += sgbStateSize();
 	}
 	return in;
 }

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  * Ported from ares (ISC); see LICENSES/ISC-ares.txt. */
 #include "snes.h"
-#include "chips/gb.h"
+#include "chips/sgb.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -773,7 +773,7 @@ bool cartLoad(const u8* data, u32 size) {
 	}
 	bsLoad(NULL, 0);
 	sufamiInsert(0, NULL, 0);
-	gbUnload();
+	sgbUnload();
 	msu1Unload();
 	sufamiInsert(1, NULL, 0);
 	if (cart.epsonRtc) {
@@ -984,11 +984,11 @@ bool cartLoadMsu1(const char* path) {
 }
 
 bool cartInsertGameBoy(const u8* rom, size_t size, const u8* boot, size_t bootSize) {
-	if (!cart.icd || !gbLoad(rom, size, boot, bootSize)) {
+	if (!cart.icd || !sgbLoad(rom, size, boot, bootSize)) {
 		return false;
 	}
 	unsigned saveSize;
-	cart.saveRam = gbSaveRam(&saveSize);
+	cart.saveRam = sgbSaveRam(&saveSize);
 	cart.saveRamSize = saveSize;
 	return true;
 }

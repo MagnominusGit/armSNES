@@ -6,7 +6,7 @@
 #include "fastppu.h"
 #include "composite.h"
 #include "options.h"
-#include "chips/gb.h"
+#include "chips/sgb.h"
 #include "zip.h"
 
 #include <stdarg.h>
@@ -1801,7 +1801,7 @@ void retro_run(void) {
 			rtcLoad(rtcMemory, (s64) time(NULL));
 		}
 		if (cart.icd) {
-			gbRtcRead();
+			sgbRtcRead();
 		}
 	}
 	satellaviewNow = (s64) time(NULL);
@@ -1842,7 +1842,7 @@ void retro_run(void) {
 		rtcSave(rtcMemory, (s64) time(NULL));
 	}
 	if (cart.icd) {
-		gbRtcWrite();
+		sgbRtcWrite();
 	}
 	if (sys.frames % 300 == 0) {
 		packKeep();
@@ -2368,7 +2368,7 @@ void* retro_get_memory_data(unsigned id) {
 	case MEMORY_GAME_BOY_CLOCK: {
 		// A Super Game Boy's Game Boy cartridge's clock.
 		size_t size = 0;
-		return cart.icd ? gbRtc(&size) : NULL;
+		return cart.icd ? sgbRtc(&size) : NULL;
 	}
 	case MEMORY_PACK: {
 		u32 size = 0;
@@ -2400,7 +2400,7 @@ size_t retro_get_memory_size(unsigned id) {
 		// Fall through.
 	case MEMORY_GAME_BOY_CLOCK: {
 		size_t size = 0;
-		return cart.icd && gbRtc(&size) ? size : 0;
+		return cart.icd && sgbRtc(&size) ? size : 0;
 	}
 	case MEMORY_PACK: {
 		u32 size = 0;

@@ -31,7 +31,7 @@ the others, and states are the same on ARM and x86, so run-ahead and netplay wor
   own boards.
 - Sufami Turbo cartridges (`.st`, with `STBIOS.bin`).
 - Game Boy and Game Boy Color games (`.gb`, `.gbc`) in the Super Game Boy, with `SGB1.sfc` and
-  `sgb1.boot.rom`. The Game Boy is Gambatte, as in armGBA.
+  `sgb1.boot.rom`. The Game Boy is armGB, armGBA's Game Boy core.
 - MSU-1 games (`game.msu` and the tracks `game-1.pcm` on, beside the game).
 - The event and pirate cartridges whose chips ares or MAME know.
 - In RetroArch, its subsystems put a second cartridge in a Sufami Turbo's slot B, a memory pack in a
@@ -214,6 +214,6 @@ The plan and how far it has got are in [docs/ROADMAP.md](docs/ROADMAP.md).
 ## License
 
 GPL-2.0-or-later; see [LICENSE](LICENSE). The code ported from ares keeps ares's notice, in
-[LICENSES/ISC-ares.txt](LICENSES/ISC-ares.txt). `gambatte/` is Gambatte-Speedrun's core under
-GPL-2.0 (its [COPYING](gambatte/COPYING)), so the built core is GPL-2.0. The app's own licenses are
-in `armulators/`.
+[LICENSES/ISC-ares.txt](LICENSES/ISC-ares.txt). `armgb/` is armGBA's Game Boy core (its `src/gb`),
+GPL-2.0-or-later, with SameBoy's notice for the parts that follow it in
+[LICENSES/SameBoy.txt](LICENSES/SameBoy.txt). The app's own licenses are in `armulators/`.

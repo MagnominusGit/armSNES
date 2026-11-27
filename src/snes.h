@@ -1050,7 +1050,8 @@ void sa1FastInstruction(void);
 void sa1BlockInstruction(const u8* bytes);
 u8 sa1FastRead(u32 address);
 u8 sa1FastFetch(u32 address);
-void sa1FastWrite(u32 address, u8 data);
+// sa1FastWrite: 1 where only memory was written, which changes nothing a block runs on.
+u32 sa1FastWrite(u32 address, u8 data);
 void sa1FastIdle(void);
 void sa1FastIdleJump(void);
 void sa1FastLastCycle(void);

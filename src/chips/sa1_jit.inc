@@ -66,11 +66,25 @@
 #include "../../shared/emit/a64/emit.h"
 #endif
 
-enum { JIT_CODE_SIZE = 32 << 20, JIT_BLOCK_MOST = 64 << 10 };
+// Past the shared code, the buffer is in stretches: blocks' code in the first part of one, and in the
+// rest what they seldom run (the paths after a call out, decimal mode, a chain still to be found) and the
+// bytes they were made from, close enough for any branch between the two.
+enum { JIT_CODE_SIZE = 32 << 20, JIT_STRETCH = 1 << 20, JIT_HOT_PART = 704 << 10, JIT_BLOCK_MOST = 64 << 10 };
 
 #define SO(field) ((u32) offsetof(struct Sa1, field))
 
-static struct Emitter jE;
+// The part of the stretch being written, and the other.
+static struct Emitter jE, jAway;
+
+static void jStepsOut(void);
+static void jStepsKept(void);
+
+static void jSwap(void) {
+	jStepsOut();
+	struct Emitter part = jE;
+	jE = jAway;
+	jAway = part;
+}
 
 // A block's exit to a known block further on: that block's code once it's been found (blockRun fills it
 // in after an exit through it found it empty, jitPending), so the exit goes straight on as sa1Run would.
@@ -151,32 +165,42 @@ static void jShl(int d, int n) {
 static const int jCc[4] = { CC_E, CC_NE, CC_AE, CC_B };
 
 static void jCmpI(int a, u32 imm) {
+	jStepsOut();
 	xAluI(&jE, X_CMP, 4, R(jv[a]), (int32_t) imm);
 }
 
 static void jCmp(int a, int b) {
+	jStepsOut();
 	xAluRR(&jE, X_CMP, 4, R(jv[a]), jv[b]);
 }
 
 // The flag byte at off = the condition of the last compare.
 static void jSetFlag(int cond, u32 off) {
+	jStepsKept();
 	xSetcc(&jE, jCc[cond], M(JB, off));
 }
 
 static uint8_t* jBranch(int cond) {
+	jStepsKept();
 	return xJcc(&jE, jCc[cond], NULL);
 }
 
 static uint8_t* jJump(void) {
+	jStepsOut();
 	return xJmp(&jE, NULL);
 }
 
 static void jJumpTo(const uint8_t* to) {
+	jStepsOut();
 	xJmp(&jE, to);
 }
 
+// A branch in either part to here, unless code has been left out of a part that's full.
 static void jPatch(uint8_t* site) {
-	patchHere(&jE, site);
+	jStepsOut();
+	if (jE.p <= jE.end && jAway.p <= jAway.end) {
+		patchRel32(site, jE.p);
+	}
 }
 
 static void jArg(int n, int v) {
@@ -226,6 +250,7 @@ static void jSyncInMake(void) {
 
 // A call: the clock out before it and in after; its result is in value 0.
 static void jCall(const void* fn) {
+	jStepsOut();
 	xCall(&jE, jSyncOut);
 	xMovI64(&jE, R11, (u64) (uintptr_t) fn);
 	xCallR(&jE, R11);
@@ -271,11 +296,12 @@ static void jCalledSet(u32 imm) {
 	jStAbs8(&jitCalled, imm);
 }
 
-// A branch taken while nothing has called out.
-static uint8_t* jIfNotCalled(void) {
+// A branch taken once something has called out.
+static uint8_t* jIfCalled(void) {
+	jStepsOut();
 	xMovI64(&jE, R11, (u64) (uintptr_t) &jitCalled);
 	xAluI(&jE, X_CMP, 1, M(R11, 0), 0);
-	return xJcc(&jE, CC_E, NULL);
+	return xJcc(&jE, CC_NE, NULL);
 }
 
 // imm stored at two offsets, width bytes each.
@@ -299,25 +325,28 @@ static void jShrFrom(int d, int a, int n) {
 	xShiftI(&jE, X_SHR, 4, R(jv[d]), n);
 }
 
-// The start of the instruction run last (loop.last), kept in r12 while a block runs.
-static void jLast(u32 pc) {
+// loop.last on the way out of a block, set in r12 by the exit taken.
+static void jLastOut(u32 pc) {
 	xMovI(&jE, R12, pc);
 }
 
-// To the cell's block if there is one, loop.last its PC; on past it (to a jump for the caller to place) if
-// not, the cell left for blockRun.
-static uint8_t* jChainJump(struct JitCell* cell, u32 pc) {
+// To the cell's block if there is one; if not, the cell left for blockRun and on to a jump in the other
+// part, for the caller to place.
+static uint8_t* jChainJump(struct JitCell* cell) {
+	jStepsOut();
 	xMovI64(&jE, R11, (u64) (uintptr_t) &cell->target);
 	xLoad(&jE, 8, R11, M(R11, 0));
 	xTest(&jE, 8, R(R11), R11);
 	uint8_t* miss = xJcc(&jE, CC_E, NULL);
-	xMovI(&jE, R12, pc);
 	xJmpR(&jE, R11);
-	patchHere(&jE, miss);
+	jSwap();
+	jPatch(miss);
 	xMovI64(&jE, R10, (u64) (uintptr_t) cell);
 	xMovI64(&jE, R11, (u64) (uintptr_t) &jitPending);
 	xStore(&jE, 8, M(R11, 0), R10);
-	return xJmp(&jE, NULL);
+	uint8_t* on = xJmp(&jE, NULL);
+	jSwap();
+	return on;
 }
 
 // Shared code: entered with a call from a block, the stack kept aligned for its calls to C.
@@ -326,24 +355,31 @@ static void jStubEnter(void) {
 }
 
 static void jStubLeave(void) {
+	jStepsOut();
 	xAluI(&jE, X_ADD, 8, R(RSP), 8);
 	xRet(&jE);
 }
 
 static void jCallStub(const uint8_t* stub) {
+	jStepsOut();
 	xCall(&jE, stub);
 }
 
-static void jSteps(u32 n) {
-	xMovI(&jE, R10, n);
-	xMovRR(&jE, 8, R9, RBP);
-	xImul(&jE, 8, R9, R(R10));
-	xAluRR(&jE, X_ADD, 8, R(R14), R9);
+static void jStepsAdd(u32 n) {
+	if (n == 1) {
+		xAluRR(&jE, X_ADD, 8, R(R14), RBP);
+	} else {
+		xMovI(&jE, R10, n);
+		xMovRR(&jE, 8, R9, RBP);
+		xImul(&jE, 8, R9, R(R10));
+		xAluRR(&jE, X_ADD, 8, R(R14), R9);
+	}
 	xAluI(&jE, X_ADD, 4, R(R13), (int32_t) n);
 }
 
 // To the site's target once the SA-1 is past the S-CPU.
 static uint8_t* jLate(void) {
+	jStepsOut();
 	xAluRR(&jE, X_CMP, 8, R(R15), R14);
 	return xJcc(&jE, CC_B, NULL);
 }
@@ -357,8 +393,6 @@ static void jPrologue(void) {
 	xPush(&jE, R15);
 	xAluI(&jE, X_SUB, 8, R(RSP), 8);
 	xMovI64(&jE, JB, (u64) (uintptr_t) &sa1);
-	xMovI64(&jE, R11, (u64) (uintptr_t) &loop.last);
-	xLoad(&jE, 4, R12, M(R11, 0));
 	xMovI(&jE, R13, 0);
 	xLoad(&jE, 8, RBP, M(JB, SO(th.scalar)));
 	xAluRR(&jE, X_ADD, 8, R(RBP), RBP);
@@ -366,6 +400,7 @@ static void jPrologue(void) {
 }
 
 static void jEpilogue(void) {
+	jStepsOut();
 	xCall(&jE, jSyncOut);
 	xMovI64(&jE, R11, (u64) (uintptr_t) &loop.last);
 	xStore(&jE, 4, M(R11, 0), R12);
@@ -462,6 +497,7 @@ static void jShl(int d, int n) {
 static const int jCc[4] = { C_EQ, C_NE, C_HS, C_LO };
 
 static void jCmpI(int a, u32 imm) {
+	jStepsOut();
 	if (imm < 4096) {
 		aDpImm(&jE, A_SUBS_IMM, ZR, jv[a], imm);
 		return;
@@ -471,28 +507,36 @@ static void jCmpI(int a, u32 imm) {
 }
 
 static void jCmp(int a, int b) {
+	jStepsOut();
 	aDp(&jE, A_SUBS, ZR, jv[a], jv[b], S_LSL, 0);
 }
 
 static void jSetFlag(int cond, u32 off) {
+	jStepsKept();
 	aCset(&jE, JT, jCc[cond]);
 	aStrb(&jE, JT, JB, off);
 }
 
 static uint8_t* jBranch(int cond) {
+	jStepsKept();
 	return aBcond(&jE, jCc[cond], NULL);
 }
 
 static uint8_t* jJump(void) {
+	jStepsOut();
 	return aB(&jE, NULL);
 }
 
 static void jJumpTo(const uint8_t* to) {
+	jStepsOut();
 	aB(&jE, to);
 }
 
 static void jPatch(uint8_t* site) {
-	patchHere(&jE, site);
+	jStepsOut();
+	if (jE.p <= jE.end && jAway.p <= jAway.end) {
+		patchBranch(site, jE.p);
+	}
 }
 
 static void jArg(int n, int v) {
@@ -538,6 +582,7 @@ static void jSyncInMake(void) {
 }
 
 static void jCall(const void* fn) {
+	jStepsOut();
 	aBl(&jE, jSyncOut);
 	aMovImm64(&jE, JT, (u64) (uintptr_t) fn);
 	aBlr(&jE, JT);
@@ -586,8 +631,9 @@ static void jCalledSet(u32 imm) {
 	aMovImm(&jE, 25, imm);
 }
 
-static uint8_t* jIfNotCalled(void) {
-	return aCbz(&jE, 25, NULL);
+static uint8_t* jIfCalled(void) {
+	jStepsOut();
+	return aCbnz(&jE, 25, NULL);
 }
 
 static void jStI2(int width, u32 off1, u32 off2, u32 imm) {
@@ -610,23 +656,26 @@ static void jShrFrom(int d, int a, int n) {
 	aLsrImm(&jE, jv[d], jv[a], n);
 }
 
-// loop.last, kept in w20 while a block runs.
-static void jLast(u32 pc) {
+// loop.last on the way out, in w20.
+static void jLastOut(u32 pc) {
 	aMovImm(&jE, 20, pc);
 }
 
-static uint8_t* jChainJump(struct JitCell* cell, u32 pc) {
+static uint8_t* jChainJump(struct JitCell* cell) {
+	jStepsOut();
 	aMovImm64(&jE, JT, (u64) (uintptr_t) &cell->target);
 	aLdrX(&jE, JT, JT, 0);
 	aDpImm(&jE, A_SUBS_IMM | W64, ZR, JT, 0);
 	uint8_t* miss = aBcond(&jE, C_EQ, NULL);
-	aMovImm(&jE, 20, pc);
 	aBr(&jE, JT);
-	patchHere(&jE, miss);
+	jSwap();
+	jPatch(miss);
 	aMovImm64(&jE, JT, (u64) (uintptr_t) cell);
 	aMovImm64(&jE, JT2, (u64) (uintptr_t) &jitPending);
 	aStrX(&jE, JT, JT2, 0);
-	return aB(&jE, NULL);
+	uint8_t* on = aB(&jE, NULL);
+	jSwap();
+	return on;
 }
 
 static void jStubEnter(void) {
@@ -634,18 +683,17 @@ static void jStubEnter(void) {
 }
 
 static void jStubLeave(void) {
+	jStepsOut();
 	aPop(&jE, 29, 30, 16);
 	aRet(&jE);
 }
 
 static void jCallStub(const uint8_t* stub) {
+	jStepsOut();
 	aBl(&jE, stub);
 }
 
-static void jSteps(u32 n) {
-	if (!n) {
-		return;
-	}
+static void jStepsAdd(u32 n) {
 	if (!(n & (n - 1))) {
 		aDp(&jE, A_ADD | W64, 22, 22, 24, S_LSL, __builtin_ctz(n));
 	} else {
@@ -657,6 +705,7 @@ static void jSteps(u32 n) {
 }
 
 static uint8_t* jLate(void) {
+	jStepsOut();
 	aDp(&jE, A_SUBS | W64, ZR, 23, 22, S_LSL, 0);
 	return aBcond(&jE, C_LO, NULL);
 }
@@ -669,8 +718,6 @@ static void jPrologue(void) {
 	aStp(&jE, 25, 26, 64);
 	aMovImm(&jE, 25, 0);
 	aMovImm64(&jE, JB, (u64) (uintptr_t) &sa1);
-	aMovImm64(&jE, JT, (u64) (uintptr_t) &loop.last);
-	aLdr(&jE, 20, JT, 0);
 	aMovImm(&jE, 21, 0);
 	aLdrX(&jE, 24, JB, SO(th.scalar));
 	aDp(&jE, A_ADD | W64, 24, 24, 24, S_LSL, 0);
@@ -678,6 +725,7 @@ static void jPrologue(void) {
 }
 
 static void jEpilogue(void) {
+	jStepsOut();
 	aBl(&jE, jSyncOut);
 	aMovImm64(&jE, JT, (u64) (uintptr_t) &loop.last);
 	aStr(&jE, 20, JT, 0);
@@ -694,6 +742,28 @@ static void jFlush(uint8_t* start, uint8_t* end) {
 }
 
 #endif
+
+// Steps taken but not yet added to the clock: added where it can be seen (a compare, a call, a jump or
+// the place one comes to), so the steps of a stretch of code between them cost one add.
+static u32 jStepsDue;
+
+static void jSteps(u32 n) {
+	jStepsDue += n;
+}
+
+static void jStepsOut(void) {
+	if (jStepsDue) {
+		jStepsAdd(jStepsDue);
+		jStepsDue = 0;
+	}
+}
+
+// Where flags from a compare are used: no steps can be added between.
+static void jStepsKept(void) {
+	if (jStepsDue) {
+		jFailed = true;
+	}
+}
 
 #pragma pop_macro("R")
 #pragma pop_macro("PC")
@@ -761,14 +831,24 @@ static void jBusOut(bool keep) {
 	jBus.kept = jBus.kept && keep;
 }
 
-// The block's exits, patched to its end, each with the bus as it was there.
+// The start of the instruction run last, as loop.last would be: the block's first until the next starts
+// (sa1Run sets it so before the block, and a chained exit enters one at its first).
+static u32 jLastPc;
+
+static void jLast(u32 pc) {
+	jLastPc = pc;
+}
+
+// The block's exits, patched to its end, each with the bus and loop.last as they were there.
 static uint8_t* jExits[BLOCK_OPS * 8];
 static struct JitBus jExitBus[BLOCK_OPS * 8];
+static u32 jExitLast[BLOCK_OPS * 8];
 static u32 jExitCount;
 
 static void jExitWith(uint8_t* site, const struct JitBus* bus) {
 	if (jExitCount < sizeof(jExits) / sizeof(*jExits)) {
 		jExitBus[jExitCount] = *bus;
+		jExitLast[jExitCount] = jLastPc;
 		jExits[jExitCount++] = site;
 	} else {
 		jFailed = true;
@@ -801,7 +881,7 @@ static void jChain(u32 pc, u32 from, bool m, bool x) {
 	cell->target = NULL;
 	cell->key = jKey(pc, m, x);
 	jExitStored(jLate());
-	jExitStored(jChainJump(cell, pc));
+	jExitStored(jChainJump(cell));
 }
 
 // After a call out that can change what the block runs on: on if blockGoOn says so.
@@ -813,12 +893,17 @@ static void jGoOn(void) {
 	jExit(jBranch(JC_EQ));
 }
 
+// The same once something has called out, in the stretch's other part.
 static void jGoOnIfCalled(void) {
 	jBusOut(false);
-	uint8_t* none = jIfNotCalled();
+	uint8_t* called = jIfCalled();
+	jSwap();
+	jPatch(called);
 	jCalledSet(0);
 	jGoOn();
-	jPatch(none);
+	uint8_t* back = jJump();
+	jSwap();
+	jPatch(back);
 }
 
 // The cartridge RAM's size less one where it's a power of two (0: none, or not one).
@@ -861,7 +946,7 @@ static void jBwram(bool bankZero, uint8_t** other) {
 
 // A byte write of value 1 to the address in value 0 (24 bits, or 16 in bank 0), as sa1FastWrite
 // makes it: to I-RAM in place while nothing watches the SA-1's writes and no I-RAM is protected
-// from it; the rest through sa1FastWrite (jitCalled set).
+// from it; the rest through sa1FastWrite (jitCalled set where it wrote more than memory).
 static void jWriteBody(bool bankZero, u32 iramSteps, u32 bwSteps) {
 	jSt(4, RO(ad), 0);
 	jSt(1, RO(dw), 1);
@@ -936,7 +1021,10 @@ static void jWriteBody(bool bankZero, u32 iramSteps, u32 bwSteps) {
 	jArg(0, 0);
 	jArg(1, 1);
 	jCall(sa1FastWrite);
+	jCmpI(0, 0);
+	uint8_t* plain = jBranch(JC_NE);
 	jCalledSet(1);
+	jPatch(plain);
 	jPatch(done);
 	if (bwDone) {
 		jPatch(bwDone);
@@ -1146,9 +1234,13 @@ static void jAddress(enum Form form, u32 operand, u32 k) {
 static void jLastCycleIfCalled(void) {
 	jBusOut(false);
 	jMayCall = true;
-	uint8_t* none = jIfNotCalled();
+	uint8_t* called = jIfCalled();
+	jSwap();
+	jPatch(called);
 	jCallShared(sa1FastLastCycle);
-	jPatch(none);
+	uint8_t* back = jJump();
+	jSwap();
+	jPatch(back);
 }
 
 // CF from the compare before.
@@ -1850,6 +1942,26 @@ static bool jitHost(u8 op) {
 	       op == 0x6b || op == 0xf4 || op == 0x7c || jitTransfer(op, true) || jitStack(&(struct BlockOp) { .bytes = { op } }, 0, true);
 }
 
+static void jStretch(uint8_t* at) {
+	jE = (struct Emitter) { at, at, at + JIT_HOT_PART };
+	jAway = (struct Emitter) { at + JIT_HOT_PART, at + JIT_HOT_PART, at + JIT_STRETCH };
+}
+
+// The plain 65816 for the block's instruction n from its kept bytes; past it, the PC where the next
+// instruction is.
+static void jPlain(const struct Block* b, const uint8_t* kept, u32 n) {
+	jBusOut(false);
+	jArgP(0, kept + n * 4);
+	jCallShared(sa1BlockInstruction);
+	jGoOn();
+	if (n + 1 < b->count) {
+		jLd(4, 0, RO(pc));
+		jAluI(J_AND, 0, 0xffffff);
+		jCmpI(0, b->ops[n + 1].pc);
+		jExit(jBranch(JC_NE));
+	}
+}
+
 // The block's code, or NULL if it couldn't be made.
 static void* jitMake(const struct Block* b) {
 	if (!jCode) {
@@ -1862,35 +1974,42 @@ static void* jitMake(const struct Block* b) {
 			jFailed = true;
 			return NULL;
 		}
-		jE.start = jE.p = jCode;
-		jE.end = jCode + JIT_CODE_SIZE;
+		jE = (struct Emitter) { jCode, jCode, jCode + JIT_CODE_SIZE };
 		jSyncOutMake();
 		jSyncInMake();
 		jAccessStubsMake();
 		jFlush(jCode, jE.p);
-		jBlocksStart = jE.p;
+		jBlocksStart = jCode + ((jE.p - jCode + 4095) & ~4095);
+		jStretch(jBlocksStart);
 	}
-	if (jE.end - jE.p < JIT_BLOCK_MOST) {
-		// Full: every block is made again.
-		jE.p = jBlocksStart;
-		blockGeneration++;
-		jitCellCount = 0;
-		jitCellsGeneration = blockGeneration;
-		jitPending = NULL;
+	if (jE.end - jE.p < JIT_BLOCK_MOST || jAway.end - jAway.p < JIT_BLOCK_MOST) {
+		uint8_t* next = jE.start + JIT_STRETCH;
+		if (next + JIT_STRETCH > jCode + JIT_CODE_SIZE) {
+			// Full: every block is made again.
+			next = jBlocksStart;
+			blockGeneration++;
+			jitCellCount = 0;
+			jitCellsGeneration = blockGeneration;
+			jitPending = NULL;
+		}
+		jStretch(next);
 	}
-	// The instructions' bytes first, kept with the code for sa1BlockInstruction; the code after them.
-	uint8_t* kept = jE.p;
-	for (u32 n = 0; n < b->count && jE.p + 4 <= jE.end; ++n) {
-		memcpy(jE.p, b->ops[n].bytes, 4);
-		jE.p += 4;
+	// The instructions' bytes, kept for sa1BlockInstruction.
+	uint8_t* awayStart = jAway.p;
+	uint8_t* kept = jAway.p;
+	for (u32 n = 0; n < b->count; ++n) {
+		memcpy(jAway.p, b->ops[n].bytes, 4);
+		jAway.p += 4;
 	}
-	jE.p = kept + ((b->count * 4 + 15) & ~15u);
+	jAway.p = kept + ((b->count * 4 + 15) & ~15u);
+	jE.p = jE.start + ((jE.p - jE.start + 15) & ~15);
 	uint8_t* start = jE.p;
 	bool failed = jFailed;
 	jFailed = false;
 	jExitCount = 0;
 	u32 romSteps = 1 + romConflict(), iramSteps = 1 + 2 * iramConflict();
 	jBus.kept = false;
+	jLast(b->ops[0].pc);
 	jPrologue();
 	jBody = jE.p;
 	for (u32 n = 0; n < b->count; ++n) {
@@ -1908,33 +2027,22 @@ static void* jitMake(const struct Block* b) {
 		bool when;
 		bool host = !EF && jitHost(op);
 		bool decimal = host && jitFind1(op, &j) && (j.kind == K_ADC || j.kind == K_SBC);
-		uint8_t* binary = NULL;
+		if (!host) {
+			jPlain(b, kept, n);
+			continue;
+		}
+		uint8_t* skip = NULL;
 		if (decimal) {
-			// Decimal mode: the plain 65816.
+			// Decimal mode: the plain 65816, in the other part.
 			jBusOut(false);
 			jLd(1, 0, RO(df));
 			jCmpI(0, 0);
-			binary = jBranch(JC_EQ);
-		}
-		if (!host || decimal) {
-			// The plain 65816 from the kept bytes; past it, the PC where the next instruction is.
-			jBusOut(false);
-			jArgP(0, kept + n * 4);
-			jCallShared(sa1BlockInstruction);
-			jGoOn();
-			if (n + 1 < b->count) {
-				jLd(4, 0, RO(pc));
-				jAluI(J_AND, 0, 0xffffff);
-				jCmpI(0, b->ops[n + 1].pc);
-				jExit(jBranch(JC_NE));
-			}
-			if (!decimal) {
-				continue;
-			}
-		}
-		uint8_t* skip = decimal ? jJump() : NULL;
-		if (binary) {
-			jPatch(binary);
+			uint8_t* bcd = jBranch(JC_NE);
+			jSwap();
+			jPatch(bcd);
+			jPlain(b, kept, n);
+			skip = jJump();
+			jSwap();
 		}
 		// The bus and PC as the fetches leave them.
 		jBus = (struct JitBus) { true, (o->pc & 0xff0000) | (u16) (o->pc + length - 1), o->bytes[length - 1],
@@ -1990,29 +2098,43 @@ static void* jitMake(const struct Block* b) {
 			}
 		}
 	}
+	// The block's end, then its exits, each setting loop.last on its way to the epilogue.
 	jBusOut(false);
+	jLastOut(jLastPc);
 	uint8_t* end = jE.p;
-	for (u32 n = 0; n < jExitCount; ++n) {
-		if (!jExitBus[n].kept) {
-			jPatch(jExits[n]);
-		}
-	}
 	jEpilogue();
+	for (u32 n = 0; n < jExitCount;) {
+		if (jExitBus[n].kept) {
+			++n;
+			continue;
+		}
+		u32 last = jExitLast[n];
+		for (; n < jExitCount && (jExitBus[n].kept || jExitLast[n] == last); ++n) {
+			if (!jExitBus[n].kept) {
+				jPatch(jExits[n]);
+			}
+		}
+		jLastOut(last);
+		jJumpTo(end);
+	}
 	// The exits that store the bus on their way.
 	for (u32 n = 0; n < jExitCount; ++n) {
 		if (jExitBus[n].kept) {
 			jPatch(jExits[n]);
 			jBusStore(&jExitBus[n]);
+			jLastOut(jExitLast[n]);
 			jJumpTo(end);
 		}
 	}
-	if (jE.p > jE.end || jFailed) {
-		jE.p = kept;
+	if (jE.p > jE.end || jAway.p > jAway.end || jFailed) {
+		jE.p = start;
+		jAway.p = awayStart;
 		jFailed = failed;
 		return NULL;
 	}
 	jFailed = failed;
 	jFlush(start, jE.p);
+	jFlush(awayStart, jAway.p);
 	return start;
 }
 

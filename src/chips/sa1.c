@@ -1474,7 +1474,7 @@ static void aheadWrite(u32 address) {
 	}
 }
 
-void sa1FastWrite(u32 address, u8 data) {
+u32 sa1FastWrite(u32 address, u8 data) {
 	R.ad = address & 0xffffff;
 	R.dw = data;
 	if (ahead.on) {
@@ -1485,7 +1485,7 @@ void sa1FastWrite(u32 address, u8 data) {
 		loop.valid = false;
 	}
 	if (fastWrite()) {
-		return;
+		return !ahead.on;
 	}
 	R.mar = R.ad;
 	R.mdr = R.dw;
@@ -1495,6 +1495,7 @@ void sa1FastWrite(u32 address, u8 data) {
 		sa1.dmaStart = false;
 		dmaNormalAtOnce();
 	}
+	return 0;
 }
 
 void sa1FastIdle(void) {

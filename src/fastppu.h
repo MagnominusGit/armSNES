@@ -7,11 +7,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-// Fast mode's line renderer (fastppu.cpp, from Mednafen's snes_faust): one whole line from the
+// Fast mode's line renderer (fastppu_render.c, from Mednafen's snes_faust): one whole line from the
 // registers as the S-PPU's ports would have them written, VRAM and CGRAM, and the line's sprite tiles.
 enum { FAST_PPU_SPRITES = 128 };
 // Widescreen: the most columns added each side.
@@ -91,9 +87,5 @@ bool fastPpuDirect(void);
 void fastPpuSetHdSink(void (*sink)(uint32_t* at, const uint32_t* block, unsigned scale, unsigned columns));
 // The cores this process may run on (its affinity), else those online.
 unsigned fastPpuCores(void);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif

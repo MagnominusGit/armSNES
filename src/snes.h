@@ -87,7 +87,7 @@ extern bool systemClearPowerOn;
 // Balanced mode: the same machine with coarser timing (docs/ROADMAP.md). Not part of a saved state:
 // a state from either mode loads in the other at a frame's end.
 extern bool systemBalanced;
-// Fast mode: Balanced, with whole lines drawn by snes_faust's renderer (fastppu.cpp).
+// Fast mode: Balanced, with whole lines drawn by snes_faust's renderer (fastppu_render.c).
 extern bool systemFast;
 // Fast mode's SA-1 recompiler, where there is one (x86-64, AArch64): the same results either way.
 extern bool systemRecompiler;
@@ -185,9 +185,7 @@ extern u64 smpLimit;
 extern bool smpThreaded;
 // On the SMP's thread: true, and the Super Game Boy's sound samples there were (its mixer's write) as
 // the command it runs was given.
-#ifndef __cplusplus
 extern _Thread_local bool apuOnThread;
-#endif
 extern u32 apuGameBoyWrite;
 // Whether the frame may have the thread (smpThreaded can be put off for a while within it).
 extern bool smpThreadable;

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(armSNES C CXX)
+project(armSNES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_EXTENSIONS ON)
@@ -20,6 +20,15 @@ add_compile_options(-O3 -Wall -Wextra -Wno-unused-parameter -fwrapv)
 file(GLOB ARMGB_SOURCES armgb/*.c)
 add_library(armgb STATIC ${ARMGB_SOURCES})
 
+# Fast mode's renderer, built once for each of its two threads, so each has registers and line buffers
+# of its own, and again for CPUs with AVX2 (empty where those aren't built).
+set(FASTPPU_OBJECTS)
+foreach(copy 0 1 2 3)
+	add_library(fastppu${copy} OBJECT src/fastppu_render.c)
+	target_compile_definitions(fastppu${copy} PRIVATE FASTPPU_COPY=${copy})
+	list(APPEND FASTPPU_OBJECTS $<TARGET_OBJECTS:fastppu${copy}>)
+endforeach()
+
 add_library(armsnes STATIC
 	src/bus.c
 	src/cheat.c
@@ -30,7 +39,8 @@ add_library(armsnes STATIC
 	src/mix.c
 	src/sha256.c
 	src/ppu.c
-	src/fastppu.cpp
+	src/fastppu.c
+	${FASTPPU_OBJECTS}
 	src/smp.c
 	src/state.c
 	src/system.c
@@ -61,7 +71,7 @@ add_executable(snesrun tests/snesrun.c)
 target_link_libraries(snesrun armsnes)
 
 # snesrun-dot: the PPU drawing one dot at a time, the reference the spans are checked against.
-add_library(armsnes-dot STATIC EXCLUDE_FROM_ALL src/bus.c src/cheat.c src/cart.c src/cpu.c src/dsp.c src/input.c src/mix.c src/sha256.c src/ppu.c src/fastppu.cpp src/smp.c src/state.c src/system.c src/chips/necdsp.c src/chips/sa1.c src/chips/sa1fast.c src/chips/gsu.c src/chips/cx4.c src/chips/spc7110.c src/chips/rtc.c src/chips/st018.c src/chips/bsx.c src/chips/sufami.c src/chips/icd.c src/chips/msu1.c src/chips/competition.c src/chips/pirate.c src/chips/sgb.c src/chips/obc1.c src/chips/sdd1.c)
+add_library(armsnes-dot STATIC EXCLUDE_FROM_ALL src/bus.c src/cheat.c src/cart.c src/cpu.c src/dsp.c src/input.c src/mix.c src/sha256.c src/ppu.c src/fastppu.c ${FASTPPU_OBJECTS} src/smp.c src/state.c src/system.c src/chips/necdsp.c src/chips/sa1.c src/chips/sa1fast.c src/chips/gsu.c src/chips/cx4.c src/chips/spc7110.c src/chips/rtc.c src/chips/st018.c src/chips/bsx.c src/chips/sufami.c src/chips/icd.c src/chips/msu1.c src/chips/competition.c src/chips/pirate.c src/chips/sgb.c src/chips/obc1.c src/chips/sdd1.c)
 target_compile_definitions(armsnes-dot PRIVATE ARMSNES_DOT)
 target_link_libraries(armsnes-dot armgb Threads::Threads)
 add_executable(snesrun-dot EXCLUDE_FROM_ALL tests/snesrun.c)
@@ -69,11 +79,12 @@ target_link_libraries(snesrun-dot armsnes-dot)
 
 # The libretro core, with the Armulators pieces it uses (libretro.h, core options) copied into shared/
 # so it builds without the submodule.
-# zlib: an MSU-1 game's files read from the zip it came in.
+# zlib: an MSU-1 game's files read from the zip it came in. libm: the frontend's color and composite
+# video math.
 find_package(ZLIB REQUIRED)
 add_library(armsnes_libretro SHARED libretro/libretro.c libretro/composite.c libretro/zip.c shared/libretro/options.c)
 target_include_directories(armsnes_libretro PRIVATE src shared/libretro)
-target_link_libraries(armsnes_libretro armsnes ZLIB::ZLIB)
+target_link_libraries(armsnes_libretro armsnes ZLIB::ZLIB m)
 set_target_properties(armsnes_libretro PROPERTIES PREFIX "" C_VISIBILITY_PRESET hidden)
 if(NOT APPLE AND NOT WIN32)
 	target_link_options(armsnes_libretro PRIVATE -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/shared/libretro/link.T -Wl,--no-undefined)
@@ -86,7 +97,7 @@ if(ARMSNES_APP)
 	add_subdirectory(armulators)
 	armulators_app(armsnes-app DESCRIPTOR ${CMAKE_CURRENT_SOURCE_DIR}/app.cmake
 		SOURCES libretro/libretro.c libretro/composite.c libretro/zip.c app/hooks.c INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/src
-		LIBS armsnes armulators-libretro ZLIB::ZLIB)
+		LIBS armsnes armulators-libretro ZLIB::ZLIB m)
 endif()
 
 add_executable(coretest tests/coretest.c)

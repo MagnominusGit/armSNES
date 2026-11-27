@@ -21,52 +21,94 @@
 /* Copyright (c) 2026 Magnominus
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
- * The line renderer's body, which fastppu.cpp compiles once for each render thread, so each has
- * registers and line buffers of its own. */
-namespace {
+ * Fast mode's line renderer: snes_faust's (Supafaust's) single-threaded one, from its
+ * ppu_render_common.inc, drawing one line from the registers it is given. Built once for each render
+ * thread (FASTPPU_COPY 0 and 1), so each has registers and line buffers of its own, and on x86-64 with
+ * GCC again for CPUs with AVX2 (2 and 3). Its templates are functions given their parameters as
+ * constants. */
+#include "fastppu.h"
+
+#include <string.h>
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#elif defined(__x86_64__)
+#include <immintrin.h>
+#endif
+
+#if FASTPPU_COPY < 2 || (defined(__x86_64__) && !defined(__clang__))
+
+#if FASTPPU_COPY >= 2
+#pragma GCC target("avx2")
+#define FASTPPU_AVX2 1
+#endif
+
+#define FASTPPU_NAME2(name, copy) name##copy
+#define FASTPPU_NAME(name, copy) FASTPPU_NAME2(name, copy)
+#define Line FASTPPU_NAME(fastPpuRenderLine, FASTPPU_COPY)
+#define LineBlock FASTPPU_NAME(fastPpuRenderBlock, FASTPPU_COPY)
+
+typedef uint8_t uint8;
+typedef uint16_t uint16;
+typedef uint32_t uint32;
+typedef uint64_t uint64;
+typedef int16_t int16;
+typedef struct FastPpuLine FastPpuLine;
+typedef struct FastPpuSprite FastPpuSprite;
+
+#define INLINE inline __attribute__((always_inline))
+#define NO_INLINE __attribute__((noinline))
+#define MDFN_HOT __attribute__((hot))
+#define MDFN_FASTCALL
+#define MDFN_RESTRICT __restrict__
+#define MDFN_LIKELY(n) __builtin_expect(!!(n), 1)
+#define MDFN_UNLIKELY(n) __builtin_expect(!!(n), 0)
+#define assert(n) ((void) 0)
+
+const uint32* Line(const FastPpuLine* l, bool direct);
+const uint32* LineBlock(const FastPpuLine* l);
 
 // The registers, as the ports were written; set from the line being drawn.
-const uint16* VRAM;
-const uint16* CGRAM;
-unsigned scanline;
-uint8 Status[2];
-uint8 ScreenMode;
-uint8 BGMode;
-uint8 Mosaic;
-uint8 MosaicYOffset;
-uint8 BGSC[4];
-uint8 BGNBA[2];
-uint16 BGHOFS[4];
-uint16 BGVOFS[4];
-uint8 M7SEL;
-int16 M7Matrix[4];
-int16 M7Step[4];
-int16 M7Center[2];
-int16 M7HOFS;
-int16 M7VOFS;
-uint8 MSEnable;
-uint8 SSEnable;
-uint8 WMSettings[3];
-uint8 WMMainEnable;
-uint8 WMSubEnable;
-uint16 WMLogic;
-uint8 WindowPos[2][2];
-unsigned WindowPieces[5];
-uint8 CGWSEL;
-uint8 CGADSUB;
-uint16 FixedColor;
+static const uint16* VRAM;
+static const uint16* CGRAM;
+static unsigned scanline;
+static uint8 Status[2];
+static uint8 ScreenMode;
+static uint8 BGMode;
+static uint8 Mosaic;
+static uint8 MosaicYOffset;
+static uint8 BGSC[4];
+static uint8 BGNBA[2];
+static uint16 BGHOFS[4];
+static uint16 BGVOFS[4];
+static uint8 M7SEL;
+static int16 M7Matrix[4];
+static int16 M7Step[4];
+static int16 M7Center[2];
+static int16 M7HOFS;
+static int16 M7VOFS;
+static uint8 MSEnable;
+static uint8 SSEnable;
+static uint8 WMSettings[3];
+static uint8 WMMainEnable;
+static uint8 WMSubEnable;
+static uint16 WMLogic;
+static uint8 WindowPos[2][2];
+static unsigned WindowPieces[5];
+static uint8 CGWSEL;
+static uint8 CGADSUB;
+static uint16 FixedColor;
 // armSNES: HD mode 7, the point inside each pixel mode 7 is sampled at, in 1/M7SubN of a pixel (M7SubN 0:
 // the pixel's corner, as the console samples).
-int M7SubX, M7SubY;
-int M7SubN;
+static int M7SubX, M7SubY;
+static int M7SubN;
 // armSNES: widescreen, the console column the line's first pixel is drawn for; and whether sprites are
 // drawn past the console's 256 columns.
-int XShift;
-bool SpritesWide;
+static int XShift;
+static bool SpritesWide;
 // armSNES: a window's masks by console column, for a shifted line.
-uint32 WinCol[256];
+static uint32 WinCol[256];
 
-struct
+static struct
 {
  uint32 objbuf[8 + 256 + 8];
  uint16 SpriteTileTab[16];
@@ -89,8 +131,7 @@ static struct
  };
 } linebuf;
 
-template<bool size16, bool mode4 = false>
-static MDFN_HOT MDFN_FASTCALL void GetOPTStrip(const unsigned n)
+static MDFN_HOT MDFN_FASTCALL INLINE void GetOPTStrip(const unsigned n, const bool size16, const bool mode4)
 {
  unsigned VOFS = BGVOFS[n];
  unsigned HOFS = BGHOFS[n] + XShift;
@@ -157,7 +198,7 @@ static MDFN_HOT MDFN_FASTCALL void GetOPTStrip(const unsigned n)
  }
 }
 
-static INLINE unsigned DirColCvt(unsigned inpix, unsigned palbase = 0)
+static INLINE unsigned DirColCvt(unsigned inpix, unsigned palbase)
 {
  unsigned ret;
 
@@ -178,8 +219,14 @@ static INLINE unsigned DirColCvt(unsigned inpix, unsigned palbase = 0)
 #define FASTPPU_SIMD_TILE 1
 // armSNES: a 2 or 4 bpp tile's 8 pixels at once, as DrawBG's loop makes them: the color from the
 // palette, the priority bits where the pixel isn't 0. bpa holds bitplanes 0-1, bpb 2-3.
-template<unsigned bpp>
-static INLINE void DrawTile(uint32* MDFN_RESTRICT target, uint32 bpa, uint32 bpb, const uint16* cgr, uint32 prio, bool h_flip)
+#if !defined(__aarch64__)
+static INLINE __m128i TilePlane(__m128i m, uint32 b, char value)
+{
+ return _mm_and_si128(_mm_cmpeq_epi8(_mm_and_si128(_mm_set1_epi8((char)b), m), m), _mm_set1_epi8(value));
+}
+#endif
+
+static INLINE void DrawTile(uint32* MDFN_RESTRICT target, uint32 bpa, uint32 bpb, const uint16* cgr, uint32 prio, bool h_flip, const unsigned bpp)
 {
  static const uint8 bits[2][8] = { { 0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01 }, { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 } };
 #if defined(__aarch64__)
@@ -201,12 +248,9 @@ static INLINE void DrawTile(uint32* MDFN_RESTRICT target, uint32 bpa, uint32 bpb
  vst1q_u32(target + 4, vreinterpretq_u32_u16(vzip2q_u16(pr, color)));
 #else
  const __m128i m = _mm_loadl_epi64((const __m128i*)bits[h_flip]);
- const auto plane = [&](uint32 b, char value) {
-  return _mm_and_si128(_mm_cmpeq_epi8(_mm_and_si128(_mm_set1_epi8((char)b), m), m), _mm_set1_epi8(value));
- };
- __m128i pix = _mm_or_si128(plane(bpa, 1), plane(bpa >> 8, 2));
+ __m128i pix = _mm_or_si128(TilePlane(m, bpa, 1), TilePlane(m, bpa >> 8, 2));
  if(bpp == 4)
-  pix = _mm_or_si128(pix, _mm_or_si128(plane(bpb, 4), plane(bpb >> 8, 8)));
+  pix = _mm_or_si128(pix, _mm_or_si128(TilePlane(m, bpb, 4), TilePlane(m, bpb >> 8, 8)));
  const __m128i split = _mm_setr_epi8(0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11, 13, 15);
  const __m128i p0 = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i*)cgr), split);
  const __m128i p1 = bpp == 4 ? _mm_shuffle_epi8(_mm_loadu_si128((const __m128i*)(cgr + 8)), split) : p0;
@@ -225,8 +269,8 @@ static INLINE void DrawTile(uint32* MDFN_RESTRICT target, uint32 bpa, uint32 bpb
 static INLINE void DrawSpriteTile(uint32* MDFN_RESTRICT target, uint32 data, const uint16* cgr, uint32 prio, bool h_flip)
 {
 #if defined(__aarch64__)
- alignas(16) uint32 drawn[8];
- DrawTile<4>(drawn, data & 0xFFFF, data >> 16, cgr, prio, h_flip);
+ _Alignas(16) uint32 drawn[8];
+ DrawTile(drawn, data & 0xFFFF, data >> 16, cgr, prio, h_flip, 4);
  for(unsigned half = 0; half < 2; half++)
  {
   const uint32x4_t d = vld1q_u32(drawn + half * 4);
@@ -234,8 +278,8 @@ static INLINE void DrawSpriteTile(uint32* MDFN_RESTRICT target, uint32 data, con
   vst1q_u32(target + half * 4, vbslq_u32(shown, d, vld1q_u32(target + half * 4)));
  }
 #else
- alignas(16) uint32 drawn[8];
- DrawTile<4>(drawn, data & 0xFFFF, data >> 16, cgr, prio, h_flip);
+ _Alignas(16) uint32 drawn[8];
+ DrawTile(drawn, data & 0xFFFF, data >> 16, cgr, prio, h_flip, 4);
  for(unsigned half = 0; half < 2; half++)
  {
   const __m128i d = _mm_load_si128((const __m128i*)(drawn + half * 4));
@@ -247,10 +291,9 @@ static INLINE void DrawSpriteTile(uint32* MDFN_RESTRICT target, uint32 data, con
 }
 #endif
 
-template<bool size16, unsigned bpp, bool palbase_n = false, bool opt = false, bool hires = false, bool dircolor = false>
-static MDFN_HOT MDFN_FASTCALL void DrawBG(const unsigned n, const unsigned y, uint32 prio_or)
+static MDFN_HOT MDFN_FASTCALL INLINE void DrawBG(const unsigned n, const unsigned y, uint32 prio_or, const bool size16, const unsigned bpp, const bool palbase_n, const bool opt, const bool hires, const bool dircolor)
 {
- alignas(4) uint16 tab[16];
+ _Alignas(4) uint16 tab[16];
  const bool MosaicOn = Mosaic & (1U << n);
  unsigned VOFS = y - (MosaicOn ? MosaicYOffset : 0);
  unsigned HOFS = BGHOFS[n] + XShift;
@@ -345,7 +388,7 @@ static MDFN_HOT MDFN_FASTCALL void DrawBG(const unsigned n, const unsigned y, ui
 
 #ifdef FASTPPU_SIMD_TILE
   if(bpp == 2 || bpp == 4)
-   DrawTile<bpp>(target, vchr[0], bpp == 4 ? vchr[8] : 0, cgr, eff_prio_or, h_flip);
+   DrawTile(target, vchr[0], bpp == 4 ? vchr[8] : 0, cgr, eff_prio_or, h_flip, bpp);
   else
 #endif
   if(bpp == 2)
@@ -523,8 +566,7 @@ static INLINE int M7Mul(int16 matval, int16 ov)
 }
 
 // Mode 7, scary cake time!
-template<bool extbg, bool dircolor>
-static MDFN_HOT MDFN_FASTCALL void DrawMODE7(unsigned line_y, uint16 prio_or, uint32 prio_or_bg1 = 0)
+static MDFN_HOT MDFN_FASTCALL INLINE void DrawMODE7(unsigned line_y, uint16 prio_or, uint32 prio_or_bg1, const bool extbg, const bool dircolor)
 {
  const bool h_flip = M7SEL & 0x01;
  const bool v_flip = M7SEL & 0x02;
@@ -591,21 +633,26 @@ static MDFN_HOT MDFN_FASTCALL void DrawMODE7(unsigned line_y, uint16 prio_or, ui
 
   pix = tiledata;
 
-  (linebuf.bg[0] + 8)[i] = ((dircolor ? DirColCvt(pix) : CGRAM[pix]) << 16) | (pix ? prio_or : 0);
+  (linebuf.bg[0] + 8)[i] = ((dircolor ? DirColCvt(pix, 0) : CGRAM[pix]) << 16) | (pix ? prio_or : 0);
   if(extbg)
-   (linebuf.bg[1] + 8)[i] = ((dircolor ? DirColCvt(pix & 0x7F) : CGRAM[pix & 0x7F]) << 16) | ((pix & 0x7F) ? (uint16)(prio_or_bg1 >> ((pix & 0x80) >> 3)) : 0);
+   (linebuf.bg[1] + 8)[i] = ((dircolor ? DirColCvt(pix & 0x7F, 0) : CGRAM[pix & 0x7F]) << 16) | ((pix & 0x7F) ? (uint16)(prio_or_bg1 >> ((pix & 0x80) >> 3)) : 0);
 
   x += xinc;
   y += yinc;
  }
 }
 
+// DrawMODE7 with EXTBG's second layer or not, and direct color or the palette.
+static MDFN_HOT void DrawMODE7Plain(unsigned line_y, uint16 prio_or, uint32 prio_or_bg1) { DrawMODE7(line_y, prio_or, prio_or_bg1, false, false); }
+static MDFN_HOT void DrawMODE7Direct(unsigned line_y, uint16 prio_or, uint32 prio_or_bg1) { DrawMODE7(line_y, prio_or, prio_or_bg1, false, true); }
+static MDFN_HOT void DrawMODE7Ext(unsigned line_y, uint16 prio_or, uint32 prio_or_bg1) { DrawMODE7(line_y, prio_or, prio_or_bg1, true, false); }
+static MDFN_HOT void DrawMODE7ExtDirect(unsigned line_y, uint16 prio_or, uint32 prio_or_bg1) { DrawMODE7(line_y, prio_or, prio_or_bg1, true, true); }
+
 
 // Y mosaic is handled in DrawBG
 #pragma GCC push_options
 #pragma GCC optimize("no-unroll-loops,no-peel-loops,no-crossjumping")
-template<bool hires = false>
-static MDFN_HOT MDFN_FASTCALL NO_INLINE void DoXMosaic(unsigned layernum, uint32* MDFN_RESTRICT buf)
+static MDFN_HOT MDFN_FASTCALL INLINE void DoXMosaicBody(unsigned layernum, uint32* MDFN_RESTRICT buf, const bool hires)
 {
  if(!(Mosaic & (1U << layernum)))
   return;
@@ -668,7 +715,24 @@ static MDFN_HOT MDFN_FASTCALL NO_INLINE void DoXMosaic(unsigned layernum, uint32
   case 0xF: for(unsigned x = 0; x < 256; x += 0x10) { uint32 b = buf[x]; buf[x + 1] = b; buf[x + 2] = b; buf[x + 3] = b; buf[x + 4] = b; buf[x + 5] = b; buf[x + 6] = b; buf[x + 7] = b; buf[x + 8] = b; buf[x + 9] = b; buf[x + 10] = b; buf[x + 11] = b; buf[x + 12] = b; buf[x + 13] = b; buf[x + 14] = b; buf[x + 15] = b;} break;
  }
 }
+
+static MDFN_HOT MDFN_FASTCALL NO_INLINE void DoXMosaic(unsigned layernum, uint32* MDFN_RESTRICT buf)
+{
+ DoXMosaicBody(layernum, buf, false);
+}
+
+static MDFN_HOT MDFN_FASTCALL NO_INLINE void DoXMosaicHires(unsigned layernum, uint32* MDFN_RESTRICT buf)
+{
+ DoXMosaicBody(layernum, buf, true);
+}
 #pragma GCC pop_options
+
+static INLINE void SwapPieces(unsigned a, unsigned b)
+{
+ const unsigned t = WindowPieces[a];
+ WindowPieces[a] = WindowPieces[b];
+ WindowPieces[b] = t;
+}
 
 static INLINE void CalcWindowPieces(void)
 {
@@ -685,19 +749,18 @@ static INLINE void CalcWindowPieces(void)
   WindowPieces[2] = WindowPieces[3] = 0;
 
  if(WindowPieces[0] > WindowPieces[2])
-  std::swap(WindowPieces[0], WindowPieces[2]);
+  SwapPieces(0, 2);
 
  if(WindowPieces[1] > WindowPieces[3])
-  std::swap(WindowPieces[1], WindowPieces[3]);
+  SwapPieces(1, 3);
 
  if(WindowPieces[1] > WindowPieces[2])
-  std::swap(WindowPieces[1], WindowPieces[2]);
+  SwapPieces(1, 2);
 
  WindowPieces[4] = 0x100;
 }
 
-template<bool cwin = false, bool hires = false>
-static MDFN_HOT MDFN_FASTCALL void DoWindow(unsigned layernum, uint32* MDFN_RESTRICT buf)
+static MDFN_HOT MDFN_FASTCALL INLINE void DoWindowBody(unsigned layernum, uint32* MDFN_RESTRICT buf, const bool cwin, const bool hires)
 {
  const unsigned mask_settings = (WMSettings[layernum >> 1] >> ((layernum & 1) << 2)) & 0xF;
  const unsigned mask_logic = (WMLogic >> (layernum * 2)) & 0x3;
@@ -869,29 +932,43 @@ static MDFN_HOT MDFN_FASTCALL void DoWindow(unsigned layernum, uint32* MDFN_REST
  }
 }
 
+static MDFN_HOT MDFN_FASTCALL void DoWindow(unsigned layernum, uint32* MDFN_RESTRICT buf)
+{
+ DoWindowBody(layernum, buf, false, false);
+}
 
-template<unsigned bpp, bool palbase_n = false, bool opt = false, bool hires = false>
-static INLINE void DoBGLayer(unsigned n, uint32 bgprio)
+static MDFN_HOT MDFN_FASTCALL void DoWindowHires(unsigned layernum, uint32* MDFN_RESTRICT buf)
+{
+ DoWindowBody(layernum, buf, false, true);
+}
+
+static MDFN_HOT MDFN_FASTCALL void DoColorWindow(unsigned layernum, uint32* MDFN_RESTRICT buf)
+{
+ DoWindowBody(layernum, buf, true, false);
+}
+
+
+static INLINE void DoBGLayer(unsigned n, uint32 bgprio, const unsigned bpp, const bool palbase_n, const bool opt, const bool hires)
 {
  if(bpp == 8 && (CGWSEL & 0x01))
  {
   if(BGMode & (0x10 << n))
-   DrawBG<true,  bpp, palbase_n, opt, hires, true>(n, scanline, bgprio);
+   DrawBG(n, scanline, bgprio, true,  bpp, palbase_n, opt, hires, true);
   else
-   DrawBG<false, bpp, palbase_n, opt, hires, true>(n, scanline, bgprio);
+   DrawBG(n, scanline, bgprio, false, bpp, palbase_n, opt, hires, true);
  }
  else
  {
   if(BGMode & (0x10 << n))
-   DrawBG<true,  bpp, palbase_n, opt, hires, false>(n, scanline, bgprio);
+   DrawBG(n, scanline, bgprio, true,  bpp, palbase_n, opt, hires, false);
   else
-   DrawBG<false, bpp, palbase_n, opt, hires, false>(n, scanline, bgprio);
+   DrawBG(n, scanline, bgprio, false, bpp, palbase_n, opt, hires, false);
  }
 
  if(hires)
  {
-  DoXMosaic<true>(n, &linebuf.bghr[n][8]);
-  DoWindow<false, true>(n, &linebuf.bghr[n][8]);
+  DoXMosaicHires(n, &linebuf.bghr[n][8]);
+  DoWindowHires(n, &linebuf.bghr[n][8]);
  }
  else
  {
@@ -917,8 +994,18 @@ static INLINE void DoBGLayer(unsigned n, uint32 bgprio)
  }
 }
 
-template<bool half, bool subtract>
-static MDFN_HOT MDFN_FASTCALL uint32 CMath(uint32 tmp, uint32 other_color)
+// A layer for each of DoBGLayer's uses: its bits a pixel, the BG mode 0 palettes, offset-per-tile, hires.
+static MDFN_HOT void DoBGLayer2(unsigned n, uint32 bgprio) { DoBGLayer(n, bgprio, 2, false, false, false); }
+static MDFN_HOT void DoBGLayer4(unsigned n, uint32 bgprio) { DoBGLayer(n, bgprio, 4, false, false, false); }
+static MDFN_HOT void DoBGLayer8(unsigned n, uint32 bgprio) { DoBGLayer(n, bgprio, 8, false, false, false); }
+static MDFN_HOT void DoBGLayerMode0(unsigned n, uint32 bgprio) { DoBGLayer(n, bgprio, 2, true, false, false); }
+static MDFN_HOT void DoBGLayer2Opt(unsigned n, uint32 bgprio) { DoBGLayer(n, bgprio, 2, false, true, false); }
+static MDFN_HOT void DoBGLayer4Opt(unsigned n, uint32 bgprio) { DoBGLayer(n, bgprio, 4, false, true, false); }
+static MDFN_HOT void DoBGLayer8Opt(unsigned n, uint32 bgprio) { DoBGLayer(n, bgprio, 8, false, true, false); }
+static MDFN_HOT void DoBGLayer2Hires(unsigned n, uint32 bgprio) { DoBGLayer(n, bgprio, 2, false, false, true); }
+static MDFN_HOT void DoBGLayer4Hires(unsigned n, uint32 bgprio) { DoBGLayer(n, bgprio, 4, false, false, true); }
+
+static MDFN_HOT MDFN_FASTCALL INLINE uint32 CMath(uint32 tmp, uint32 other_color, const bool half, const bool subtract)
 {
  if(half)
  {
@@ -963,8 +1050,7 @@ static INLINE uint32 ConvertRGB555(uint32 tmp)
  return (tmp & 0x7FFF) | OutBrightness;
 }
 
-template<bool any_hires, unsigned cmath_mode, bool hires_cmath_add_subscreen = false, typename T>
-static MDFN_HOT MDFN_FASTCALL NO_INLINE void MixMainSubSubSubMarine(T* MDFN_RESTRICT target)
+static MDFN_HOT MDFN_FASTCALL INLINE void MixMainSubSubSubMarineBody(uint32* MDFN_RESTRICT target, const bool any_hires, const unsigned cmath_mode, const bool hires_cmath_add_subscreen)
 {
  if(any_hires)
  {
@@ -990,9 +1076,9 @@ static MDFN_HOT MDFN_FASTCALL NO_INLINE void MixMainSubSubSubMarine(T* MDFN_REST
     const uint32 other = with_sub ? sub_color : FixedColor;
 
     if(subtract)
-     out_main = half ? CMath<true, true>(main_color, other) : CMath<false, true>(main_color, other);
+     out_main = half ? CMath(main_color, other, true, true) : CMath(main_color, other, false, true);
     else
-     out_main = half ? CMath<true, false>(main_color, other) : CMath<false, false>(main_color, other);
+     out_main = half ? CMath(main_color, other, true, false) : CMath(main_color, other, false, false);
    }
 
    if(prev_main & 1)
@@ -1002,9 +1088,9 @@ static MDFN_HOT MDFN_FASTCALL NO_INLINE void MixMainSubSubSubMarine(T* MDFN_REST
     const uint32 other = with_main ? prev_main >> 16 : FixedColor;
 
     if(subtract)
-     out_sub = half ? CMath<true, true>(out_sub, other) : CMath<false, true>(out_sub, other);
+     out_sub = half ? CMath(out_sub, other, true, true) : CMath(out_sub, other, false, true);
     else
-     out_sub = half ? CMath<true, false>(out_sub, other) : CMath<false, false>(out_sub, other);
+     out_sub = half ? CMath(out_sub, other, true, false) : CMath(out_sub, other, false, false);
    }
 
    target[(i << 1) + 0] = ConvertRGB555(out_sub);
@@ -1028,9 +1114,9 @@ static MDFN_HOT MDFN_FASTCALL NO_INLINE void MixMainSubSubSubMarine(T* MDFN_REST
     //assert(main != sub);
 
     if((cmath_mode & 1) && (main & sub & 2))	// Halving mathing
-     tmp = CMath<true, (bool)(cmath_mode & 2)>(tmp, other_color);
+     tmp = CMath(tmp, other_color, true, cmath_mode & 2);
     else
-     tmp = CMath<false, (bool)(cmath_mode & 2)>(tmp, other_color);
+     tmp = CMath(tmp, other_color, false, cmath_mode & 2);
    }
 
    target[(i << 1) + 0] = target[(i << 1) + 1] = ConvertRGB555(tmp);
@@ -1038,79 +1124,82 @@ static MDFN_HOT MDFN_FASTCALL NO_INLINE void MixMainSubSubSubMarine(T* MDFN_REST
  }
 }
 
-template<bool any_hires, bool rgb565, typename T>
-static INLINE void MixMainSub(T* MDFN_RESTRICT target)
+// MixMainSubSubSubMarine for each of its uses: hires or not, the color math mode, hires math with the sub screen.
+#define MARINE(name, any_hires, cmath_mode, hires_cmath_add_subscreen) \
+ static MDFN_HOT MDFN_FASTCALL NO_INLINE void name(uint32* MDFN_RESTRICT target) { MixMainSubSubSubMarineBody(target, any_hires, cmath_mode, hires_cmath_add_subscreen); }
+MARINE(Marine0, false, 0, false)
+MARINE(Marine1, false, 1, false)
+MARINE(Marine2, false, 2, false)
+MARINE(Marine3, false, 3, false)
+MARINE(MarineHires0, true, 0, false)
+MARINE(MarineHires1, true, 1, false)
+MARINE(MarineHires2, true, 2, false)
+MARINE(MarineHires3, true, 3, false)
+MARINE(MarineHiresSub0, true, 0, true)
+MARINE(MarineHiresSub1, true, 1, true)
+MARINE(MarineHiresSub2, true, 2, true)
+MARINE(MarineHiresSub3, true, 3, true)
+#undef MARINE
+
+static void (*const MarineFor[3][4])(uint32* MDFN_RESTRICT target) =
+{
+ { Marine0, Marine1, Marine2, Marine3 },
+ { MarineHires0, MarineHires1, MarineHires2, MarineHires3 },
+ { MarineHiresSub0, MarineHiresSub1, MarineHiresSub2, MarineHiresSub3 },
+};
+
+static INLINE void MixMainSub(uint32* MDFN_RESTRICT target, const bool any_hires)
 {
  if(any_hires && MDFN_UNLIKELY(CGWSEL & 0x2))
- {
-  switch((CGADSUB >> 6) & 0x3)
-  {
-   case 0: MixMainSubSubSubMarine<any_hires, 0, true>(target); break;
-   case 1: MixMainSubSubSubMarine<any_hires, 1, true>(target); break;
-   case 2: MixMainSubSubSubMarine<any_hires, 2, true>(target); break;
-   case 3: MixMainSubSubSubMarine<any_hires, 3, true>(target); break;
-  }
- }
- else 
- {
-  switch((CGADSUB >> 6) & 0x3)
-  {
-   case 0: MixMainSubSubSubMarine<any_hires, 0>(target); break;
-   case 1: MixMainSubSubSubMarine<any_hires, 1>(target); break;
-   case 2: MixMainSubSubSubMarine<any_hires, 2>(target); break;
-   case 3: MixMainSubSubSubMarine<any_hires, 3>(target); break;
-  }
- }
-
+  MarineFor[2][(CGADSUB >> 6) & 0x3](target);
+ else
+  MarineFor[any_hires][(CGADSUB >> 6) & 0x3](target);
 }
 
 #ifdef ARCH_X86
-template<unsigned w, bool sub_unique>
-static INLINE void PrioHelper(uint32& main, uint32& sub, uint32 np, uint32 nps = 0)
+static INLINE void PrioHelper(uint32* main, uint32* sub, uint32 np, uint32 nps, const unsigned w, const bool sub_unique)
 {
  if(sub_unique)
  {
-  asm("cmpb %%cl, %%al\n\t"  "cmovb %%ecx, %%eax\n\t" : "=a"(main), "=b"(sub) : "a"(main), "b"(sub), "c"(np) : "cc");
-  asm("cmpb %%dh, %%bh\n\t"  "cmovb %%edx, %%ebx\n\t" : "=a"(main), "=b"(sub) : "a"(main), "b"(sub), "d"(nps) : "cc");
+  asm("cmpb %%cl, %%al\n\t"  "cmovb %%ecx, %%eax\n\t" : "=a"(*main), "=b"(*sub) : "a"(*main), "b"(*sub), "c"(np) : "cc");
+  asm("cmpb %%dh, %%bh\n\t"  "cmovb %%edx, %%ebx\n\t" : "=a"(*main), "=b"(*sub) : "a"(*main), "b"(*sub), "d"(nps) : "cc");
  }
  else
  {
   if(w & 1)
   {
-   asm("cmpb %%dl, %%al\n\t"  "cmovb %%edx, %%eax\n\t" : "=a"(main), "=b"(sub) : "a"(main), "b"(sub), "d"(np) : "cc");
-   asm("cmpb %%dh, %%bh\n\t"  "cmovb %%edx, %%ebx\n\t" : "=a"(main), "=b"(sub) : "a"(main), "b"(sub), "d"(np) : "cc");
+   asm("cmpb %%dl, %%al\n\t"  "cmovb %%edx, %%eax\n\t" : "=a"(*main), "=b"(*sub) : "a"(*main), "b"(*sub), "d"(np) : "cc");
+   asm("cmpb %%dh, %%bh\n\t"  "cmovb %%edx, %%ebx\n\t" : "=a"(*main), "=b"(*sub) : "a"(*main), "b"(*sub), "d"(np) : "cc");
   }
   else
   {
-   asm("cmpb %%cl, %%al\n\t"  "cmovb %%ecx, %%eax\n\t" : "=a"(main), "=b"(sub) : "a"(main), "b"(sub), "c"(np) : "cc");
-   asm("cmpb %%ch, %%bh\n\t"  "cmovb %%ecx, %%ebx\n\t" : "=a"(main), "=b"(sub) : "a"(main), "b"(sub), "c"(np) : "cc");
+   asm("cmpb %%cl, %%al\n\t"  "cmovb %%ecx, %%eax\n\t" : "=a"(*main), "=b"(*sub) : "a"(*main), "b"(*sub), "c"(np) : "cc");
+   asm("cmpb %%ch, %%bh\n\t"  "cmovb %%ecx, %%ebx\n\t" : "=a"(*main), "=b"(*sub) : "a"(*main), "b"(*sub), "c"(np) : "cc");
   }
  }
 }
 #else
-template<unsigned w, bool sub_unique>
-static INLINE void PrioHelper(uint32& main, uint32& sub, uint32 np, uint32 nps = 0)
+static INLINE void PrioHelper(uint32* main, uint32* sub, uint32 np, uint32 nps, const unsigned w, const bool sub_unique)
 {
- if((uint8)np > (uint8)main)
-  main = np;
+ if((uint8)np > (uint8)*main)
+  *main = np;
 
  if(sub_unique)
  {
-  if((uint16)nps > (uint16)sub)
-   sub = nps;
+  if((uint16)nps > (uint16)*sub)
+   *sub = nps;
  }
  else
  {
-  if((uint16)np > (uint16)sub)
-   sub = np;
+  if((uint16)np > (uint16)*sub)
+   *sub = np;
  }
 }
 #endif
 
 // hrop =  1 for modes 5 and 6 hires
 // hrop = -1 for pseudo-hires
-template<bool mix_bg0, bool mix_bg1, bool mix_bg2, bool mix_bg3, int hrop>
-static MDFN_HOT void MixLayersSub(void)
+static MDFN_HOT INLINE void MixLayersSub(const bool mix_bg0, const bool mix_bg1, const bool mix_bg2, const bool mix_bg3, const int hrop)
 {
  uint32 main_back, sub_back;
 
@@ -1137,45 +1226,51 @@ static MDFN_HOT void MixLayersSub(void)
  {
   uint32 main = main_back, sub = sub_back;
 
-  PrioHelper<0, false>(main, sub, (PPU.objbuf + 8)[i]);
+  PrioHelper(&main, &sub, (PPU.objbuf + 8)[i], 0, 0, false);
 
   if(mix_bg0)
   {
    if(hrop == 1)
-    PrioHelper<1, true>(main, sub, (linebuf.bghr[0] + 8 + 1)[i * 2], (linebuf.bghr[0] + 8 + 0)[i * 2]);
+    PrioHelper(&main, &sub, (linebuf.bghr[0] + 8 + 1)[i * 2], (linebuf.bghr[0] + 8 + 0)[i * 2], 1, true);
    else
-    PrioHelper<1, false>(main, sub, (linebuf.bg[0] + 8)[i]);
+    PrioHelper(&main, &sub, (linebuf.bg[0] + 8)[i], 0, 1, false);
   }
  
   if(mix_bg1)
   {
    if(hrop == 1)
-    PrioHelper<2, true>(main, sub, (linebuf.bghr[1] + 8 + 1)[i * 2], (linebuf.bghr[1] + 8 + 0)[i * 2]);
+    PrioHelper(&main, &sub, (linebuf.bghr[1] + 8 + 1)[i * 2], (linebuf.bghr[1] + 8 + 0)[i * 2], 2, true);
    else
-    PrioHelper<2, false>(main, sub, (linebuf.bg[1] + 8)[i]);
+    PrioHelper(&main, &sub, (linebuf.bg[1] + 8)[i], 0, 2, false);
   }
 
   if(mix_bg2)
-   PrioHelper<3, false>(main, sub, (linebuf.bg[2] + 8)[i]);
+   PrioHelper(&main, &sub, (linebuf.bg[2] + 8)[i], 0, 3, false);
 
   if(mix_bg3)
-   PrioHelper<4, false>(main, sub, (linebuf.bg[3] + 8)[i]);
+   PrioHelper(&main, &sub, (linebuf.bg[3] + 8)[i], 0, 4, false);
 
   linebuf.main[i] = main;
   linebuf.sub[i] = sub;
  }
 }
 
-template<bool mix_bg0, bool mix_bg1, bool mix_bg2, bool mix_bg3, bool hires = false>
-static INLINE void MixLayers(void)
+static INLINE void MixLayers(const bool mix_bg0, const bool mix_bg1, const bool mix_bg2, const bool mix_bg3, const bool hires)
 {
  if(MDFN_UNLIKELY(hires))
-  MixLayersSub<mix_bg0, mix_bg1, mix_bg2, mix_bg3,  hires>();
+  MixLayersSub(mix_bg0, mix_bg1, mix_bg2, mix_bg3,  hires);
  else if(MDFN_UNLIKELY(ScreenMode & 0x08))
-  MixLayersSub<mix_bg0, mix_bg1, mix_bg2, mix_bg3, -1>();
+  MixLayersSub(mix_bg0, mix_bg1, mix_bg2, mix_bg3, -1);
  else
-  MixLayersSub<mix_bg0, mix_bg1, mix_bg2, mix_bg3, 0>();
+  MixLayersSub(mix_bg0, mix_bg1, mix_bg2, mix_bg3, 0);
 }
+
+// MixLayers for the layers each BG mode has.
+static MDFN_HOT void MixLayers1(void) { MixLayers(true, false, false, false, false); }
+static MDFN_HOT void MixLayers2(void) { MixLayers(true, true, false, false, false); }
+static MDFN_HOT void MixLayers3(void) { MixLayers(true, true, true, false, false); }
+static MDFN_HOT void MixLayers4(void) { MixLayers(true, true, true, true, false); }
+static MDFN_HOT void MixLayers2Hires(void) { MixLayers(true, true, false, false, true); }
 
 static INLINE void GetBGPrioWCMBits(uint32* bgprio, unsigned count)
 {
@@ -1201,14 +1296,14 @@ static INLINE void DrawMode7AndMix(void)
   GetBGPrioWCMBits(bgprio, sizeof(bgprio) / sizeof(bgprio[0]));
 
   if(CGWSEL & 1)
-   DrawMODE7<true, true>(scanline, bgprio[0], bgprio[1]);
+   DrawMODE7ExtDirect(scanline, bgprio[0], bgprio[1]);
   else
-   DrawMODE7<true, false>(scanline, bgprio[0], bgprio[1]);
+   DrawMODE7Ext(scanline, bgprio[0], bgprio[1]);
   DoXMosaic(0, &linebuf.bg[0][8]);
   DoWindow(0, &linebuf.bg[0][8]);
   DoXMosaic(1, &linebuf.bg[1][8]);
   DoWindow(1, &linebuf.bg[1][8]);
-  MixLayers<true, true, false, false>();
+  MixLayers2();
  }
  else
  {
@@ -1217,12 +1312,12 @@ static INLINE void DrawMode7AndMix(void)
   GetBGPrioWCMBits(bgprio, sizeof(bgprio) / sizeof(bgprio[0]));
 
   if(CGWSEL & 1)
-   DrawMODE7<false, true>(scanline, bgprio[0]);
+   DrawMODE7Direct(scanline, bgprio[0], 0);
   else
-   DrawMODE7<false, false>(scanline, bgprio[0]);
+   DrawMODE7Plain(scanline, bgprio[0], 0);
   DoXMosaic(0, &linebuf.bg[0][8]);
   DoWindow(0, &linebuf.bg[0][8]);
-  MixLayers<true, false, false, false>();
+  MixLayers1();
  }
 }
 
@@ -1234,11 +1329,11 @@ static INLINE void DrawBGAndMixToMS(void)
 
   GetBGPrioWCMBits(bgprio, sizeof(bgprio) / sizeof(bgprio[0]));
   
-  DoBGLayer<4>(0, bgprio[0]);
-  DoBGLayer<4>(1, bgprio[1]);
-  DoBGLayer<2>(2, bgprio[2]);
+  DoBGLayer4(0, bgprio[0]);
+  DoBGLayer4(1, bgprio[1]);
+  DoBGLayer2(2, bgprio[2]);
 
-  MixLayers<true, true, true, false>();
+  MixLayers3();
  }
  else if((BGMode & 0x7) == 0)
  {
@@ -1247,9 +1342,9 @@ static INLINE void DrawBGAndMixToMS(void)
   GetBGPrioWCMBits(bgprio, sizeof(bgprio) / sizeof(bgprio[0]));
 
   for(unsigned i = 0; i < 4; i++)
-   DoBGLayer<2, true>(i, bgprio[i]);
+   DoBGLayerMode0(i, bgprio[i]);
 
-  MixLayers<true, true, true, true>();
+  MixLayers4();
  }
  else if((BGMode & 0x3) == 2)
  {
@@ -1258,14 +1353,14 @@ static INLINE void DrawBGAndMixToMS(void)
   GetBGPrioWCMBits(bgprio, sizeof(bgprio) / sizeof(bgprio[0]));
 
   if(BGMode & (0x10 << 2))
-   GetOPTStrip<true>(2);
+   GetOPTStrip(2, true, false);
   else
-   GetOPTStrip<false>(2);
+   GetOPTStrip(2, false, false);
 
-  DoBGLayer<4, false, true>(0, bgprio[0]);
-  DoBGLayer<4, false, true>(1, bgprio[1]);
+  DoBGLayer4Opt(0, bgprio[0]);
+  DoBGLayer4Opt(1, bgprio[1]);
 
-  MixLayers<true, true, false, false>();
+  MixLayers2();
  }
  else if((BGMode & 0x7) == 3)
  {
@@ -1273,10 +1368,10 @@ static INLINE void DrawBGAndMixToMS(void)
 
   GetBGPrioWCMBits(bgprio, sizeof(bgprio) / sizeof(bgprio[0]));
 
-  DoBGLayer<8>(0, bgprio[0]);
-  DoBGLayer<4>(1, bgprio[1]);
+  DoBGLayer8(0, bgprio[0]);
+  DoBGLayer4(1, bgprio[1]);
 
-  MixLayers<true, true, false, false>();
+  MixLayers2();
  }
  else if((BGMode & 0x7) == 4)
  {
@@ -1285,14 +1380,14 @@ static INLINE void DrawBGAndMixToMS(void)
   GetBGPrioWCMBits(bgprio, sizeof(bgprio) / sizeof(bgprio[0]));
 
   if(BGMode & (0x10 << 2))
-   GetOPTStrip<true,  true>(2);
+   GetOPTStrip(2, true,  true);
   else
-   GetOPTStrip<false, true>(2);
+   GetOPTStrip(2, false, true);
 
-  DoBGLayer<8, false, true>(0, bgprio[0]);
-  DoBGLayer<2, false, true>(1, bgprio[1]);
+  DoBGLayer8Opt(0, bgprio[0]);
+  DoBGLayer2Opt(1, bgprio[1]);
 
-  MixLayers<true, true, false, false>();
+  MixLayers2();
  }
 
  else if((BGMode & 0x7) == 5)
@@ -1301,10 +1396,10 @@ static INLINE void DrawBGAndMixToMS(void)
 
   GetBGPrioWCMBits(bgprio, sizeof(bgprio) / sizeof(bgprio[0]));
 
-  DoBGLayer<4, false, false, true>(0, bgprio[0]);
-  DoBGLayer<2, false, false, true>(1, bgprio[1]);
+  DoBGLayer4Hires(0, bgprio[0]);
+  DoBGLayer2Hires(1, bgprio[1]);
 
-  MixLayers<true, true, false, false, true>();
+  MixLayers2Hires();
  }
  else if((BGMode & 0x7) == 7)
   DrawMode7AndMix();
@@ -1361,8 +1456,6 @@ static INLINE void DrawSprites(const FastPpuLine* l)
   }
  }
 }
-
-} // namespace
 
 // armSNES: where a line goes when it isn't drawn into the canvas (fastPpuSetSink).
 static uint32 Direct[512];
@@ -1424,12 +1517,12 @@ const uint32* Line(const FastPpuLine* l, bool direct)
  DrawSprites(l);
  DoWindow(4, &PPU.objbuf[8]);
  DrawBGAndMixToMS();
- DoWindow<true>(5, linebuf.main);
+ DoColorWindow(5, linebuf.main);
 
  if((BGMode & 0x7) == 0x5 || (BGMode & 0x7) == 0x6 || (ScreenMode & 0x08))
-  MixMainSub<true, false>(out);
+  MixMainSub(out, true);
  else
-  MixMainSub<false, false>(out);
+  MixMainSub(out, false);
 
  if(l->hiresFirstBlack && -XShift >= 0 && -XShift < 256)
   out[2 * -XShift] = l->brightness;
@@ -1441,12 +1534,12 @@ const uint32* Line(const FastPpuLine* l, bool direct)
 static const uint32* Mode7Again(const FastPpuLine* l)
 {
  DrawMode7AndMix();
- DoWindow<true>(5, linebuf.main);
+ DoColorWindow(5, linebuf.main);
 
  if(ScreenMode & 0x08)
-  MixMainSub<true, false>(Direct);
+  MixMainSub(Direct, true);
  else
-  MixMainSub<false, false>(Direct);
+  MixMainSub(Direct, false);
 
  if(l->hiresFirstBlack && -XShift >= 0 && -XShift < 256)
   Direct[2 * -XShift] = l->brightness;
@@ -1501,14 +1594,14 @@ const uint32* LineBlock(const FastPpuLine* l)
  // As DrawWide draws them: each pass drawn once by Line, where the first point is sampled, then only
  // its mode 7 layers for the others. A pass is the shift, the first column taken and where it goes.
  const int wide = l->wide;
- struct { int shift; unsigned from, to, count; } passes[2] = { { 0, 0, (unsigned)wide, 256 }, { 0, 0, 0, 0 } };
+ struct Pass { int shift; unsigned from, to, count; } passes[2] = { { 0, 0, (unsigned)wide, 256 }, { 0, 0, 0, 0 } };
  unsigned count = 1;
 
  if(wide && l->wideLayers)
  {
   SpritesWide = l->wideSprites;
-  passes[0] = { -wide, 0, 0, 256 };
-  passes[1] = { 256 - wide - 16, 16, 256, 2 * (unsigned)wide };
+  passes[0] = (struct Pass){ -wide, 0, 0, 256 };
+  passes[1] = (struct Pass){ 256 - wide - 16, 16, 256, 2 * (unsigned)wide };
   count = 2;
  }
  else if(wide)
@@ -1541,3 +1634,5 @@ const uint32* LineBlock(const FastPpuLine* l)
  M7SubN = 0;
  return Block;
 }
+
+#endif

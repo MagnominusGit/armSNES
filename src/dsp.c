@@ -532,12 +532,15 @@ static void echo30(void) {
 static inline __attribute__((always_inline)) void voiceOutput(struct DspVoice* v, int channel, bool listen) {
 	s32 amp = dsp.latch.output * v->volume[channel] >> 7;
 
-	dsp.mainvol.output[channel] = signedBits(dsp.mainvol.output[channel] + amp, 17);
-	dsp.mainvol.output[channel] = sclamp16(dsp.mainvol.output[channel]);
+	// The sums are always within 16 bits, so a silent voice leaves them as they are.
+	if (amp) {
+		dsp.mainvol.output[channel] = signedBits(dsp.mainvol.output[channel] + amp, 17);
+		dsp.mainvol.output[channel] = sclamp16(dsp.mainvol.output[channel]);
 
-	if (v->_echo) {
-		dsp.echo.output[channel] = signedBits(dsp.echo.output[channel] + amp, 17);
-		dsp.echo.output[channel] = sclamp16(dsp.echo.output[channel]);
+		if (v->_echo) {
+			dsp.echo.output[channel] = signedBits(dsp.echo.output[channel] + amp, 17);
+			dsp.echo.output[channel] = sclamp16(dsp.echo.output[channel]);
+		}
 	}
 	if (listen) {
 		listenMain[channel] = sclamp16(signedBits(listenMain[channel] + (listenOutput * v->volume[channel] >> 7), 17));
@@ -604,16 +607,17 @@ static void voice3c(struct DspVoice* v, bool listen) {
 		dsp.latch.pitch = 0;
 	}
 
-	s32 output = gaussianInterpolate(v);
-
-	if (v->_noise) {
-		output = (s16) (dsp.noise.lfsr << 1);
-	}
-
-	dsp.latch.output = (output * v->envelope >> 11) & ~1;
-	if (listen) {
-		s32 heard = v->_noise || dspInterpolation == INTERPOLATE_GAUSSIAN ? output : otherInterpolate(v);
-		listenOutput = (heard * v->envelope >> 11 & ~1) * dspVoiceVolume[v->index >> 4] / 100;
+	// At envelope 0 the voice puts out 0, whatever it would interpolate.
+	if (v->envelope) {
+		s32 output = v->_noise ? (s16) (dsp.noise.lfsr << 1) : gaussianInterpolate(v);
+		dsp.latch.output = (output * v->envelope >> 11) & ~1;
+		if (listen) {
+			s32 heard = v->_noise || dspInterpolation == INTERPOLATE_GAUSSIAN ? output : otherInterpolate(v);
+			listenOutput = (heard * v->envelope >> 11 & ~1) * dspVoiceVolume[v->index >> 4] / 100;
+		}
+	} else {
+		dsp.latch.output = 0;
+		listenOutput = 0;
 	}
 	v->envx = v->envelope >> 4;
 

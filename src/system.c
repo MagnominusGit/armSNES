@@ -126,6 +126,7 @@ void systemPower(bool reset) {
 	// Equal clocks would leave it open who runs first, so each starts at its own number.
 	cpu.th.clock = 0;
 	smp.th.clock = 1;
+	smpClocksMoved();
 	dsp.th.clock = 2;
 	ppu.th.clock = 3;
 	// A cartridge has one coprocessor at most, and it comes next.
@@ -216,6 +217,7 @@ void systemFrameEvent(void) {
 	}
 	cpu.th.clock -= minimum;
 	smp.th.clock -= minimum;
+	smpClocksMoved();
 	dsp.th.clock -= minimum;
 	ppu.th.clock -= minimum;
 	if (cart.necdsp) {

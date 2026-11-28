@@ -250,6 +250,7 @@ bool stateLoad(const void* data, size_t size) {
 		msu1Reopen();
 	}
 	dspLoaded();
+	smpClocksMoved();
 	ppuLoaded();
 	gsuLoaded();
 	if (cart.sa1) {

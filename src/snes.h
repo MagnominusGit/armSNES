@@ -205,6 +205,8 @@ bool smpPortsPending(u64 clock);
 void smpPortsSettle(void);
 void smpClocksKept(void);
 void smpDrain(void);
+// After the SMP's clock is set again (power, a state, the clocks taken down).
+void smpClocksMoved(void);
 // The thread has run the SMP at least as far as clock, or has run all it was given.
 void smpDrainTo(u64 clock);
 // A sample from the DSP, and those the thread has made so far given to audioSample.

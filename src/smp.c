@@ -1229,6 +1229,7 @@ u32 apuGameBoyWrite;
 // On cache lines of their own, as each is written by one thread and read by the other.
 static _Alignas(64) u32 apuHead;  // written by the CPU's thread
 static _Alignas(64) u32 apuTail;  // by the APU's
+static u64 apuReached;  // the clock of the last command the APU's thread has run
 static pthread_t apuThread;
 static pthread_mutex_t apuLock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t apuWake = PTHREAD_COND_INITIALIZER;
@@ -1316,6 +1317,7 @@ static void* apuMain(void* unused) {
 			} else {
 				smpRunToWrite(c->clock, c->write, c->port, c->data);
 			}
+			__atomic_store_n(&apuReached, c->clock, __ATOMIC_RELAXED);
 			tail++;
 			__atomic_store_n(&apuTail, tail, __ATOMIC_RELEASE);
 		}
@@ -1409,13 +1411,18 @@ void smpDrain(void) {
 	}
 }
 
+void smpClocksMoved(void) {
+	smpDrain();
+	__atomic_store_n(&apuReached, smp.th.clock, __ATOMIC_RELAXED);
+}
+
 void smpDrainTo(u64 clock) {
 	if (!apuStarted) {
 		return;
 	}
 	for (;;) {
 		u32 tail = __atomic_load_n(&apuTail, __ATOMIC_ACQUIRE);
-		if (tail == apuHead || apuRing[(tail - 1) & (APU_RING - 1)].clock >= clock) {
+		if (tail == apuHead || __atomic_load_n(&apuReached, __ATOMIC_RELAXED) >= clock) {
 			return;
 		}
 		apuWakeIfSleeping();

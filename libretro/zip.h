@@ -13,3 +13,6 @@ struct ZipFile;
 struct ZipFile* zipOpen(const char* archive, const char* name, size_t* size);
 size_t zipRead(struct ZipFile* file, size_t offset, unsigned char* to, size_t bytes);
 void zipClose(struct ZipFile* file);
+// Whether the archive has a file whose name match takes (given the name and its length, not ended by
+// a 0, and with).
+int zipFind(const char* archive, int (*match)(const char* name, size_t length, const void* with), const void* with);

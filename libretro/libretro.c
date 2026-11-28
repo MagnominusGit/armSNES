@@ -2147,6 +2147,10 @@ static void msuZipClose(void* file) {
 	zipClose(file);
 }
 
+static int msuZipFind(const char* archive, int (*match)(const char* name, size_t length, const void* with), const void* with) {
+	return zipFind(archive, match, with);
+}
+
 // What every load ends with, once the cartridge and what is in its slots are in.
 static bool loadFinish(const char* gamePath) {
 	// The MSU-1's files sit beside the game: game.msu, game-1.pcm and on; or, for a game the frontend took
@@ -2159,7 +2163,7 @@ static bool loadFinish(const char* gamePath) {
 		if (dot && (!mark || dot > mark)) {
 			*dot = 0;
 		}
-		msu1Archive = (struct Msu1Archive) { msuZipOpen, msuZipRead, msuZipClose };
+		msu1Archive = (struct Msu1Archive) { msuZipOpen, msuZipRead, msuZipClose, msuZipFind };
 		cartLoadMsu1(path);
 	}
 

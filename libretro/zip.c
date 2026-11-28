@@ -58,35 +58,67 @@ struct ZipFile {
 	unsigned char in[1 << 15];
 };
 
+// The central directory, read whole.
+static unsigned char* readDirectory(FILE* file, long* size, long* entries) {
+	long offset;
+	unsigned char* directory = NULL;
+	if (!findDirectory(file, &offset, size, entries) || !(directory = malloc(*size ? *size : 1)) ||
+	    fseek(file, offset, SEEK_SET) || fread(directory, 1, *size, file) != (size_t) *size) {
+		free(directory);
+		return NULL;
+	}
+	return directory;
+}
+
+// The first entry in the directory whose name match takes.
+static const unsigned char* findEntry(const unsigned char* directory, long size, long entries,
+                                      int (*match)(const char* name, size_t length, const void* with), const void* with) {
+	for (long at = 0, n = 0; n < entries && at + 46 <= size; ++n) {
+		const unsigned char* e = directory + at;
+		if (le32(e) != 0x02014b50) {
+			break;
+		}
+		uint32_t length = le16(e + 28);
+		if (at + 46 + length > size) {
+			break;
+		}
+		if (match((const char*) e + 46, length, with)) {
+			return e;
+		}
+		at += 46 + length + le16(e + 30) + le16(e + 32);
+	}
+	return NULL;
+}
+
+static int sameName(const char* name, size_t length, const void* with) {
+	return length == strlen(with) && !memcmp(name, with, length);
+}
+
+int zipFind(const char* archive, int (*match)(const char* name, size_t length, const void* with), const void* with) {
+	FILE* file = fopen(archive, "rb");
+	if (!file) {
+		return 0;
+	}
+	long size, entries;
+	unsigned char* directory = readDirectory(file, &size, &entries);
+	int found = directory && findEntry(directory, size, entries, match, with);
+	free(directory);
+	fclose(file);
+	return found;
+}
+
 struct ZipFile* zipOpen(const char* archive, const char* name, size_t* size) {
 	FILE* file = fopen(archive, "rb");
 	if (!file) {
 		return NULL;
 	}
 	struct ZipFile* zip = NULL;
-	unsigned char* directory = NULL;
-	long dirOffset, dirSize, entries;
-	if (!findDirectory(file, &dirOffset, &dirSize, &entries) || !(directory = malloc(dirSize ? dirSize : 1)) ||
-	    fseek(file, dirOffset, SEEK_SET) || fread(directory, 1, dirSize, file) != (size_t) dirSize) {
+	long dirSize, entries;
+	unsigned char* directory = readDirectory(file, &dirSize, &entries);
+	if (!directory) {
 		goto done;
 	}
-	size_t nameLength = strlen(name);
-	const unsigned char* entry = NULL;
-	for (long at = 0, n = 0; n < entries && at + 46 <= dirSize; ++n) {
-		const unsigned char* e = directory + at;
-		if (le32(e) != 0x02014b50) {
-			break;
-		}
-		uint32_t length = le16(e + 28);
-		if (at + 46 + length > dirSize) {
-			break;
-		}
-		if (length == nameLength && !memcmp(e + 46, name, length)) {
-			entry = e;
-			break;
-		}
-		at += 46 + length + le16(e + 30) + le16(e + 32);
-	}
+	const unsigned char* entry = findEntry(directory, dirSize, entries, sameName, name);
 	unsigned char local[30];
 	uint32_t method = entry ? le16(entry + 10) : ~0u;
 	if (!entry || (method != 0 && method != 8) || fseek(file, le32(entry + 42), SEEK_SET) || fread(local, 1, 30, file) != 30 ||

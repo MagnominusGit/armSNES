@@ -5,6 +5,7 @@
  * Ported from ares (ISC); see LICENSES/ISC-ares.txt. */
 #include "../snes.h"
 
+#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -86,6 +87,39 @@ static size_t sourceRead(struct Source* s, u8* to, size_t bytes) {
 	return done;
 }
 
+// game-N.pcm, a track of the game's.
+static int isTrack(const char* name, size_t length, const void* with) {
+	const char* game = with;
+	size_t gameLength = strlen(game);
+	if (length < gameLength + 6 || memcmp(name, game, gameLength) || name[gameLength] != '-' || memcmp(name + length - 4, ".pcm", 4)) {
+		return 0;
+	}
+	for (size_t at = gameLength + 1; at < length - 4; ++at) {
+		if (name[at] < '0' || name[at] > '9') {
+			return 0;
+		}
+	}
+	return 1;
+}
+
+// Tracks beside the game, for one without its data file. ares looks only for the data file, but a few
+// games come without it, and the MSU-1 reads as if it were empty then.
+static bool tracksBeside(void) {
+	const char* slash = strrchr(base, '/');
+	char folder[4096];
+	snprintf(folder, sizeof(folder), "%.*s", slash ? (int) (slash - base) : 1, slash ? base : ".");
+	const char* game = slash ? slash + 1 : base;
+	DIR* dir = opendir(folder);
+	bool found = false;
+	for (struct dirent* e; dir && !found && (e = readdir(dir));) {
+		found = isTrack(e->d_name, strlen(e->d_name), game);
+	}
+	if (dir) {
+		closedir(dir);
+	}
+	return found;
+}
+
 bool msu1Load(const char* path) {
 	msu1Unload();
 	snprintf(base, sizeof(base), "%s", path);
@@ -95,13 +129,13 @@ bool msu1Load(const char* path) {
 		snprintf(archive, sizeof(archive), "%.*s", (int) (mark - path), path);
 		snprintf(inside, sizeof(inside), "%s", mark + 1);
 		// The data file is opened once, and kept.
-		return sourceOpen(&dataSource, ".msu");
+		return sourceOpen(&dataSource, ".msu") || (msu1Archive.find && msu1Archive.find(archive, isTrack, inside));
 	}
 	char name[4200];
 	snprintf(name, sizeof(name), "%s.msu", base);
 	FILE* file = fopen(name, "rb");
 	if (!file) {
-		return false;
+		return tracksBeside();
 	}
 	fclose(file);
 	return true;

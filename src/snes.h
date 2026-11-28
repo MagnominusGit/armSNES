@@ -1654,6 +1654,8 @@ struct Msu1Archive {
 	void* (*open)(const char* archive, const char* name, size_t* size);
 	size_t (*read)(void* file, size_t offset, u8* to, size_t bytes);
 	void (*close)(void* file);
+	// Whether the archive has a file whose name match takes.
+	int (*find)(const char* archive, int (*match)(const char* name, size_t length, const void* with), const void* with);
 };
 extern struct Msu1Archive msu1Archive;
 void msu1Unload(void);

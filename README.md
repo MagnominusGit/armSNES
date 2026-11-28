@@ -32,7 +32,8 @@ the others, and states are the same on ARM and x86, so run-ahead and netplay wor
 - Sufami Turbo cartridges (`.st`, with `STBIOS.bin`).
 - Game Boy and Game Boy Color games (`.gb`, `.gbc`) in the Super Game Boy, with `SGB1.sfc` and
   `sgb1.boot.rom`. The Game Boy is armGB, armGBA's Game Boy core.
-- MSU-1 games (`game.msu` and the tracks `game-1.pcm` on, beside the game).
+- MSU-1 games (`game.msu` and the tracks `game-1.pcm` on, beside the game or in its zip; the tracks
+  alone are enough).
 - The event and pirate cartridges whose chips ares or MAME know.
 - In RetroArch, and the app's Load Files Together, its subsystems put a second cartridge in a Sufami
   Turbo's slot B, a memory pack in a slotted cartridge, or a chosen Game Boy game in a Super Game Boy

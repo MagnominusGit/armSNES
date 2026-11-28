@@ -1780,6 +1780,10 @@ static void soundBufferStatus(bool active, unsigned occupancy, bool underrunLike
 	soundShort = underrunLikely;
 }
 
+// Frames since a state was saved or loaded: run-ahead, rewind and netplay do it every frame, and want
+// each frame's sound whole.
+static unsigned sinceState = 2;
+
 static bool skipThisFrame(void) {
 	static int run;
 	bool skip = false;
@@ -1793,6 +1797,7 @@ static bool skipThisFrame(void) {
 void retro_run(void) {
 	bool updated = false;
 	if (environment(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
+		systemSoundFlush();
 		readOptions();
 	}
 	if (!rtcApplied) {
@@ -1816,6 +1821,9 @@ void retro_run(void) {
 	environment(RETRO_ENVIRONMENT_GET_CAN_DUPE, &dupe);
 	pictureUnseen = dupe && (!(av & RETRO_AV_ENABLE_VIDEO) || skipThisFrame());
 	ppuSkipPicture = pictureUnseen && systemFast;
+	// Part of a frame's sound may come with the next while the frontend has plenty left to play.
+	systemSoundLate = (av & RETRO_AV_ENABLE_AUDIO) && soundActive && !soundShort && soundFull > 33 && !netplaySeen && sinceState >= 2;
+	sinceState += sinceState < 2;
 
 	systemRunFrame();
 
@@ -1855,11 +1863,13 @@ size_t retro_serialize_size(void) {
 
 bool retro_serialize(void* data, size_t size) {
 	checkNetplay();
+	sinceState = 0;
 	return loaded && stateSave(data, size);
 }
 
 bool retro_unserialize(const void* data, size_t size) {
 	checkNetplay();
+	sinceState = 0;
 	// A state loaded before the first frame has the clocks the files would have set.
 	rtcApplied = true;
 	return loaded && stateLoad(data, size);
@@ -2044,7 +2054,8 @@ static void readOptions(void) {
 	hdPitch = wideColumns * (hdScale > 2 ? hdScale : 2);
 	static const struct OptionChoice skips[] = { { "Auto", -1 }, { "1", 1 }, { "2", 2 }, { "3", 3 } };
 	frameSkip = optionChoice(environment, "armsnes_frame_skip", skips, 4, 0);
-	struct retro_audio_buffer_status_callback status = { frameSkip < 0 ? soundBufferStatus : NULL };
+	// Frame Skip's Auto and the sound thread's going on past a frame (systemSoundLate) both look at it.
+	struct retro_audio_buffer_status_callback status = { soundBufferStatus };
 	if (!environment(RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK, &status) && frameSkip < 0) {
 		frameSkip = 0;
 	}

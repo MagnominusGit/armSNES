@@ -399,6 +399,13 @@ static struct {
 	u64 clock;
 } counting;
 
+// Fast mode, at a frame's end where the clocks don't drop: a turn measured across it isn't taken, as
+// when they drop.
+void sa1ClocksKept(void) {
+	loop.clock = ~0ull;
+	counting.clock = ~0ull;
+}
+
 void sa1FrameStart(void) {
 	threadFrequency(&sa1.th, sys.cpuFrequency * systemSa1Clock / 4);
 	loop.valid = false;

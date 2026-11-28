@@ -501,7 +501,7 @@ static void echo27(bool listen) {
 	if (cart.msu1) {
 		mixerOutput(&msu1.sound, &outl, &outr, dspMsu1Volume);
 	}
-	audioSample(outl, outr);
+	smpSample(outl, outr);
 }
 
 static void echo28(void) {

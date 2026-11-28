@@ -371,6 +371,9 @@ int main(int argc, char** argv) {
 	if (getenv("GSUJIT")) {
 		gsuJitEnabled = atoi(getenv("GSUJIT")) != 0;
 	}
+	// SOUNDLATE=1: Fast mode's sound thread may run into the next frame, as with a frontend that has
+	// sound to spare.
+	systemSoundLate = getenv("SOUNDLATE") && atoi(getenv("SOUNDLATE"));
 	// FASTRENDER=n: n render threads.
 	if (getenv("FASTRENDER")) {
 		fastPpuThreads(atoi(getenv("FASTRENDER")));
@@ -509,6 +512,7 @@ int main(int argc, char** argv) {
 			fprintf(hashLog, "%u %016llx\n", sys.frames, (unsigned long long) fnv(14695981039346656037ull, state, stateBytes));
 		}
 	}
+	systemSoundFlush();
 	double seconds = (double) (clock() - start) / CLOCKS_PER_SEC;
 
 	printf("frames=%u seconds=%.3f fps=%.1f samples=%llu video=%016llx audio=%016llx\n", sys.frames, seconds,

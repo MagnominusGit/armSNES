@@ -1221,6 +1221,8 @@ static struct ApuCommand {
 	bool write, toPortWrite;
 	u8 port, data;
 	u32 gameBoyWrite;
+	bool settle;  // smpPortsSettle, in its place among the commands
+	bool kept;    // smpClocksKept
 } apuRing[APU_RING];
 _Thread_local bool apuOnThread;
 u32 apuGameBoyWrite;
@@ -1242,8 +1244,23 @@ bool smpPortsPending(u64 clock) {
 	return smpPortsAt[0] > clock || smpPortsAt[1] > clock || smpPortsAt[2] > clock || smpPortsAt[3] > clock;
 }
 
+static void apuPost(struct ApuCommand command);
+
 void smpPortsSettle(void) {
+	if (apuStarted && apuHead != __atomic_load_n(&apuTail, __ATOMIC_ACQUIRE)) {
+		apuPost((struct ApuCommand) { .settle = true });
+		return;
+	}
 	memset(smpPortsAt, 0, sizeof(smpPortsAt));
+}
+
+// The same as sa1ClocksKept, for a sound driver's wait.
+void smpClocksKept(void) {
+	if (apuStarted && apuHead != __atomic_load_n(&apuTail, __ATOMIC_ACQUIRE)) {
+		apuPost((struct ApuCommand) { .kept = true });
+		return;
+	}
+	spcWait.lastRead = ~0ull;
 }
 
 void smpRunToWrite(u64 clock, bool write, u32 port, u8 data) {
@@ -1290,7 +1307,11 @@ static void* apuMain(void* unused) {
 		while (tail != __atomic_load_n(&apuHead, __ATOMIC_ACQUIRE)) {
 			const struct ApuCommand* c = &apuRing[tail & (APU_RING - 1)];
 			apuGameBoyWrite = c->gameBoyWrite;
-			if (c->toPortWrite) {
+			if (c->settle) {
+				memset(smpPortsAt, 0, sizeof(smpPortsAt));
+			} else if (c->kept) {
+				spcWait.lastRead = ~0ull;
+			} else if (c->toPortWrite) {
 				smpRunToPortWriteHere(c->clock);
 			} else {
 				smpRunToWrite(c->clock, c->write, c->port, c->data);
@@ -1330,8 +1351,6 @@ static void apuWakeIfSleeping(void) {
 	}
 }
 
-static void apuPost(struct ApuCommand command);
-
 void smpPost(u64 clock, bool write, u32 port, u8 data) {
 	apuPost((struct ApuCommand) { clock, write, false, (u8) port, data });
 }
@@ -1348,6 +1367,13 @@ bool smpRunToPortWrite(u64 clock, struct SmpPortWrite* write) {
 }
 
 static void apuPost(struct ApuCommand command) {
+	// The SMP is as far as the last run when the thread comes to a settle or kept (smpDrainTo).
+	static u64 lastRun;
+	if (command.settle || command.kept) {
+		command.clock = lastRun;
+	} else {
+		lastRun = command.clock;
+	}
 	command.gameBoyWrite = cart.icd ? icd.sound.write : 0;
 	u64 clock = command.clock;
 	bool write = command.write;
@@ -1381,6 +1407,52 @@ void smpDrain(void) {
 		apuWakeIfSleeping();
 		apuRelax();
 	}
+}
+
+void smpDrainTo(u64 clock) {
+	if (!apuStarted) {
+		return;
+	}
+	for (;;) {
+		u32 tail = __atomic_load_n(&apuTail, __ATOMIC_ACQUIRE);
+		if (tail == apuHead || apuRing[(tail - 1) & (APU_RING - 1)].clock >= clock) {
+			return;
+		}
+		apuWakeIfSleeping();
+		apuRelax();
+	}
+}
+
+// The DSP's samples, which the frontend takes on the CPU's thread: those the APU's thread makes wait in a
+// ring until smpSamplesOut hands them on, and so do any the CPU's thread makes while some are waiting.
+enum { SOUND_RING = 1 << 14 };
+static s16 soundRing[SOUND_RING][2];
+static _Alignas(64) u32 soundHead;  // written by whichever thread runs the DSP
+static _Alignas(64) u32 soundTail;  // by the CPU's
+
+void smpSamplesOut(void) {
+	u32 head = __atomic_load_n(&soundHead, __ATOMIC_ACQUIRE);
+	for (u32 tail = soundTail; tail != head; tail++) {
+		audioSample(soundRing[tail & (SOUND_RING - 1)][0], soundRing[tail & (SOUND_RING - 1)][1]);
+	}
+	__atomic_store_n(&soundTail, head, __ATOMIC_RELEASE);
+}
+
+void smpSample(s16 left, s16 right) {
+	if (!apuOnThread && soundHead == soundTail) {
+		audioSample(left, right);
+		return;
+	}
+	while (soundHead - __atomic_load_n(&soundTail, __ATOMIC_ACQUIRE) >= SOUND_RING) {
+		if (!apuOnThread) {
+			smpSamplesOut();
+		} else {
+			sched_yield();
+		}
+	}
+	soundRing[soundHead & (SOUND_RING - 1)][0] = left;
+	soundRing[soundHead & (SOUND_RING - 1)][1] = right;
+	__atomic_store_n(&soundHead, soundHead + 1, __ATOMIC_RELEASE);
 }
 
 void smpStop(void) {

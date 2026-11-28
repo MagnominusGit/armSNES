@@ -14,6 +14,7 @@ bool systemBalanced;
 bool systemFast;
 bool systemRecompiler = true;
 bool systemSoundThread;
+bool systemSoundLate;
 bool systemPictureThread;
 bool systemFrameAtTop;
 u8 systemCpuClock = 4, systemGsuClock = 4, systemSa1Clock = 4;
@@ -112,6 +113,7 @@ static u64 bsId(void) {
 }
 
 void systemPower(bool reset) {
+	systemSoundFlush();
 	randomSeed(0);
 
 	cpuPower(reset);
@@ -144,13 +146,26 @@ void systemPower(bool reset) {
 	bsmemory.th.clock = bsId();
 }
 
-// The PPU finished a frame. The clocks all drop by the same amount, so they never overflow.
+// The PPU finished a frame. The clocks all drop by the same amount, so they never overflow: every frame,
+// or in Fast mode once they are past 2^62 (about half a second), so the sound thread needn't stop.
 void systemFrameEvent(void) {
-	smpDrain();
+	bool drop = !systemFast || cpu.th.clock >= 1ull << 62;
+	if (drop) {
+		smpDrain();
+	}
 	gsuSettle();
 	st018Settle();
 	// The clocks a waiting loop's skip keeps are about to drop.
 	cpuFrameStart();
+	if (!drop) {
+		smpClocksKept();
+		if (cart.sa1) {
+			sa1ClocksKept();
+		}
+		sys.frames++;
+		sys.frameEvent = true;
+		return;
+	}
 	u64 minimum = cpu.th.clock - 0;
 	if (smp.th.clock - 1 < minimum) {
 		minimum = smp.th.clock - 1;
@@ -265,5 +280,13 @@ void systemRunFrame(void) {
 			cpuMain();
 		}
 	}
+	// The sound so far; the thread may go on into the next frame by up to half a frame's sound.
+	u64 late = systemSoundLate ? cpu.th.scalar * (u64) (sys.cpuFrequency / 120) : 0;
+	smpDrainTo(cpu.th.clock > late ? cpu.th.clock - late : 0);
+	smpSamplesOut();
+}
+
+void systemSoundFlush(void) {
 	smpDrain();
+	smpSamplesOut();
 }

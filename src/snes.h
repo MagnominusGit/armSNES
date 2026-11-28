@@ -112,6 +112,10 @@ extern u8 ppuHidden;
 // Fast mode's sound, and its lines, on threads of their own: the same output, on other cores.
 extern bool systemSoundThread;
 extern bool systemPictureThread;
+// Fast mode: the frontend can take a frame's sound late, so the sound thread may go on past its end
+// (systemRunFrame); systemSoundFlush brings it all out.
+extern bool systemSoundLate;
+void systemSoundFlush(void);
 // A frame ends as its last line starts rather than at line 240, so a render thread finishes the picture
 // during vblank. Where a frame ends changes nothing the game sees.
 extern bool systemFrameAtTop;
@@ -199,7 +203,13 @@ void smpRunToWrite(u64 clock, bool write, u32 port, u8 data);
 u8 smpPortRead(u32 port, u64 clock);
 bool smpPortsPending(u64 clock);
 void smpPortsSettle(void);
+void smpClocksKept(void);
 void smpDrain(void);
+// The thread has run the SMP at least as far as clock, or has run all it was given.
+void smpDrainTo(u64 clock);
+// A sample from the DSP, and those the thread has made so far given to audioSample.
+void smpSample(s16 left, s16 right);
+void smpSamplesOut(void);
 void smpStop(void);
 // Fast mode: runs the SMP up to clock as a post does, but stops after the first instruction that writes
 // a port to the CPU. False if none did; else the clocks of the write and of the instruction's end, and
@@ -1042,6 +1052,7 @@ extern struct Sa1 sa1;
 
 void sa1Power(void);
 void sa1FrameStart(void);
+void sa1ClocksKept(void);
 void sa1Loaded(void);
 void sdd1Loaded(void);
 // Fast mode: the SA-1's next instruction, through the plain 65816 (sa1fast.c), and the accesses it makes.

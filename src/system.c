@@ -147,9 +147,11 @@ void systemPower(bool reset) {
 }
 
 // The PPU finished a frame. The clocks all drop by the same amount, so they never overflow: every frame,
-// or in Fast mode once they are past 2^62 (about half a second), so the sound thread needn't stop.
+// or in Fast mode once they are past 2^62 (about half a second), so the sound thread needn't stop. The
+// ICD2 and the ST018 start their clocks again from 0 as the game runs, which is where the frame began
+// only if the clocks drop every frame.
 void systemFrameEvent(void) {
-	bool drop = !systemFast || cpu.th.clock >= 1ull << 62;
+	bool drop = !systemFast || cart.icd || cart.st018 || cpu.th.clock >= 1ull << 62;
 	if (drop) {
 		smpDrain();
 	}

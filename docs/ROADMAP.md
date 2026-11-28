@@ -171,3 +171,5 @@ carrier steps by the same samples a pixel and a line as on the NES.
 The standalone app is Armulators' (the `armulators` submodule), as armGBA, armNES and armN64 have it,
 with armSNES's names, systems and achievement hook. Without a controller menu of its own, it plugs
 controllers in through the Port 1 and Port 2 Device options, which a frontend's own choice overrides.
+The keyboard, the mouse (once a click on the picture gives it to the game) and a light gun (the mouse
+pointer) reach the core as in RetroArch, and Load Files Together loads the subsystems.

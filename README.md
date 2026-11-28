@@ -34,8 +34,9 @@ the others, and states are the same on ARM and x86, so run-ahead and netplay wor
   `sgb1.boot.rom`. The Game Boy is armGB, armGBA's Game Boy core.
 - MSU-1 games (`game.msu` and the tracks `game-1.pcm` on, beside the game).
 - The event and pirate cartridges whose chips ares or MAME know.
-- In RetroArch, its subsystems put a second cartridge in a Sufami Turbo's slot B, a memory pack in a
-  slotted cartridge, or a chosen Game Boy game in a Super Game Boy cartridge.
+- In RetroArch, and the app's Load Files Together, its subsystems put a second cartridge in a Sufami
+  Turbo's slot B, a memory pack in a slotted cartridge, or a chosen Game Boy game in a Super Game Boy
+  cartridge.
 - IPS, UPS and BPS patches beside the game, which RetroArch and the app apply.
 
 ## Controls
@@ -54,12 +55,13 @@ Light Gun Motion, how the device is held becomes the middle).
 
 Plug in other controllers through the frontend's controller port types, or, in a frontend without
 them (such as the app), the Port 1 and Port 2 Device options: the SNES Mouse or the Super Multitap in
-either port, the NTT Data Keypad (its keys from the keyboard, in RetroArch) or the Twin Tap, and the
+either port, the NTT Data Keypad (its keys from the keyboard) or the Twin Tap, and the
 Super Scope or one or two Justifiers in the second. The guns aim with a light gun, the mouse or the
 right stick, with a touch on the screen aiming and firing wherever it lands, and Light Gun Motion
 adds the device's gyroscope or accelerometer. With the right stick, R is the trigger, L the Super
 Scope's cursor button, Select its turbo and Start its pause. The mouse moves with the mouse, the
-right stick (R and L its buttons) or a drag on the touch screen, where a tap clicks.
+right stick (R and L its buttons) or a drag on the touch screen, where a tap clicks. In the app, a
+click on the picture gives the game the mouse until the menu opens.
 
 ## Options
 
